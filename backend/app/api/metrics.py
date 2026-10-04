@@ -276,11 +276,16 @@ async def get_aggregated_metrics(
 
 
 @router.get("/dashboard")
-async def get_dashboard_metrics(platform: Optional[str] = None, db: Session = Depends(get_db)):
+async def get_dashboard_metrics(
+    platform: Optional[str] = None,
+    top_n: int = Query(8, ge=1, le=30),
+    db: Session = Depends(get_db),
+):
     """Get aggregated metrics for dashboard.
 
     platform="linux"/"windows" verilirse yalnızca o platformun sunucuları döner —
     aksi halde tüm AI-ready sunucular (platform bağımsız) döner.
+    Yalnızca CPU'ya göre sıralı top_n satır döner (fleet-wide full dump yok — dashboard hızı).
     Not: metric_name'ler metric_sync.py'nin yazdığı gerçek isimlerle (cpu_usage_percent
     vb.) eşleşir — hem Linux (node_exporter) hem Windows (windows_exporter) için aynı
     şemaya senkronlanır, bu yüzden aynı sorgu her iki platformda da çalışır.
@@ -298,7 +303,19 @@ async def get_dashboard_metrics(platform: Optional[str] = None, db: Session = De
         query = query.filter(Server.id.in_(windows_ids)) if windows_ids else query.filter(False)
     servers = query.all()
     if not servers:
-        return {"total_servers": 0, "servers": []}
+        return {
+            "total_servers": 0,
+            "servers": [],
+            "summary": {
+                "avg_cpu": None,
+                "avg_memory": None,
+                "avg_disk": None,
+                "with_metrics": 0,
+                "platform": platform or "all",
+                "top_n": top_n,
+                "sort": "cpu_desc",
+            },
+        }
 
     server_ids = [s.id for s in servers]
     metric_names = ("cpu_usage_percent", "memory_usage_percent", "disk_root_usage_percent")
@@ -335,24 +352,63 @@ async def get_dashboard_metrics(platform: Optional[str] = None, db: Session = De
         bucket[row.metric_name] = row
 
     dashboard_data = []
+    cpu_vals: list[float] = []
+    mem_vals: list[float] = []
+    disk_vals: list[float] = []
     for server in servers:
         m = by_server.get(server.id) or {}
         cpu = m.get("cpu_usage_percent")
         memory = m.get("memory_usage_percent")
         disk = m.get("disk_root_usage_percent")
+        cpu_v = float(cpu.value) if cpu and cpu.value is not None else None
+        mem_v = float(memory.value) if memory and memory.value is not None else None
+        disk_v = float(disk.value) if disk and disk.value is not None else None
+        if cpu_v is None and mem_v is None and disk_v is None:
+            continue
+        if cpu_v is not None:
+            cpu_vals.append(cpu_v)
+        if mem_v is not None:
+            mem_vals.append(mem_v)
+        if disk_v is not None:
+            disk_vals.append(disk_v)
         dashboard_data.append({
             "server_id": server.id,
             "hostname": server.hostname,
             "ip_address": server.ip_address,
-            "cpu_usage": cpu.value if cpu else None,
-            "memory_usage": memory.value if memory else None,
-            "disk_usage": disk.value if disk else None,
-            "last_update": cpu.timestamp.isoformat() if cpu else None,
+            "cpu_usage": cpu_v,
+            "memory_usage": mem_v,
+            "disk_usage": disk_v,
+            "last_update": cpu.timestamp.isoformat() if cpu else (
+                memory.timestamp.isoformat() if memory else (
+                    disk.timestamp.isoformat() if disk else None
+                )
+            ),
         })
+
+    # En yüksek CPU önce — UI "ilk 8" rastgele değil
+    dashboard_data.sort(
+        key=lambda r: (r["cpu_usage"] is not None, r["cpu_usage"] or 0.0),
+        reverse=True,
+    )
+    top = dashboard_data[:top_n]
+
+    def _avg(vals: list[float]) -> Optional[float]:
+        if not vals:
+            return None
+        return round(sum(vals) / len(vals), 1)
 
     return {
         "total_servers": len(servers),
-        "servers": dashboard_data,
+        "servers": top,
+        "summary": {
+            "avg_cpu": _avg(cpu_vals),
+            "avg_memory": _avg(mem_vals),
+            "avg_disk": _avg(disk_vals),
+            "with_metrics": len(dashboard_data),
+            "platform": platform or "all",
+            "top_n": top_n,
+            "sort": "cpu_desc",
+        },
     }
 
 

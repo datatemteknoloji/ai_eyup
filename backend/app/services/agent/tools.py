@@ -1910,13 +1910,25 @@ def _custom_prometheus_query_handler(db: Session, args: Dict[str, Any], ctx: Dic
             hit_src = next((s for s in customs if s.id == source_id), None)
 
         if hit_src and not is_prom_compatible(hit_src):
+            if hit_src.collector_type == "zabbix":
+                from app.services.zabbix_monitoring import run_zabbix_query
+                out = run_zabbix_query(
+                    mode=args.get("mode") or "overview",
+                    source_id=hit_src.id,
+                    metric_id=args.get("metric") or args.get("metric_id"),
+                    question=question,
+                    range_sec=int(args.get("range_sec") or 900),
+                    top_n=int(args.get("top_n") or 8),
+                    search=str(args.get("q") or args.get("search") or ""),
+                    db=db,
+                )
+                out["footnote"] = f"_Kaynak: zabbix · {hit_src.label}_"
+                return out
             return {
                 "ok": False,
                 "error": (
                     f"{hit_src.label!r} collector_type={hit_src.collector_type}. "
-                    "Chat metrik sorgusu şimdilik Prometheus uyumlu Other kaynaklarda "
-                    "(prometheus / telegraf→Prom / opentelemetry→Prom). "
-                    "Zabbix adaptörü sonraki fazda."
+                    "Chat metrik sorgusu Prometheus uyumlu Other veya Zabbix kaynaklarda çalışır."
                 ),
                 "source": hit_src.public_dict(),
                 "source_kind": f"custom:{hit_src.label}",
@@ -1936,6 +1948,73 @@ def _custom_prometheus_query_handler(db: Session, args: Dict[str, Any], ctx: Dic
         return out
     except Exception as e:
         logger.error("[Tool] custom_prometheus_query hata: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def _zabbix_query_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Zabbix Other kaynağı — Unified + tam label / source_id. Semantic metric_id + match map."""
+    try:
+        from app.services.monitoring_sources import load_sources_from_db, match_custom_label, list_custom
+        from app.services.zabbix_monitoring import run_zabbix_query
+
+        sources = load_sources_from_db(db)
+        zbx = [s for s in list_custom(sources) if s.collector_type == "zabbix"]
+        if not zbx:
+            return {"ok": False, "error": "Zabbix Other kaynağı yok", "source_kind": "zabbix"}
+
+        pin = (args.get("source_id") or (ctx or {}).get("monitoring_source") or "").strip()
+        if pin.startswith("custom:"):
+            pin = pin.split(":", 1)[1]
+        source_id = args.get("source_id") or (pin or None)
+        question = (args.get("question") or args.get("query") or (ctx or {}).get("message") or "")
+
+        if not source_id:
+            hits = [s for s in match_custom_label(question, sources) if s.collector_type == "zabbix"]
+            if len(hits) == 0 and len(zbx) == 1:
+                source_id = zbx[0].id
+            elif len(hits) == 1:
+                source_id = hits[0].id
+            elif len(hits) == 0:
+                return {
+                    "ok": False,
+                    "error": (
+                        "Zabbix için mesajda ayarlardaki label’ın tamamı geçmeli "
+                        f"(ör. {zbx[0].label!r}) veya source_id verin."
+                    ),
+                    "available_labels": [s.label for s in zbx],
+                    "source_kind": "zabbix",
+                }
+            else:
+                return {
+                    "ok": False,
+                    "error": "Birden fazla Zabbix label eşleşti.",
+                    "matches": [s.label for s in hits],
+                    "source_kind": "zabbix",
+                }
+
+        hostids = args.get("hostids")
+        if isinstance(hostids, str):
+            hostids = [x.strip() for x in hostids.split(",") if x.strip()]
+        out = run_zabbix_query(
+            mode=args.get("mode") or "overview",
+            source_id=source_id,
+            metric_id=args.get("metric_id") or args.get("metric"),
+            hostid=args.get("hostid"),
+            hostids=hostids,
+            host=args.get("host"),
+            groupid=args.get("groupid"),
+            search=str(args.get("search") or args.get("q") or ""),
+            range_sec=int(args.get("range_sec") or 900),
+            top_n=int(args.get("top_n") or 8),
+            question=question,
+            family=args.get("family"),
+            db=db,
+        )
+        label = next((s.label for s in zbx if s.id == source_id), source_id)
+        out["footnote"] = f"_Kaynak: zabbix · {label}_"
+        return out
+    except Exception as e:
+        logger.error("[Tool] zabbix_query hata: %s", e, exc_info=True)
         return {"ok": False, "error": str(e)}
 
 
@@ -3668,8 +3747,8 @@ TOOLS: Dict[str, Tool] = {
             "Other/custom monitoring kaynağı (READ-ONLY, yalnız Unified). "
             "Mesajda kaynak label’ının tamamı geçmeli veya source_id. "
             "collector_type prometheus|telegraf|opentelemetry → PromQL keşif/sorgu; "
-            "zabbix şimdilik kayıtlıdır, metrik adaptörü sonraki faz. "
-            "mode=list_sources|search|series|query."
+            "zabbix → otomatik zabbix_query (semantic metric_id). "
+            "mode=list_sources|search|series|query (Prom) veya overview|catalog|hosts|series (Zabbix)."
         ),
         parameters={
             "type": "object",
@@ -3677,6 +3756,7 @@ TOOLS: Dict[str, Tool] = {
                 "mode": {"type": "string"},
                 "source_id": {"type": "string"},
                 "metric": {"type": "string"},
+                "metric_id": {"type": "string"},
                 "promql": {"type": "string"},
                 "query": {"type": "string"},
                 "question": {"type": "string"},
@@ -3688,6 +3768,40 @@ TOOLS: Dict[str, Tool] = {
         build_command=lambda args: "",
         direct_handler=_custom_prometheus_query_handler,
         direct_label="Other Prometheus",
+    ),
+    "zabbix_query": Tool(
+        name="zabbix_query",
+        description=(
+            "Zabbix Other monitoring (READ-ONLY, yalnız Unified). "
+            "Mesajda Zabbix kaynak label’ı (ör. 'Datatem Zabbix') veya source_id. "
+            "Semantic catalog: metric_id=cpu_util|mem_used_pct|fs_used_pct|cpu_load1|… "
+            "(mode=catalog ile listele). "
+            "mode=overview|catalog|hosts|problems|coverage|series|top|host_values. "
+            "Ham Zabbix key uydurma — yalnız catalog metric_id kullan."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string"},
+                "source_id": {"type": "string"},
+                "metric_id": {"type": "string"},
+                "metric": {"type": "string"},
+                "hostid": {"type": "string"},
+                "host": {"type": "string"},
+                "hostids": {"type": "array", "items": {"type": "string"}},
+                "groupid": {"type": "string"},
+                "search": {"type": "string"},
+                "q": {"type": "string"},
+                "range_sec": {"type": "integer"},
+                "top_n": {"type": "integer"},
+                "family": {"type": "string"},
+                "question": {"type": "string"},
+            },
+        },
+        risk_level=RiskLevel.READ_ONLY,
+        build_command=lambda args: "",
+        direct_handler=_zabbix_query_handler,
+        direct_label="Zabbix monitoring",
     ),
     "kubevirt_vm_detail": Tool(
         name="kubevirt_vm_detail",
@@ -4271,6 +4385,7 @@ _TOOL_DOMAIN_OVERRIDE = {
     "ocp_resource_yaml": frozenset({"openshift"}),
     "virt_prometheus_query": frozenset({"vcenter"}),
     "custom_prometheus_query": frozenset({"infra"}),  # Unified’da label gate ile
+    "zabbix_query": frozenset({"infra"}),  # Unified + Zabbix Other label
     "kubevirt_vm_detail": frozenset({"openshift", "vcenter"}),
     "kubevirt_snapshots": frozenset({"openshift", "vcenter"}),
 }

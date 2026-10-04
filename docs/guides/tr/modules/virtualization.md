@@ -64,7 +64,7 @@ Bağlantı yoksa bu sayfalar boştur. Ekleme: **Entegrasyonlar → vCenter/OLVM*
   LLM → SSE yanıt
 ```
 
-Prometheus scrape yazılmaz. `/virt/monitoring` ve hub → Sanallaştırma **yalnız vCenter API → Timescale** (API/Prometheus toggle yok). Metrik listbox Timescale kolonlarının tamamını sunar; grafik serisi seçili nesneye kilitlidir.
+Prometheus scrape yazılmaz. `/virt/monitoring` ve hub → Sanallaştırma **vCenter ve OLVM/oVirt API → Timescale** (Prometheus ayrı bağlanır). Metrik listbox Timescale kolonlarının tamamını sunar; grafik serisi seçili nesneye kilitlidir.
 
 ---
 

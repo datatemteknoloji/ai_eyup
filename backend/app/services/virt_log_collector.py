@@ -119,6 +119,12 @@ def sync_virt_logs_to_db(db: Session) -> Dict[str, Any]:
     from app.services.openshift_virt_event_collector import sync_all_openshift_virt_events
 
     vcenter_result = sync_all_vcenter_events(db, hours=48)
+    try:
+        from app.services.ovirt_event_collector import sync_all_ovirt_events
+        ovirt_result = sync_all_ovirt_events(db, hours=48)
+    except Exception as exc:
+        logger.warning("oVirt event sync atlandı: %s", exc)
+        ovirt_result = {"success": False, "total_saved": 0, "errors": [str(exc)]}
 
     # 48 saatlik filtresiz tarama "son 7/30 gün" sorularını karşılamıyor
     # (login/logout gürültüsü sayfaları dolduruyor). Tip filtreli geniş pencere
@@ -174,16 +180,19 @@ def sync_virt_logs_to_db(db: Session) -> Dict[str, Any]:
         "total_saved": (
             saved
             + vcenter_result.get("total_saved", 0)
+            + ovirt_result.get("total_saved", 0)
             + openshift_virt_result.get("total_saved", 0)
             + (lifecycle_result.get("total_saved") or 0)
         ),
         "virt_saved": saved,
         "vcenter_saved": vcenter_result.get("total_saved", 0),
+        "ovirt_saved": ovirt_result.get("total_saved", 0),
         "lifecycle_saved": lifecycle_result.get("total_saved") or 0,
         "openshift_virt_saved": openshift_virt_result.get("total_saved", 0),
         "critical_hosts": len(data.get("critical_hosts", [])),
         "platform_logs": len(data.get("platform_logs", [])),
         "vcenter_sync": vcenter_result,
+        "ovirt_sync": ovirt_result,
         "lifecycle_sync": lifecycle_result,
         "openshift_virt_sync": openshift_virt_result,
     }

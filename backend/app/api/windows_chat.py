@@ -941,7 +941,9 @@ async def chat_stream(
                         if not _plan.need_prometheus:
                             return ""
                         from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
-                        return await PrometheusMetricsService().get_metrics_context_for_ai(message)
+                        return await PrometheusMetricsService().get_metrics_context_for_ai(
+                            message, kind="windows",
+                        )
                     except Exception:
                         return ""
 

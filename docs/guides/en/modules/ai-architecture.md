@@ -43,6 +43,9 @@ Settings → About → **AI Architecture** prints this text as PDF. A stale rule
 | RAG Admin API | `backend/app/api/rag.py` | ingest/search/reindex | Runbook/incident/knowledge yönetimi | PDF/text | chunk sayısı | Settings/Knowledge | `rag_service` | RAG lifecycle |
 | MCP API | `backend/app/api/mcp.py` | tool call + analyze | Linux MCP tool + LLM yorum | tool+host | tool result / LLM | MCP panel | `mcp_client`, LLM | Yan yüzey |
 | Knowledge API | `backend/app/api/knowledge.py` | pin/list | Manuel fact + RAG reindex | fact | persisted fact | ChatPinFact | `fact_learning`, RAG | Persistent memory yazımı |
+| Centrify Chat | `backend/app/api/centrify_chat.py` | `centrify_chat_stream` | Level 1 Centrify zone assistant (READ-ONLY) | `message`, `zone_id`, `session_id` | SSE token/done | `CentrifyPage` FAB | `_gather_centrify_context`, `_run_tool_if_needed`, Ollama/REMOTE_LLM | Separate surface; Centrify Postgres |
+
+**Centrify context/tools:** Context from Centrify Postgres. Sync prefers one WinRM `list_zone_inventory` call per zone (roles+rights+login, commands, assignments, computers, unix profiles, computer roles) with `sync_throttle` (min interval, zone delay, retry). Calculators in `query_service.py`: effective access, login diagnose, expiring assignments, `find_similar_roles`, `find_similar_commands`, `explain_role`, `explain_command`. Chat tools fence data as `<<<CENTRIFY_TOOL_DATA>>>`. REST `/centrify-mgmt/query/*`. Auth: `require_module("level1")`. UI: `CentrifyPage` FAB + markdown.
 
 ## 1.2 Decision / planning
 
@@ -281,7 +284,7 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 | Prompt | `_PLATFORM_HINTS["openshift"]` |
 | RAG | Seed `OCP-*.md`; ayrı vektör namespace yok |
 | APIs | OpenShift/K8s + KubeVirt client. No separate `/openshift/ask`; chat is `POST /chat/stream` + `platform=openshift` |
-| Monitoring UI | `/openshift/monitoring` — API mode: Virt-style overview (`metrics.k8s.io` → Timescale `ocp_resource_metrics`). Prometheus mode (default when an OpenShift-bound URL exists in Settings): **Kubernetes Views** (Global / Namespaces / Nodes / Pods); GPU DCGM + `kubevirt_vmi_*` kept as selectable templates (`/monitoring/prom/*`, `ocp_prometheus_query`). Hub: `/monitoring`. Other (binding=none): multiple sources + `collector_type` (prometheus\|telegraf\|opentelemetry\|zabbix); hub lists each by **label** (not a generic Other bucket). Prom-compatible → metric explorer; Zabbix register+test (charts/chat adapter later). Unified chat: full label → `custom_prometheus_query`. Linux `PROMETHEUS_URL` remains the linux seed. Chat API: `ocp_monitoring_query`; Prom: `ocp_prometheus_query`. |
+| Monitoring UI | `/openshift/monitoring` — API mode: Virt-style overview (`metrics.k8s.io` → Timescale `ocp_resource_metrics`). Prometheus mode (default when an OpenShift-bound URL exists in Settings): **Kubernetes Views** (Global / Namespaces / Nodes / Pods); GPU DCGM + `kubevirt_vmi_*` kept as selectable templates (`/monitoring/prom/*`, `ocp_prometheus_query`). Hub: `/monitoring` — Linux Live Metrics; Windows = WinRM API / `windows_exporter` Prom; Virt = vCenter/OLVM API / `binding=virtualization` Prom; Other (binding=none): multiple sources + `collector_type` (prometheus\|telegraf\|opentelemetry\|zabbix); hub lists each by **label**. Prom-compatible → metric explorer; **Zabbix** → Overview/Hosts/Charts/Problems/Match map (`/monitoring/zabbix/*`, semantic `metric_id` + item key match map). Unified chat: full label → `custom_prometheus_query` (Prom) or `zabbix_query`. Linux `PROMETHEUS_URL` remains the linux seed. Chat API: `ocp_monitoring_query`; Prom: `ocp_prometheus_query`. |
 | Access / RBAC UI | `/openshift/access` — Users, Groups, Identities, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, ServiceAccounts, subject lookup, token can-i, OAuth IdP (READ-ONLY cluster API). Chat: `ocp_access_query`. |
 | LLM | Tool JSON text |
 
@@ -315,7 +318,7 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 
 Ayrı modül değil. Tetik: `_PERF` / `_LIVE_RESOURCE_KW` / deep keywords.
 
-- Linux/Windows: Prometheus `get_metrics_context_for_ai` (tek JOIN tablosu; scrape’e dokunulmaz)
+- Linux/Windows: Prometheus `get_metrics_context_for_ai` (single JOIN table; do not touch scrape). Windows chat/unified: `kind="windows"` → `windows_exporter` presets/families (same column schema as Linux).
 - Virt: `vcenter_perf_query` + `db_metric_trend` + `virt_vm_metrics` / host metrics
 - Tool: `prometheus_query` (domain `infra`)
 
@@ -404,7 +407,8 @@ Virt DB tool domain: **`vcenter` only** (no `infra`). Hidden on Linux/Windows-on
 | `ocp_pod_logs` | Pod log read (CrashLoop diagnosis; READ-ONLY) |
 | `ocp_resource_yaml` | Resource YAML read (no apply; READ-ONLY) |
 | `virt_prometheus_query` | VMware Prometheus (vmware_exporter) |
-| `custom_prometheus_query` | Other source — Unified + full label / source_id; collector_type prometheus/telegraf/otel→PromQL (+ per-source job/extra_selectors); Zabbix later |
+| `custom_prometheus_query` | Other source — Unified + full label / source_id; collector_type prometheus/telegraf/otel→PromQL (+ per-source job/extra_selectors); zabbix→delegates to `zabbix_query` |
+| `zabbix_query` | Zabbix Other — Unified + full label; mode=overview\|catalog\|hosts\|problems\|coverage\|series\|top; semantic metric_id (cpu_util, mem_used_pct, …) + item key match map |
 | `list_kubevirt_vms` / `kubevirt_vm_detail` / `kubevirt_snapshots` | KubeVirt |
 | `list_datavolumes` / `list_ocp_migrations` | CDI / LM |
 
@@ -447,7 +451,7 @@ Canlı cellcli/ASMCMD yok. `connection_config` tool çıktısına girmez.
 | OpenShift/K8s/KubeVirt API | pod, event, VM, quota | Live | Structural | ocp/kubevirt tools |
 | OCP `metrics.k8s.io` | node/pod/vm instant CPU+memory | Live → Timescale samples | Structural | Monitoring API mode + `ocp_monitoring_query` / `/graph` |
 | OCP Prometheus | Kubernetes Views + DCGM + kubevirt_vmi_* | Live PromQL | Structural | Monitoring Prom mode + `ocp_prometheus_query` |
-| Other monitoring | Free sources (Prom family / Zabbix registry) | Live PromQL (compatible) | Discovery + label | Hub label list + Unified `custom_prometheus_query` |
+| Other monitoring | Free sources (Prom family / Zabbix) | Live PromQL or Zabbix history | Discovery + label + match map | Hub label list + Unified `custom_prometheus_query` / `zabbix_query` |
 | OCP DB cache | nodes/projects | Sync | Yapısal | db_list_ocp_* |
 | SSH | komut çıktısı | Canlı | Yarı yapısal | collector + get_* |
 | WinRM | PS/event | Canlı | Yarı yapısal | windows collect/tools |
@@ -1005,8 +1009,8 @@ Yeni mimari önermiyorum. Mevcut sistem: **kural tabanlı router + isteğe bağl
 - History: 8 mesaj. Episode: Redis 45 dk.
 - Token budget runtime setting, default 32k.
 - Prometheus sohbet context’i tek JOIN tablosu; `prometheus.yml` değişmez.
-- OpenShift Monitoring (`/openshift/monitoring`): **API mode** kube API + `metrics.k8s.io` → Timescale; **Prometheus mode** uses the OpenShift-bound registry source — default Kubernetes Views (Global/NS/Nodes/Pods, Grafana parity), GPU/kubevirt as side templates. Hub `/monitoring` picks module + Other **labels** (`collector_type`). Other chat is Unified-only with the configured label (`custom_prometheus_query`; no Views templates; Zabbix adapter later). No scrape writes.
-- Tools: `ocp_monitoring_query` (API/Timescale), `ocp_prometheus_query` (Views/GPU/VMI; mode=views|catalog|series|allocation|labels), `ocp_access_query` (Users/Groups/Roles/Bindings/IdP; READ-ONLY), `ocp_pod_logs` / `ocp_resource_yaml` (diagnosis; no apply), `virt_prometheus_query`, `custom_prometheus_query` (Other + collector_type).
+- OpenShift Monitoring (`/openshift/monitoring`): **API mode** kube API + `metrics.k8s.io` → Timescale; **Prometheus mode** uses the OpenShift-bound registry source — default Kubernetes Views (Global/NS/Nodes/Pods, Grafana parity), GPU/kubevirt as side templates. Hub `/monitoring` picks module + Other **labels** (`collector_type`). Other chat is Unified-only with the configured label (`custom_prometheus_query` for Prom; `zabbix_query` for Zabbix semantic catalog/match map). No scrape writes.
+- Tools: `ocp_monitoring_query` (API/Timescale), `ocp_prometheus_query` (Views/GPU/VMI; mode=views|catalog|series|allocation|labels), `ocp_access_query` (Users/Groups/Roles/Bindings/IdP; READ-ONLY), `ocp_pod_logs` / `ocp_resource_yaml` (diagnosis; no apply), `virt_prometheus_query`, `custom_prometheus_query` (Other Prom), `zabbix_query` (Other Zabbix).
 - Ayrı sohbetler: `/chat` (linux|openshift|exadata), `/windows-chat`, `/hypervisors/ask`, `/agent`, `/nlq`, `/rca`.
 
 # ASSUMPTIONS

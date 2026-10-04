@@ -169,6 +169,13 @@ def run_esx_metric_sync() -> Dict[str, Any]:
             logger.info("Celery fleet: ESX metric sync")
             result = sync_esx_metrics(db) or {}
             try:
+                from app.services.ovirt_infra_sync import sync_ovirt_infra
+                ovirt = sync_ovirt_infra(db) or {}
+                result["ovirt"] = ovirt
+            except Exception as ov_exc:
+                logger.warning("oVirt/OLVM host metric sync atlandı: %s", ov_exc)
+                result["ovirt"] = {"error": str(ov_exc)}
+            try:
                 from app.services.openshift_virt_host_metrics import sync_openshift_virt_host_metrics
                 ocp = sync_openshift_virt_host_metrics(db) or {}
                 result["openshift_virt"] = ocp

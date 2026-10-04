@@ -278,18 +278,34 @@ def _upsert_vm_record(
         if vm.get("os_type"):
             existing.os_type = vm["os_type"]
 
-    power = vm.get("power_state") or vm.get("status")
-    if power and not existing.vm_power_state:
+    power = vm.get("vm_power_state") or vm.get("power_state") or vm.get("status")
+    if power:
         existing.vm_power_state = str(power)
+    for src_key, dst in (
+        ("vm_host_name", "vm_host_name"),
+        ("vm_host_ref", "vm_host_ref"),
+        ("vm_cluster", "vm_cluster"),
+        ("vm_guest_os_full", "vm_guest_os_full"),
+        ("vm_guest_ip", "vm_guest_ip"),
+        ("vm_datastore", "vm_datastore"),
+        ("vm_network_info", "vm_network_info"),
+        ("vm_disks", "vm_disks"),
+        ("vm_disk_gb", "vm_disk_gb"),
+        ("vm_guest_hostname", "vm_guest_hostname"),
+    ):
+        val = vm.get(src_key)
+        if val not in (None, "", []):
+            setattr(existing, dst, val)
 
     db.flush()
 
     needs_enrichment = (
-        not existing.vm_disk_gb
-        or not existing.vm_tools_status
-        or not existing.vm_datastore
-        or not existing.vm_last_sync
-        or not existing.vm_name
+        not getattr(existing, "vm_disk_gb", None)
+        or not getattr(existing, "vm_tools_status", None)
+        or not getattr(existing, "vm_datastore", None)
+        or not getattr(existing, "vm_last_sync", None)
+        or not getattr(existing, "vm_name", None)
+        or not getattr(existing, "vm_host_name", None)
     )
     if preloaded_details:
         _enrich_server_from_client(
@@ -356,6 +372,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
         except Exception as e:
             errors.append(f"vCenter bağlantı hatası: {str(e)}")
     elif htype == "kvm":
+        from app.services.ovirt.ovirt_parse import OVirtError
         try:
             from app.services.ovirt.ovirt_client import OVirtClient
             client = OVirtClient(
@@ -365,10 +382,16 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
                 verify_ssl=False,
                 port=hypervisor.port or 443,
             )
-            _prog(phase="listing", percent=8, message="VM listesi alınıyor...")
-            vms = client.list_vms()
+            ok, detail = client.test_connection()
+            if not ok:
+                errors.append(f"oVirt bağlantı hatası: {detail or 'giriş başarısız'}")
+            else:
+                _prog(phase="listing", percent=8, message="VM listesi alınıyor...")
+                vms = client.list_vms()
         except ImportError:
             errors.append("oVirt client modülü bulunamadı")
+        except OVirtError as e:
+            errors.append(f"oVirt API hatası: {str(e)}")
         except Exception as e:
             errors.append(f"oVirt bağlantı hatası: {str(e)}")
     elif htype == "proxmox":
@@ -444,16 +467,19 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
 
     global_cred = db.query(GlobalCredential).first()
 
-    # vCenter: eksik meta için full_details'i 10 paralel worker ile önceden çek
+    # vCenter: eksik meta; oVirt/OLVM: her turda host/disk/OS yenile
     preloaded: dict = {}
     if (
         client
-        and htype == "vmware"
+        and htype in ("vmware", "kvm")
         and vms
         and hasattr(client, "fetch_full_details_parallel")
     ):
         need = []
         for vm in vms:
+            if htype == "kvm":
+                need.append(vm)
+                continue
             existing = _find_existing_server(db, hypervisor.id, vm)
             if (
                 existing is None
@@ -465,7 +491,8 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
                 need.append(vm)
         if need:
             logger.info(
-                "vCenter enrichment ön-çekim: %s VM (paralel)",
+                "%s enrichment ön-çekim: %s VM (paralel)",
+                htype,
                 len(need),
             )
             _prog(
@@ -533,6 +560,26 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
                 except Exception:
                     db.rollback()
                     raise
+
+        if not errors:
+            seen_ids = {
+                (vm.get("vm_id") or "").strip()
+                for vm in vms
+                if (vm.get("vm_id") or "").strip()
+            }
+            stale_ids = [
+                sid
+                for sid, vid in (
+                    db.query(Server.id, Server.hypervisor_vm_id)
+                    .filter(Server.hypervisor_id == hv_id, Server.hypervisor_vm_id.isnot(None))
+                    .all()
+                )
+                if (vid or "").strip() not in seen_ids
+            ]
+            if stale_ids:
+                from app.services.hypervisor_cleanup import delete_servers_cascade
+                pruned = delete_servers_cascade(db, stale_ids)
+                logger.info("Hypervisor %s: engine'de olmayan %s VM silindi", hv_id, pruned)
 
         hypervisor.last_sync = datetime.now(timezone.utc)
         db.add(hypervisor)

@@ -10,8 +10,9 @@ import { useAuth } from '../auth/AuthContext'
 import { useT } from '../i18n/LocaleProvider'
 import { MonitoringArchitectureHint } from '../components/monitoring/MonitoringArchitectureHint'
 import { CustomMetricExplorer } from '../components/monitoring/CustomMetricExplorer'
+import { ZabbixMonitoringView } from '../components/monitoring/ZabbixMonitoringView'
 import LiveMetrics from './LiveMetrics'
-import WindowsLiveMetrics from './WindowsLiveMetrics'
+import WindowsMonitoring from './WindowsMonitoring'
 import OpenShiftMonitoring from './OpenShiftMonitoring'
 import VirtMonitoring from './VirtMonitoring'
 
@@ -38,7 +39,7 @@ const MonitoringHub: React.FC = () => {
   const canOther = hasModule('executive') || hasModule('ai_automation') || hasModule('linux')
     || hasModule('windows') || hasModule('openshift') || hasModule('virtualization')
 
-  const { data: settings } = useQuery({
+  const { data: settings, isFetched: settingsFetched } = useQuery({
     queryKey: ['general-settings', 'hub'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/settings/`)
@@ -61,7 +62,10 @@ const MonitoringHub: React.FC = () => {
     ]
     if (canOther) {
       if (customSources.length === 0) {
-        list.push({ id: 'custom:__empty__', label: t('mon_other'), ok: true, hint: 'empty' })
+        // Ayarlar henüz gelmediyse placeholder koyma — kayıtlı custom:* seçimini silmesin
+        if (settingsFetched) {
+          list.push({ id: 'custom:__empty__', label: t('mon_other'), ok: true, hint: 'empty' })
+        }
       } else {
         for (const s of customSources) {
           const ct = s.collector_type || 'prometheus'
@@ -75,7 +79,7 @@ const MonitoringHub: React.FC = () => {
       }
     }
     return list.filter((m) => m.ok)
-  }, [hasModule, t, canOther, customSources])
+  }, [hasModule, t, canOther, customSources, settingsFetched])
 
   const [mod, setMod] = useState<HubModule>(() => {
     const saved = localStorage.getItem(LS_MOD) as HubModule | null
@@ -87,14 +91,24 @@ const MonitoringHub: React.FC = () => {
     const m = localStorage.getItem('ainew.ocp.monitoring.mode')
     return m === 'prometheus' ? 'prometheus' : 'api'
   })
+  const [virtDataMode, setVirtDataMode] = useState<'api' | 'prometheus'>(() => {
+    const m = localStorage.getItem('ainew.virt.monitoring.mode')
+    return m === 'prometheus' ? 'prometheus' : 'api'
+  })
+  const [winDataMode, setWinDataMode] = useState<'api' | 'prometheus'>(() => {
+    const m = localStorage.getItem('ainew.win.monitoring.mode')
+    return m === 'prometheus' ? 'prometheus' : 'api'
+  })
 
   useEffect(() => {
     setHeaderSlot(document.getElementById('monitoring-arch-header-slot'))
   }, [])
 
+  // Ayarlar yüklenmeden custom:* henüz modules'ta yok; linux'a düşürme
   useEffect(() => {
+    if (!settingsFetched) return
     if (!modules.find((m) => m.id === mod) && modules[0]) setMod(modules[0].id)
-  }, [modules, mod])
+  }, [modules, mod, settingsFetched])
 
   useEffect(() => {
     localStorage.setItem(LS_MOD, mod)
@@ -108,7 +122,6 @@ const MonitoringHub: React.FC = () => {
 
   const bound = useMemo(() => {
     if (isCustomMod(mod)) return customSources
-    if (mod === 'windows') return sources.filter((s) => s.binding === 'linux')
     return sources.filter((s) => s.binding === mod)
   }, [sources, mod, customSources])
 
@@ -123,8 +136,9 @@ const MonitoringHub: React.FC = () => {
   }, [bound, sourceId, activeCustom])
 
   const showSource = bound.length > 0 && (
-    mod === 'virtualization'
+    (mod === 'virtualization' && virtDataMode === 'prometheus')
     || (mod === 'openshift' && ocpDataMode === 'prometheus')
+    || (mod === 'windows' && winDataMode === 'prometheus' && bound.some((s) => s.binding === 'windows'))
   )
 
   const hubLeading = (
@@ -176,10 +190,12 @@ const MonitoringHub: React.FC = () => {
         </div>
       )}
       {mod === 'windows' && (
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-h-[2rem]">{hubLeading}</div>
-          <WindowsLiveMetrics embedded />
-        </div>
+        <WindowsMonitoring
+          embedded
+          sourceId={sourceId || undefined}
+          hubLeading={hubLeading}
+          onDataModeChange={setWinDataMode}
+        />
       )}
       {isCustomMod(mod) && (
         <div className="space-y-2">
@@ -201,11 +217,17 @@ const MonitoringHub: React.FC = () => {
               collectorType={activeCustom.collector_type || 'prometheus'}
             />
           )}
-          {activeCustom && !customPromCompatible && (
+          {activeCustom && !customPromCompatible && (activeCustom.collector_type || '') === 'zabbix' && (
+            <ZabbixMonitoringView
+              sourceId={activeCustom.id}
+              titleLabel={activeCustom.label}
+            />
+          )}
+          {activeCustom && !customPromCompatible && (activeCustom.collector_type || '') !== 'zabbix' && (
             <div className="rounded-xl border border-amber-500/20 bg-cyber-card p-6 space-y-2">
               <h3 className="text-sm font-medium text-white">{activeCustom.label}</h3>
               <p className="text-xs text-slate-400">
-                {t('mon_zabbix_pending', { type: activeCustom.collector_type || 'zabbix' })}
+                {t('mon_zabbix_pending', { type: activeCustom.collector_type || 'unknown' })}
               </p>
               <p className="text-[11px] text-slate-500 font-mono truncate">{activeCustom.url}</p>
             </div>
@@ -221,7 +243,12 @@ const MonitoringHub: React.FC = () => {
         />
       )}
       {mod === 'virtualization' && (
-        <VirtMonitoring embedded sourceId={sourceId || undefined} hubLeading={hubLeading} />
+        <VirtMonitoring
+          embedded
+          sourceId={sourceId || undefined}
+          hubLeading={hubLeading}
+          onDataModeChange={setVirtDataMode}
+        />
       )}
     </div>
   )

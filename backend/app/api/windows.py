@@ -111,6 +111,9 @@ def _collect_windows_server_rows(
     *,
     include_unclassified: bool = False,
     q: Optional[str] = None,
+    hypervisor_id: Optional[int] = None,
+    hypervisor_type: Optional[str] = None,
+    unassigned_hypervisor: bool = False,
 ) -> List[dict]:
     """Windows envanter satırlarını üretir (sayfalama öncesi)."""
     from app.services.platform_scope import is_windows_server
@@ -138,6 +141,16 @@ def _collect_windows_server_rows(
                 Server.ip_address.ilike(like),
             )
         )
+
+    if unassigned_hypervisor:
+        query = query.filter(Server.hypervisor_id.is_(None))
+    elif hypervisor_id is not None:
+        query = query.filter(Server.hypervisor_id == int(hypervisor_id))
+    elif hypervisor_type and hypervisor_type.lower() not in ("", "all"):
+        ht = hypervisor_type.lower().strip()
+        if ht in ("vmware", "kvm", "hyperv", "proxmox", "xen", "openshift_virt"):
+            from app.models.hypervisor import Hypervisor, HypervisorType
+            query = query.filter(Server.hypervisor.has(Hypervisor.hypervisor_type == HypervisorType(ht)))
 
     result = []
     for s in query.order_by(Server.name.asc()).all():
@@ -197,13 +210,21 @@ def list_windows_servers(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     q: Optional[str] = None,
+    hypervisor_id: Optional[int] = None,
+    hypervisor_type: Optional[str] = None,
+    unassigned_hypervisor: bool = False,
 ):
     """
     List Windows servers (paginated).
     Returns ``{ items, total, page, page_size }``.
     """
     result = _collect_windows_server_rows(
-        db, include_unclassified=include_unclassified, q=q
+        db,
+        include_unclassified=include_unclassified,
+        q=q,
+        hypervisor_id=hypervisor_id,
+        hypervisor_type=hypervisor_type,
+        unassigned_hypervisor=unassigned_hypervisor,
     )
     total = len(result)
     start = (page - 1) * page_size
@@ -219,9 +240,18 @@ def list_windows_servers(
 def windows_servers_summary(
     db: Session = Depends(get_db),
     include_unclassified: bool = False,
+    hypervisor_id: Optional[int] = None,
+    hypervisor_type: Optional[str] = None,
+    unassigned_hypervisor: bool = False,
 ):
     """Windows KPI sayıları."""
-    items = _collect_windows_server_rows(db, include_unclassified=include_unclassified)
+    items = _collect_windows_server_rows(
+        db,
+        include_unclassified=include_unclassified,
+        hypervisor_id=hypervisor_id,
+        hypervisor_type=hypervisor_type,
+        unassigned_hypervisor=unassigned_hypervisor,
+    )
     return {
         "total": len(items),
         "online": sum(1 for s in items if s.get("status") == "ONLINE"),
@@ -1045,5 +1075,53 @@ def test_global_winrm_credential(body: GlobalWinRMRequest):
         "username": body.username,
         "port": body.port,
     }
+
+
+# ── Windows Monitoring (API mode — Timescale metric_data) ─────────────────────
+
+@router.get("/monitoring/overview")
+def windows_monitoring_overview(db: Session = Depends(get_db)):
+    """Windows filo özeti — metric_data (windows_exporter sync) SoT."""
+    from app.services.windows_monitoring import overview
+    try:
+        return overview(db)
+    except Exception as e:
+        logger.exception("windows monitoring overview")
+        raise HTTPException(status_code=500, detail=str(e)[:300]) from e
+
+
+@router.get("/monitoring/objects")
+def windows_monitoring_objects(q: Optional[str] = None, db: Session = Depends(get_db)):
+    from app.services.windows_monitoring import list_objects
+    try:
+        return list_objects(db, q=q)
+    except Exception as e:
+        logger.exception("windows monitoring objects")
+        raise HTTPException(status_code=500, detail=str(e)[:300]) from e
+
+
+@router.get("/monitoring/metrics")
+def windows_monitoring_metrics():
+    from app.services.windows_monitoring import metric_catalog, DEFAULT_SLOTS
+    return {"ok": True, "metrics": metric_catalog(), "default_slots": list(DEFAULT_SLOTS)}
+
+
+@router.get("/monitoring/series")
+def windows_monitoring_series(
+    ids: str = "",
+    metric: str = "cpu_pct",
+    range: str = "2h",
+    db: Session = Depends(get_db),
+):
+    """Seçili Windows sunucuların Timescale serisi. ids=srv:1,srv:2 veya 1,2."""
+    from app.services.windows_monitoring import query_series
+    raw_ids = [x.strip() for x in (ids or "").split(",") if x.strip()]
+    try:
+        return query_series(db, ids=raw_ids, metric=metric, range_key=range)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("windows monitoring series")
+        raise HTTPException(status_code=500, detail=str(e)[:300]) from e
 
 

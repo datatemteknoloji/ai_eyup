@@ -16,6 +16,34 @@ from app.models.server import Server
 from app.services.hypervisor_cleanup import delete_servers_cascade
 from app.schemas.hypervisor import HypervisorCreate, HypervisorUpdate, HypervisorResponse
 
+_VIRT_HOST_METRIC_TYPES = (
+    HypervisorType.VMWARE,
+    HypervisorType.KVM,
+    HypervisorType.OPENSHIFT_VIRT,
+)
+
+
+def _split_roles(raw: Optional[str]) -> list:
+    if not raw:
+        return []
+    return [p.strip() for p in str(raw).replace("/", ",").split(",") if p.strip()]
+
+
+def _ocp_nodes_for_hypervisor(db: Session, hypervisor_id: int) -> dict:
+    hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
+    if not hv or hv.hypervisor_type != HypervisorType.OPENSHIFT_VIRT:
+        return {}
+    from app.models.openshift import OpenShiftNode
+    from app.services.openshift_virt_host_metrics import _resolve_cluster
+    cluster = _resolve_cluster(db, hv)
+    if not cluster:
+        return {}
+    return {
+        n.name: n
+        for n in db.query(OpenShiftNode).filter(OpenShiftNode.cluster_id == cluster.id).all()
+    }
+
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -214,6 +242,12 @@ def _latest_hosts_for_hypervisor(db: Session, hypervisor_id: int) -> list[dict]:
     )
     inv_by_ref = {i.host_ref: i for i in inv_rows}
 
+    def _looks_ip(val: str | None) -> bool:
+        s = (val or "").strip()
+        if not s:
+            return False
+        return s[0].isdigit() or ":" in s
+
     def _inv_dict(r):
         inv = inv_by_ref.get(r.host_ref)
         if not inv:
@@ -231,9 +265,67 @@ def _latest_hosts_for_hypervisor(db: Session, hypervisor_id: int) -> list[dict]:
             "last_synced_at": inv.last_synced_at.isoformat() if inv.last_synced_at else None,
         }
 
-    return [
-        {
+    # Aynı host_ref için eski kısa ad + yeni IP satırını tek karta indir.
+    by_key: dict = {}
+    for r in rows:
+        key = (r.host_ref or "").strip() or r.host_name
+        prev = by_key.get(key)
+        if prev is None or (r.timestamp and (not prev.timestamp or r.timestamp >= prev.timestamp)):
+            by_key[key] = r
+    rows = sorted(by_key.values(), key=lambda x: x.host_name or "")
+
+    from app.services.entity_projection import pick_mgmt_ip
+    from app.models.virt_datastore import VirtDatastore
+    from app.services.ovirt.ovirt_parse import aggregate_data_storage_usage
+
+    sd_used, sd_total, sd_pct = aggregate_data_storage_usage(
+        [
+            {"type": d.ds_type, "capacity_gb": d.capacity_gb, "used_gb": d.used_gb}
+            for d in db.query(VirtDatastore).filter(VirtDatastore.hypervisor_id == hypervisor_id).all()
+        ]
+    )
+
+    node_map = _ocp_nodes_for_hypervisor(db, hypervisor_id)
+    out = []
+    for r in rows:
+        invd = _inv_dict(r)
+        inv_row = inv_by_ref.get(r.host_ref)
+        ip = pick_mgmt_ip((invd or {}).get("vnics")) if invd else None
+        if not ip and _looks_ip(r.host_name):
+            ip = r.host_name
+        dns_name = None
+        if invd and isinstance(invd.get("dns"), dict):
+            dns_name = invd["dns"].get("host_name")
+        node = None
+        if node_map:
+            node = node_map.get(r.host_name)
+            if node is None and (r.host_ref or "").startswith("ocp-node/"):
+                node = node_map.get((r.host_ref or "").split("/", 1)[-1])
+        roles = []
+        node_name = None
+        if node is not None:
+            node_name = getattr(node, "name", None)
+            roles = _split_roles(getattr(node, "role", None))
+            meta = getattr(node, "meta_data", None) or {}
+            if isinstance(meta, dict):
+                ip = ip or (meta.get("ip_address") or meta.get("internal_ip") or None)
+        elif invd and isinstance(invd.get("dns"), dict):
+            roles = _split_roles(invd["dns"].get("roles"))
+        inv_name = getattr(inv_row, "host_name", None) if inv_row else None
+
+        def _first_hostname(*vals: str | None) -> str | None:
+            for v in vals:
+                s = (v or "").strip()
+                if s and not _looks_ip(s):
+                    return s
+            return None
+
+        display_name = _first_hostname(dns_name, node_name, inv_name, r.host_name) or r.host_name
+        out.append({
             "host_name": r.host_name,
+            "display_name": display_name,
+            "ip_address": ip,
+            "roles": roles,
             "host_ref": r.host_ref,
             "last_updated": r.timestamp.isoformat(),
             "cpu_usage_pct": r.cpu_usage_pct,
@@ -243,18 +335,17 @@ def _latest_hosts_for_hypervisor(db: Session, hypervisor_id: int) -> list[dict]:
             "mem_used_mb": r.mem_used_mb,
             "mem_total_mb": r.mem_total_mb,
             "mem_usage_pct": r.mem_usage_pct,
-            "ds_used_gb": r.ds_used_gb,
-            "ds_total_gb": r.ds_total_gb,
-            "ds_usage_pct": r.ds_usage_pct,
+            "ds_used_gb": r.ds_used_gb if r.ds_used_gb is not None else sd_used,
+            "ds_total_gb": r.ds_total_gb if r.ds_total_gb is not None else sd_total,
+            "ds_usage_pct": r.ds_usage_pct if r.ds_usage_pct is not None else sd_pct,
             "vms_running": r.vms_running,
             "vms_total": r.vms_total,
             "connection_state": r.connection_state,
             "power_state": r.power_state,
             "maintenance_mode": r.maintenance_mode,
-            "inventory": _inv_dict(r),
-        }
-        for r in rows
-    ]
+            "inventory": invd,
+        })
+    return out
 
 
 @router.get("/monitoring/overview")
@@ -369,12 +460,12 @@ def virt_prom_series(
 @router.get("/host-metrics")
 def get_all_host_metrics(db: Session = Depends(get_db)):
     """
-    Tüm VMware hypervisor'ların ESX host metrik özetini tek yanıtta döner.
+    Tüm vCenter / OLVM / OpenShift Virt host metrik özetini tek yanıtta döner.
     FE N-way /hypervisors/{id}/host-metrics yerine bunu kullanır.
     """
     hvs = (
         db.query(Hypervisor)
-        .filter(Hypervisor.hypervisor_type == HypervisorType.VMWARE)
+        .filter(Hypervisor.hypervisor_type.in_(_VIRT_HOST_METRIC_TYPES))
         .order_by(Hypervisor.name.asc())
         .all()
     )
@@ -869,16 +960,18 @@ async def trigger_esx_metric_sync(hypervisor_id: int, db: Session = Depends(get_
     hv = db.query(Hypervisor).filter(Hypervisor.id == hypervisor_id).first()
     if not hv:
         raise HTTPException(status_code=404, detail="Hypervisor bulunamadı")
-    if hv.hypervisor_type != HypervisorType.VMWARE:
-        raise HTTPException(status_code=400, detail="Sadece VMware hypervisor'lar destekleniyor")
+    if hv.hypervisor_type not in _VIRT_HOST_METRIC_TYPES:
+        raise HTTPException(status_code=400, detail="VMware, oVirt/OLVM veya OpenShift Virt hypervisor desteklenir")
 
     try:
         from app.services.esx_metric_sync import sync_esx_metrics
-        # Tek hypervisor için çalıştır (DB'den yalnızca bu ID ile filtrele)
-        # sync_esx_metrics tüm VMware'leri çalıştırır; ayrı bir db session açıyoruz
+        from app.services.ovirt_infra_sync import sync_ovirt_infra
+        from app.services.openshift_virt_host_metrics import sync_openshift_virt_host_metrics
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, sync_esx_metrics, db)
-        return {"success": True, "result": result}
+        ovirt = await loop.run_in_executor(None, sync_ovirt_infra, db)
+        ocp = await loop.run_in_executor(None, sync_openshift_virt_host_metrics, db)
+        return {"success": True, "result": result, "ovirt": ovirt, "openshift_virt": ocp}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

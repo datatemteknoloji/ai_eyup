@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from app.services.openshift.ocp_client import node_role_label, node_roles_from_labels
 from app.services.openshift_virt_host_metrics import _clamp_pct, sync_openshift_virt_host_metrics
 
 
@@ -10,6 +11,21 @@ def test_clamp_pct():
     assert _clamp_pct(-5) == 0.0
     assert _clamp_pct(34.15) == 34.1
     assert _clamp_pct(None) is None
+
+
+def test_compact_node_roles():
+    labels = {
+        "node-role.kubernetes.io/master": "",
+        "node-role.kubernetes.io/control-plane": "",
+        "node-role.kubernetes.io/worker": "",
+    }
+    roles = node_roles_from_labels(labels)
+    assert roles == ["master", "worker"]
+    assert node_role_label(roles) == "master, worker"
+
+
+def test_infra_only_role():
+    assert node_roles_from_labels({"node-role.kubernetes.io/infra": ""}) == ["infra"]
 
 
 def test_sync_writes_host_metrics():
@@ -30,7 +46,10 @@ def test_sync_writes_host_metrics():
             memory_gb=64,
             cpu_usage_pct=80,
             memory_usage_pct=40,
-        )
+            meta_data={"ip_address": "10.0.0.1"},
+            kubelet_version="v1.28",
+            role="master, worker",
+        ),
     ]
 
     db = MagicMock()

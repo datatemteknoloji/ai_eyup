@@ -1,0 +1,118 @@
+# Centrify / Delinea Server Suite Modülü
+
+Tasarım dokümanı: `docs/features/centrify-zone-management.md`
+
+## Mimari
+
+- Kod ainew **ana backend'inde** (`backend/app/`); Dropt sidecar'da değil.
+- API: `backend/app/api/centrify_mgmt.py` → `/api/v1/centrify-mgmt`
+- Servis: `backend/app/services/centrify/` (winrm_adapter, sync_service, provisioning_service, state_machine, query_service, circuit_breaker)
+- Model: `backend/app/models/centrify_zone.py`
+- PowerShell scriptleri: `backend/app/services/centrify/ps_scripts/*.ps1` — versiyonlanmış, kullanıcı girdisi interpolasyon yapılmaz
+- Frontend: `/level1/centrify` rotası; API çağrıları doğrudan ainew backend'ine (Dropt köprüsü yok)
+- AI asistan: `backend/app/api/centrify_chat.py` → `/api/v1/centrify-chat`
+
+## WinRM Gateway (Temel Mimari Kararı)
+
+- ainew **doğrudan AD'ye bağlanmaz** — ne LDAP ne Kerberos.
+- Centrify yönetimi, **Access Manager kurulu Windows sunucu** üzerinden yapılır.
+- ainew → WinRM (pywinrm, NTLM) → Windows sunucu → ADEdit/PowerShell → AD.
+- Mevcut `backend/app/services/windows/winrm_client.py` üzerine inşa edilir.
+- `WinRMCentrifyAdapter` adaptör pattern'i kullanır; yarın başka yola geçilirse yalnızca adaptör değişir.
+- ainew'de ADEdit/centrifydc kurulumu **gerekmez**; ADEdit Windows sunucuda mevcut.
+- AD host/port, Zone Base DN, keytab dosyası — ainew'de **yapılandırılmaz**. Windows sunucu zaten domain-joined.
+
+## Veritabanı
+
+- **Ayrı Postgres container** (`centrify-db :5434`) — ainew ve Dropt DB'den bağımsız
+- Dropt pattern'iyle tutarlı; izolasyon + bağımsız yedek/restore
+- `centrify_integration_config` tablosunda WinRM bağlantı bilgileri (host, port, https, service_account, password_enc)
+
+## Okuma / Yazma ayrımı
+
+- **Ağaç ve listeler** Centrify DB'den gelir — hızlı, WinRM request path'te çağrılmaz.
+- **Senkronizasyon** WinRM + PowerShell/ADEdit ile periyodik; zone nesnelerini JSON olarak alır, DB'ye yazar.
+- **Yazma** WinRM + ADEdit/PowerShell — Windows sunucuya komut gönderir.
+- Yazma sonrası hedefli yenileme: etkilenen nesne AD'den okunup DB güncellenir.
+
+## Kimlik doğrulama
+
+- **Şifre birincil** (mevcut `service_centrify` hesabı + şifre, `CredentialManager` ile şifreli)
+- **Keytab opsiyonel** (ileride geçiş; şu an yalnızca şifre var)
+- Circuit breaker: 2 auth fail → tüm işlemler durur; admin reset gerekir
+- Auth hatası = PERMANENT → otomatik retry **YASAK** (lockout koruması)
+
+## Kuyruk
+
+- Mevcut Celery + Redis (`worker.py`); yeni task isimleri `centrify.*`
+- **Ayrı queue** (`-Q centrify`) — ana queue'yu bloklamaz
+- Zone kilidi: `fleet_mutex.py` pattern'i → `fleet_lock(f"centrify_zone:{zone_id}")`
+
+## RBAC
+
+- Modül: `centrify` (ayrı modül, `level1`'den bağımsız yetki)
+- Granüler: `centrify.read`, `.group_membership`, `.role_assignment`, `.role_define`, `.command_define`, `.approve`
+- Dört göz: kendi isteğini kendi onaylama yasak
+
+## Entegrasyon yapılandırması (4 alan)
+
+- Windows sunucu IP/hostname (Access Manager kurulu)
+- WinRM portu (varsayılan 5985)
+- Kullanıcı adı (`service_centrify`)
+- Şifre
+
+Mevcut Ayarlar → Kimlik/AD yapılandırmasından ayrıdır. Centrify modülü o ayarları **kullanmaz**.
+
+## UI — Kullanıcı dostu arayüz
+
+- Zone ağacı (sol panel) + detay alanı (sağ panel)
+- Rol satırında sağ tık / ⋮ menüsü: Düzenle, Kopyala, Komutları Al/Ver, Overwrite, Atamaları Gör, Sil
+- **Kopyalama:** Komutlarıyla klonla, hedef zone + yeni ad seçimi
+- **Overwrite:** Diff önizlemesi (eklenen/silinen/aynı kalan komutlar) + etkilenen kullanıcı uyarısı
+- **Diff:** İki rol arasındaki farkı gösteren karşılaştırma paneli
+- Zorunlu gerekçe alanı (yazma işlemlerinde)
+- İşlemler paneli (daraltılabilir, alt kısımda)
+
+## Centrify AI Asistanı
+
+- Sayfaya özel asistan; yalnızca Centrify sayfasında görünür (FAB veya panel)
+- Context (`_gather_centrify_context`): zone hiyerarşisi + her zone için roller (login bayrakları: password/sso/mfa + komut listesi), komutlar, **computers** (name/fqdn/os/agent), atamalar (**computer-scope host adı/FQDN**)
+- Boş kümeler açıkça "0" olarak verilir; parent→child miras bu üründe varsayılmaz (yalnızca kayıtlı assignment)
+- Sync: `list_zone_inventory.ps1` (zone başına 1 WinRM) — roller+rights+login, komutlar, atamalar, computers, unix, computer roles; fallback parçalı listeler. Throttle: `CENTRIFY_SYNC_MIN_INTERVAL_MS`, `CENTRIFY_SYNC_ZONE_DELAY_SEC`, `CENTRIFY_SYNC_INVENTORY_TIMEOUT`
+- Rol↔komut üyeliği + login bayrakları DB'ye yazılır (parent zincirinde tepeden komut eşlemesi)
+- Hesaplayıcılar: effective access, login diagnose, expiring, similar roles/commands, explain role/command — REST `/centrify-mgmt/query/*` + chat tools (`<<<CENTRIFY_TOOL_DATA>>>`)
+- Auth: chat `require_module("level1")`
+- Endpoint: `/api/v1/centrify-chat/stream` (SSE)
+
+## Dropt ilişkisi
+
+- `dropt/.../centrify_store.py` hostname join/leave için **ayrı kalır, dokunulmaz**
+- Zone yönetimi farklı kapsam; aynı hesabı (`service_centrify`) paylaşabilir ama bağımsız yapılandırma
+
+## management_state
+
+`imported_readonly` → `managed`. Uygulama `managed` olmayan nesneyi değiştirmez/silmez.
+
+## Durum makinesi
+
+`requested → pending_approval → approved → provisioning → written_to_ad → verified → completed`
+Hata dalları: `failed | ambiguous | cancelled | rolled_back`. Tek modülde tanımlı.
+
+## i18n
+
+Teknik adlar EN: Zone, Role, Right, Command, Computer Role, Assignment, UNIX Profile.
+UI fiilleri çevrilir: Oluştur, Sil, Onayla, Ata, Kopyala, Üzerine Yaz.
+
+## Güvenlik
+
+- Tier 0'a yakın; komut/right tanımlama en riskli → şablon + beyaz liste + zorunlu ikinci onay
+- Şifre `CredentialManager` (AES/Fernet) ile şifreli saklanır; WinRM çıktısında hassas veri maskelenir
+- Kullanıcı girdisi PowerShell'e interpolasyon yapılmaz — parametre olarak geçilir
+- Centrify'da oluşan hiçbir hata ainew genelini etkilemez (ayrı DB, ayrı queue, circuit breaker)
+- ainew → Windows sunucu: yalnızca WinRM (5985/5986); doğrudan DC'lere bağlantı yoktur
+- Kod/log/imajda sır yok
+
+## Ağ
+
+ainew → Windows sunucu: WinRM 5985 (veya 5986 HTTPS)
+ainew → DC'ler: **bağlantı yok** (AD iletişimi Windows sunucu üzerinden)

@@ -20,6 +20,28 @@ router = APIRouter()
 _LIST_PAGE_SIZE_DEFAULT = 50
 _LIST_PAGE_SIZE_MAX = 200
 
+_HV_TYPE_ALIASES = {
+    "vmware": "vmware",
+    "vcenter": "vmware",
+    "kvm": "kvm",
+    "olvm": "kvm",
+    "ovirt": "kvm",
+    "openshift": "openshift_virt",
+    "openshift_virt": "openshift_virt",
+    "ocp": "openshift_virt",
+}
+
+
+def _parse_hypervisor_types(raw: Optional[str]) -> Optional[list]:
+    if not raw:
+        return None
+    out: list = []
+    for part in str(raw).split(","):
+        mapped = _HV_TYPE_ALIASES.get(part.strip().lower())
+        if mapped and mapped not in out:
+            out.append(mapped)
+    return out or None
+
 # Create sonrası SSH/OS probe — UI'yi bloklamamak için kısa timeout
 _CREATE_SSH_CONNECT_TIMEOUT = 6.0
 _CREATE_SSH_CMD_TIMEOUT = 12
@@ -149,6 +171,10 @@ def _apply_server_list_filters(
     node_exporter: Optional[str] = None,
     ip: Optional[str] = None,
     name_mismatch: Optional[bool] = None,
+    hypervisor_id: Optional[int] = None,
+    hypervisor_type: Optional[str] = None,
+    hypervisor_types: Optional[str] = None,
+    unassigned_hypervisor: Optional[bool] = None,
 ):
     if q and q.strip():
         like = f"%{q.strip()}%"
@@ -203,6 +229,25 @@ def _apply_server_list_filters(
             )
     if name_mismatch is True:
         query = query.filter(_name_mismatch_sql_filter())
+    if unassigned_hypervisor:
+        query = query.filter(Server.hypervisor_id.is_(None))
+    elif hypervisor_id is not None:
+        query = query.filter(Server.hypervisor_id == int(hypervisor_id))
+    else:
+        from app.models.hypervisor import Hypervisor, HypervisorType
+        types = list(_parse_hypervisor_types(hypervisor_types) or [])
+        if hypervisor_type and hypervisor_type.lower() not in ("", "all"):
+            mapped = _parse_hypervisor_types(hypervisor_type) or (
+                [hypervisor_type.lower().strip()]
+                if hypervisor_type.lower().strip() in ("vmware", "kvm", "hyperv", "proxmox", "xen", "openshift_virt")
+                else []
+            )
+            for item in mapped:
+                if item not in types:
+                    types.append(item)
+        if types:
+            enums = [HypervisorType(ht) for ht in types]
+            query = query.filter(Server.hypervisor.has(Hypervisor.hypervisor_type.in_(enums)))
     return query
 
 
@@ -594,6 +639,10 @@ def list_servers(
     ip: Optional[str] = None,
     name_mismatch: Optional[bool] = None,
     include_connection_config: bool = False,
+    hypervisor_id: Optional[int] = None,
+    hypervisor_type: Optional[str] = None,
+    hypervisor_types: Optional[str] = None,
+    unassigned_hypervisor: bool = False,
 ):
     """
     Sunucuları sayfalı listele.
@@ -622,6 +671,10 @@ def list_servers(
             node_exporter=node_exporter,
             ip=ip,
             name_mismatch=name_mismatch,
+            hypervisor_id=hypervisor_id,
+            hypervisor_type=hypervisor_type,
+            hypervisor_types=hypervisor_types,
+            unassigned_hypervisor=unassigned_hypervisor or None,
         )
         total = query.count()
         servers = (
@@ -652,6 +705,10 @@ def list_servers(
 def servers_summary(
     db: Session = Depends(get_db),
     platform: str | None = None,
+    hypervisor_id: Optional[int] = None,
+    hypervisor_type: Optional[str] = None,
+    hypervisor_types: Optional[str] = None,
+    unassigned_hypervisor: bool = False,
 ):
     """KPI / dashboard için aggregate sayılar — full envanter çekilmesin."""
     try:
@@ -660,6 +717,13 @@ def servers_summary(
             if platform in ("linux", "windows", "virt", "exadata"):
                 from app.services.platform_scope import apply_server_platform_filter
                 q = apply_server_platform_filter(q, platform, db)
+            q = _apply_server_list_filters(
+                q,
+                hypervisor_id=hypervisor_id,
+                hypervisor_type=hypervisor_type,
+                hypervisor_types=hypervisor_types,
+                unassigned_hypervisor=unassigned_hypervisor or None,
+            )
             return q
 
         total = _base().count()

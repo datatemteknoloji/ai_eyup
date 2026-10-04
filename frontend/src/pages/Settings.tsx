@@ -1831,13 +1831,14 @@ const Settings: React.FC = () => {
       if (!r.ok) throw new Error(data.detail || t('set_mon_test_fail'))
       const ok = !!data.ok
       const extra = data.zabbix_version ? ` · zabbix ${data.zabbix_version}` : ''
+      const errExtra = data.error ? ` — ${data.error}` : ''
       setSrcTestMsg((m) => ({
         ...m,
         [key]: {
           ok,
           text: ok
             ? t('set_mon_test_ok', { code: data.status_code || 200 }) + extra
-            : t('set_mon_test_bad', { code: data.status_code || '?' }),
+            : (t('set_mon_test_bad', { code: data.status_code || '?' }) + extra + errExtra),
         },
       }))
     } catch (e: any) {
@@ -3262,6 +3263,7 @@ const Settings: React.FC = () => {
                                 } : x))}
                                 className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
                               >
+                                <option value="windows">Windows</option>
                                 <option value="openshift">OpenShift</option>
                                 <option value="virtualization">Virtualization</option>
                                 <option value="none">{t('set_mon_binding_none')}</option>

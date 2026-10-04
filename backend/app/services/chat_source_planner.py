@@ -249,6 +249,8 @@ def build_followup_suggestions(plan: SourcePlan, used_sources: Optional[List[str
         items.append({"type": "verify", "label": "SSH ile iostat/journalctl kanıtını doğrula"})
     if "windows" in plan.domains:
         items.append({"type": "inspect", "label": "Windows event log ve WinRM sağlık özetini getir"})
+        if plan.need_prometheus or "prometheus" in used:
+            items.append({"type": "verify", "label": "windows_exporter CPU/RAM/disk C: metriklerini getir"})
     if plan.need_rag:
         items.append({"type": "inspect", "label": "İlgili runbook ve benzer incident'lara bak"})
     if not items:

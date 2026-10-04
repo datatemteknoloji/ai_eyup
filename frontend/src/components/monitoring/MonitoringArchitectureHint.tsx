@@ -19,6 +19,7 @@ flowchart TB
     direction LR
     V["Virt Prom URL"]
     L["Linux Prom URL"]
+    W["Windows jobs / optional Prom"]
     O["OpenShift Prom URL<br/>+ token"]
   end
 
@@ -33,12 +34,14 @@ flowchart TB
       Hub["/monitoring hub"]
       VirtPage["/virt/monitoring"]
       OcpPage["/openshift/monitoring"]
+      WinPage["Windows WinRM / exporter"]
       LinuxPage["/metrics<br/>Canlı Metrikler"]
     end
     Shell["Shared MonitoringShell"]
     Hub --> Shell
     VirtPage --> Shell
     OcpPage --> Shell
+    WinPage --> Shell
     Hub -.-> LinuxPage
   end
 
@@ -46,8 +49,10 @@ flowchart TB
     direction LR
     ApiOcp["metrics.k8s.io<br/>Timescale"]
     ApiVirt["vCenter<br/>Timescale"]
+    ApiWin["WinRM canlı"]
     PromOcp["OCP Prom<br/>DCGM + kubevirt"]
     PromVirt["VMware exporter<br/>Prom"]
+    PromWin["windows_exporter"]
     PromLinux["Linux<br/>node-exporter"]
   end
 
@@ -64,8 +69,10 @@ flowchart TB
   resolver --> chat
   Shell -->|api| ApiOcp
   Shell -->|api| ApiVirt
+  Shell -->|api| ApiWin
   Shell -->|prometheus| PromOcp
   Shell -->|prometheus| PromVirt
+  Shell -->|prometheus| PromWin
   LinuxPage -->|prometheus| PromLinux
 `
 

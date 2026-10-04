@@ -7,7 +7,7 @@ sanal makine CPU/RAM snapshot'ı metric_data'ya yazılır.
 """
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
 import httpx
 from sqlalchemy.orm import Session
@@ -654,7 +654,10 @@ class MetricSyncService:
 
         for hyp_id, group in by_hyp.items():
             hyp = db.query(Hypervisor).filter(Hypervisor.id == hyp_id).first()
-            if not hyp or hyp.hypervisor_type != HypervisorType.VMWARE:
+            if not hyp:
+                continue
+            htype = hyp.hypervisor_type.value if hyp.hypervisor_type else ""
+            if htype not in ("vmware", "kvm"):
                 continue
             # ip_address öncelikli — hostname alanına yanlışlıkla görünen ad
             # (ör. "Vcenter datatem") girilmiş olabilir; inventory_sync_service
@@ -665,6 +668,40 @@ class MetricSyncService:
             if not (vc_host and hyp.username and vc_pass):
                 continue
             try:
+                if htype == "kvm":
+                    from app.services.ovirt.ovirt_client import OVirtClient
+                    ov = OVirtClient(
+                        host=vc_host, username=hyp.username, password=vc_pass,
+                        port=hyp.port or 443, verify_ssl=False,
+                    )
+                    live = ov.get_all_vm_live_stats() or []
+                    by_ref = {str(x.get("vm_ref")): x for x in live if x.get("vm_ref")}
+                    by_name = {(x.get("name") or "").lower(): x for x in live if x.get("name")}
+                    resolved = []
+                    for srv in group:
+                        stats = None
+                        vm_id = srv.hypervisor_vm_id
+                        if vm_id and str(vm_id) in by_ref:
+                            stats = by_ref[str(vm_id)]
+                        elif (srv.name or "").lower() in by_name:
+                            stats = by_name[(srv.name or "").lower()]
+                        if not stats:
+                            continue
+                        vm_ref = str(srv.hypervisor_vm_id or stats.get("vm_ref") or "")
+                        resolved.append((srv, stats, vm_ref or None))
+                    now = datetime.now(timezone.utc)
+                    n = _write_vm_metric_rows(db, hyp.id, resolved, {}, now)
+                    total_metrics += n
+                    synced_servers += len(resolved)
+                    for srv, stats, _ref in resolved:
+                        try:
+                            dicts = _vmware_metric_row_dicts(srv, stats or {}, now)
+                            if dicts:
+                                total_metrics += _insert_metric_rows(db, dicts)
+                        except Exception:
+                            pass
+                    continue
+
                 vc = VCenterClient(
                     host=vc_host,
                     username=hyp.username,
@@ -825,7 +862,10 @@ class MetricSyncService:
         Bir VM'de node_exporter/windows_exporter çalışıyor olsa bile metrikleri
         vCenter'dan alınır; Prometheus'a hiç sorgu atılmaz.
         """
-        candidates = db.query(Server).filter(Server.status == "ONLINE").all()
+        from sqlalchemy import or_
+        candidates = db.query(Server).filter(
+            or_(Server.status == "ONLINE", Server.hypervisor_id.isnot(None))
+        ).all()
 
         physical_servers: List[Server] = []
         vm_servers: List[Server] = []

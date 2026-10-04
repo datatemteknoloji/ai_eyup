@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Database, Cloud, Server, Layers, FileUp, RefreshCw,
-  AlertTriangle, CheckCircle2, Merge, ChevronRight, Boxes,
+  AlertTriangle, CheckCircle2, Merge, ChevronRight, Boxes, Shield,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useT } from '../i18n/LocaleProvider'
@@ -13,6 +13,7 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
   physical: <Server size={22} />,
   exadata: <Layers size={22} />,
   openshift: <Boxes size={22} />,
+  centrify: <Shield size={22} />,
 }
 
 export default function IntegrationsHub() {
@@ -105,12 +106,17 @@ export default function IntegrationsHub() {
                   <ChevronRight size={16} className="text-slate-600 group-hover:text-blue-400" />
                 </div>
                 <p className="text-xs text-slate-500 mt-1">{src.description}</p>
-                <div className="flex gap-3 mt-2 text-xs">
+                <div className="flex gap-3 mt-2 text-xs flex-wrap">
                   <span className="text-slate-400">{t('int_records')} <strong className="text-white">{src.count ?? 0}</strong></span>
                   {src.vm_count != null && <span className="text-slate-400">VM: <strong className="text-white">{src.vm_count}</strong></span>}
                   {src.rack_count != null && <span className="text-slate-400">Rack: <strong className="text-white">{src.rack_count}</strong></span>}
                   {src.node_count != null && <span className="text-slate-400">Node: <strong className="text-white">{src.node_count}</strong></span>}
                   {src.project_count != null && <span className="text-slate-400">{t('int_project')} <strong className="text-white">{src.project_count}</strong></span>}
+                  {src.id === 'centrify' && (
+                    src.enabled
+                      ? <span className="inline-flex items-center gap-1 text-green-400"><CheckCircle2 size={12} /> Bağlı</span>
+                      : <span className="inline-flex items-center gap-1 text-amber-400"><AlertTriangle size={12} /> Yapılandırma Gerekli</span>
+                  )}
                 </div>
               </div>
             </Link>

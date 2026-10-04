@@ -181,7 +181,7 @@ export default function OpenShiftAccessPage() {
   const items = useMemo(() => listQ.data?.items || [], [listQ.data])
 
   return (
-    <div className="px-4 pt-3 pb-6 max-w-[1600px] mx-auto space-y-4">
+    <div className="px-4 pt-3 pb-6 max-w-[1800px] mx-auto space-y-4 w-full">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-white flex items-center gap-2">
@@ -283,30 +283,30 @@ export default function OpenShiftAccessPage() {
             </div>
           )}
 
-          <div className="grid lg:grid-cols-[1fr_360px] gap-3">
-            <div className="rounded-xl border border-white/[0.06] bg-cyber-card overflow-hidden">
-              <div className="px-3 py-2 text-[10px] uppercase text-slate-500 border-b border-white/[0.04] flex justify-between">
-                <span>{listKind}</span>
-                <span>{listQ.data?.count ?? '…'} {t('ocp_acc_items')}</span>
+          <div className="grid lg:grid-cols-[minmax(0,38%)_minmax(0,1fr)] gap-3 items-start">
+            <div className="rounded-xl border border-white/[0.06] bg-cyber-card overflow-hidden min-w-0">
+              <div className="px-3 py-2 text-[10px] uppercase text-slate-500 border-b border-white/[0.04] flex justify-between gap-2">
+                <span className="truncate">{listKind}</span>
+                <span className="shrink-0 tabular-nums">{listQ.data?.count ?? '…'} {t('ocp_acc_items')}</span>
               </div>
-              <div className="max-h-[520px] overflow-y-auto">
+              <div className="max-h-[min(70vh,640px)] overflow-y-auto">
                 {listQ.isLoading && <p className="p-4 text-xs text-slate-500">{t('mon_loading')}</p>}
                 {items.map((it: any) => (
                   <button
                     key={`${it.namespace}:${it.name}:${it.uid || it.name}`}
                     type="button"
                     onClick={() => setSelected(it)}
-                    className={`w-full text-left px-3 py-2 border-b border-white/[0.03] hover:bg-white/[0.03] ${
+                    className={`w-full text-left px-3 py-2 border-b border-white/[0.03] hover:bg-white/[0.03] min-w-0 ${
                       selected?.name === it.name && selected?.namespace === it.namespace
                         ? 'bg-blue-600/15'
                         : ''
                     }`}
                   >
-                    <div className="flex items-center gap-2 text-xs text-slate-200">
+                    <div className="flex items-center gap-2 text-xs text-slate-200 min-w-0">
                       <RowIcon kind={listKind} />
-                      <span className="font-mono truncate flex-1">{it.name}</span>
+                      <span className="font-mono truncate flex-1 min-w-0">{it.name}</span>
                       {it.namespace ? (
-                        <span className="text-[10px] text-slate-500 font-mono shrink-0">{it.namespace}</span>
+                        <span className="text-[10px] text-slate-500 font-mono shrink-0 max-w-[40%] truncate">{it.namespace}</span>
                       ) : null}
                       <ChevronRight size={12} className="text-slate-600 shrink-0" />
                     </div>
@@ -319,7 +319,7 @@ export default function OpenShiftAccessPage() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-3 min-h-[200px]">
+            <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-3 min-h-[200px] min-w-0 overflow-hidden">
               {!selected && (
                 <p className="text-xs text-slate-500 py-8 text-center">{t('ocp_acc_pick')}</p>
               )}
@@ -487,8 +487,8 @@ function RowHint({ item, kind }: { item: any; kind: string }) {
   }
   if (kind === 'users') {
     return (
-      <div className="text-[10px] text-slate-500 mt-0.5 truncate">
-        {(item.identities || []).slice(0, 2).join(', ') || item.full_name || '—'}
+      <div className="text-[10px] text-slate-500 mt-0.5 truncate pl-5 min-w-0">
+        {(item.identities || []).slice(0, 1).join(', ') || item.full_name || '—'}
       </div>
     )
   }
@@ -559,28 +559,32 @@ function OverviewPanel({ data, loading, error, t }: any) {
 function DetailPanel({ item, detail, loading, listKind, t, onLookupSubject }: any) {
   const full = detail?.item || item
   return (
-    <div className="space-y-2 text-xs">
+    <div className="space-y-2 text-xs min-w-0 max-w-full overflow-x-hidden">
       <div className="font-mono text-sm text-white break-all">{full.name}</div>
-      {full.namespace ? <div className="text-slate-500">ns: {full.namespace}</div> : null}
+      {full.namespace ? <div className="text-slate-500 break-all">ns: {full.namespace}</div> : null}
       {loading && <p className="text-slate-500">{t('mon_loading')}</p>}
-      {full.full_name ? <div>fullName: {full.full_name}</div> : null}
+      {full.full_name ? <div className="break-words">fullName: {full.full_name}</div> : null}
       {full.identities?.length ? (
-        <div>
+        <div className="min-w-0">
           <div className="text-slate-500 mb-1">identities</div>
-          <ul className="space-y-0.5 font-mono text-[11px] text-slate-300">
-            {full.identities.map((id: string) => <li key={id}>{id}</li>)}
+          <ul className="space-y-1.5 font-mono text-[11px] text-slate-300">
+            {full.identities.map((id: string) => (
+              <li key={id} className="break-all leading-snug rounded bg-black/20 px-2 py-1.5 border border-white/[0.04]">
+                {id}
+              </li>
+            ))}
           </ul>
         </div>
       ) : null}
       {full.users?.length ? (
-        <div>
+        <div className="min-w-0">
           <div className="text-slate-500 mb-1">members ({full.user_count})</div>
           <ul className="max-h-40 overflow-y-auto space-y-0.5 font-mono text-[11px] text-slate-300">
             {full.users.map((u: string) => (
-              <li key={u}>
+              <li key={u} className="min-w-0">
                 <button
                   type="button"
-                  className="hover:text-blue-300"
+                  className="hover:text-blue-300 break-all text-left"
                   onClick={() => onLookupSubject('User', u)}
                 >
                   {u}
@@ -591,19 +595,19 @@ function DetailPanel({ item, detail, loading, listKind, t, onLookupSubject }: an
         </div>
       ) : null}
       {full.role_ref && (
-        <div className="text-slate-300">
+        <div className="text-slate-300 break-all">
           roleRef: <span className="font-mono">{full.role_ref.kind}/{full.role_ref.name}</span>
         </div>
       )}
       {full.subjects?.length ? (
-        <div>
+        <div className="min-w-0">
           <div className="text-slate-500 mb-1">subjects</div>
           <ul className="max-h-40 overflow-y-auto space-y-1 text-[11px]">
             {full.subjects.map((s: any, i: number) => (
-              <li key={i} className="flex justify-between gap-2">
+              <li key={i} className="min-w-0">
                 <button
                   type="button"
-                  className="font-mono text-slate-300 hover:text-blue-300 text-left truncate"
+                  className="font-mono text-slate-300 hover:text-blue-300 text-left break-all"
                   onClick={() => onLookupSubject(s.kind || 'User', s.name, s.namespace)}
                 >
                   {s.kind}/{s.namespace ? `${s.namespace}/` : ''}{s.name}
@@ -614,11 +618,11 @@ function DetailPanel({ item, detail, loading, listKind, t, onLookupSubject }: an
         </div>
       ) : null}
       {full.rules?.length ? (
-        <div>
+        <div className="min-w-0">
           <div className="text-slate-500 mb-1">rules ({full.rule_count})</div>
           <ul className="max-h-48 overflow-y-auto space-y-1.5 text-[10px] font-mono text-slate-400">
             {full.rules.slice(0, 40).map((r: any, i: number) => (
-              <li key={i} className="border-b border-white/[0.04] pb-1">
+              <li key={i} className="border-b border-white/[0.04] pb-1 break-all">
                 <div>verbs: {(r.verbs || []).join(', ')}</div>
                 <div>resources: {(r.resources || []).join(', ') || '—'}</div>
                 <div>apiGroups: {(r.api_groups || []).join(', ') || '""'}</div>

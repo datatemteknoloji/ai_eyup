@@ -368,6 +368,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       type: 'group', key: 'level1', name: t('nav_level1'), icon: <Wrench size={18} />, moduleId: 'level1',
       children: [
         { type: 'link', path: '/level1', name: t('nav_ops_center'), icon: <Wrench size={15} /> },
+        { type: 'link', path: '/level1/centrify', name: t('nav_centrify'), icon: <KeyRound size={15} /> },
         { type: 'link', path: '/level1/jobs', name: t('nav_jobs'), icon: <ClipboardList size={15} /> },
         { type: 'link', path: '/level1/audit', name: t('nav_audit'), icon: <ScrollText size={15} />, adminOnly: true },
         { type: 'link', path: '/level1/settings', name: t('nav_settings'), icon: <Settings size={15} />, adminOnly: true },
@@ -382,6 +383,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/integrations/physical-hosts', name: t('nav_physical_hosts'), icon: <Server size={15} /> },
         { type: 'link', path: '/integrations/exadata', name: t('nav_exadata_inventory'), icon: <Layers size={15} /> },
         { type: 'link', path: '/integrations/openshift', name: t('nav_openshift_inventory'), icon: <Boxes size={15} /> },
+        { type: 'link', path: '/integrations/centrify', name: 'Centrify / Delinea', icon: <Shield size={15} /> },
       ],
     },
     { type: 'link', path: '/applications', name: t('nav_applications'), icon: <Package size={18} />, moduleId: 'applications' },
@@ -744,7 +746,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               || p.includes('/chat/')
               || p.includes('unified-chat')
               || /\/(linux|windows|virt|exadata|openshift)\/.*chat/.test(p)
-            const isLevel1Fill = p.startsWith('/level1/console') || p.startsWith('/level1/ops')
+            const isLevel1Fill = p.startsWith('/level1/console') || p.startsWith('/level1/ops') || p.startsWith('/level1/centrify')
             if (isChat || isLevel1Fill) {
               // Console/ops: less padding so İş Konsolu viewport içinde kalsın
               return isLevel1Fill

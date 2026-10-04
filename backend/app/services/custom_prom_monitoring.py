@@ -54,7 +54,7 @@ def _reject_non_prom(src: MonitoringSource) -> Dict[str, Any]:
         "error": (
             f"Kaynak {src.label!r} ({src.collector_type}) PromQL gezgini ile açılamaz. "
             "prometheus / telegraf (Prom endpoint) / opentelemetry (Prom endpoint) kullanın; "
-            "Zabbix metrik adaptörü sonraki fazda."
+            "Zabbix metrik adaptörü için Monitoring hub → Zabbix kaynağı veya zabbix_query kullanın."
         ),
         "source": src.public_dict(),
         "source_kind": "custom_prometheus",

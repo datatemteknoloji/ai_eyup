@@ -44,4 +44,4 @@ Guest SSH is not required. Empty pages mean no hypervisor is connected (`/integr
 
 oVirt is not a separate menu; its VMs appear here. OCP projects/pods belong to the OpenShift menu.
 
-`/virt/monitoring` and hub → Virtualization use **vCenter API → Timescale only** (no API/Prometheus toggle). The metric listbox exposes all Timescale columns for the selected kind; chart series are locked to the selected objects. No scrape config writes.
+`/virt/monitoring` and hub → Virtualization use **vCenter and OLVM/oVirt API → Timescale** (Prometheus is a separate binding). The metric listbox exposes all Timescale columns for the selected kind; chart series are locked to the selected objects. No scrape config writes.

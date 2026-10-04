@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 MAX_SERIES_OBJECTS = 8
 STALE_MINUTES = 45
-VCENTER_SOURCES = ("vcenter_alarm", "vcenter_event", "vcenter_task")
+VCENTER_SOURCES = ("vcenter_alarm", "vcenter_event", "vcenter_task", "ovirt_event")
 
 RANGE_SPEC: Dict[str, Dict[str, Any]] = {
     "15m": {"minutes": 15, "bucket": None},
@@ -191,10 +191,10 @@ def _hv_scope(ids: Optional[Sequence[int]]) -> Optional[List[int]]:
 
 
 def _vmware_hypervisor_ids(db: Session) -> List[int]:
-    """Virt monitoring yalnız VMware vCenter — OpenShift Virt / OCP node karışmaz."""
+    """Virt monitoring — vCenter ve OLVM/oVirt (OpenShift Virt karışmaz)."""
     rows = (
         db.query(Hypervisor.id)
-        .filter(Hypervisor.hypervisor_type == HypervisorType.VMWARE)
+        .filter(Hypervisor.hypervisor_type.in_([HypervisorType.VMWARE, HypervisorType.KVM]))
         .all()
     )
     return [int(r[0]) for r in rows]
@@ -250,7 +250,14 @@ def _latest_hosts(db: Session, hypervisor_ids: Optional[Sequence[int]] = None) -
     scoped = _hv_scope(hypervisor_ids)
     if scoped is not None:
         q = q.filter(HypervisorHostMetric.hypervisor_id.in_(scoped or [-1]))
-    return q.all()
+    rows = q.all()
+    by_key: Dict[tuple, HypervisorHostMetric] = {}
+    for r in rows:
+        key = (r.hypervisor_id, (r.host_ref or "").strip() or r.host_name)
+        prev = by_key.get(key)
+        if prev is None or (r.timestamp and (not prev.timestamp or r.timestamp >= prev.timestamp)):
+            by_key[key] = r
+    return list(by_key.values())
 
 
 def parse_hypervisor_ids(
@@ -320,7 +327,7 @@ def _active_alerts(db: Session, limit: int = 80, hypervisor_ids: Optional[Sequen
     rows = (
         db.query(SystemEvent)
         .filter(
-            SystemEvent.source.in_(("vcenter_alarm", "vcenter_event")),
+            SystemEvent.source.in_(("vcenter_alarm", "vcenter_event", "ovirt_event")),
             SystemEvent.resolved.is_(False),
             (SystemEvent.event_type == "vcenter_alarm") | (SystemEvent.source == "vcenter_alarm"),
         )
@@ -483,14 +490,14 @@ def _build_summary(
         warn = sum(1 for a in alerts if a.get("severity") == "warning")
     parts = [
         f"Ortam durumu: {health_label}. "
-        f"ESXi sağlığı — sağlıklı {buckets.get('healthy', 0)}, "
+        f"Host sağlığı — sağlıklı {buckets.get('healthy', 0)}, "
         f"uyarı {buckets.get('warning', 0)}, kritik {buckets.get('critical', 0)}, "
         f"bilinmeyen {buckets.get('unknown', 0)}."
     ]
     if crit or warn:
-        parts.append(f"Açık vCenter alarmı: {crit} kritik, {warn} uyarı.")
+        parts.append(f"Açık vCenter/OLVM alarmı: {crit} kritik, {warn} uyarı.")
     else:
-        parts.append("Açık kritik vCenter alarmı yok.")
+        parts.append("Açık kritik vCenter/OLVM alarmı yok.")
     if problems:
         top = problems[0]
         aff = top.get("affected_count")
@@ -615,7 +622,9 @@ def _latest_vm_top(
 def build_overview(db: Session, hypervisor_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
     scoped = restrict_to_vmware(db, hypervisor_ids)
-    hvs = db.query(Hypervisor).filter(Hypervisor.hypervisor_type == HypervisorType.VMWARE).all()
+    hvs = db.query(Hypervisor).filter(
+        Hypervisor.hypervisor_type.in_([HypervisorType.VMWARE, HypervisorType.KVM])
+    ).all()
     if hypervisor_ids is not None:
         wanted = set(scoped)
         hvs = [h for h in hvs if h.id in wanted]
@@ -681,7 +690,7 @@ def build_overview(db: Session, hypervisor_ids: Optional[Sequence[int]] = None) 
         warn_alerts = sum(1 for a in alerts if a.get("severity") == "warning")
     else:
         alarm_q = db.query(SystemEvent).filter(
-            SystemEvent.source.in_(("vcenter_alarm", "vcenter_event")),
+            SystemEvent.source.in_(("vcenter_alarm", "vcenter_event", "ovirt_event")),
             SystemEvent.resolved.is_(False),
             (SystemEvent.event_type == "vcenter_alarm") | (SystemEvent.source == "vcenter_alarm"),
         )
@@ -876,7 +885,7 @@ def list_objects(
 
     if kind == "host":
         sql = f"""
-        SELECT DISTINCT ON (m.hypervisor_id, m.host_name)
+        SELECT DISTINCT ON (m.hypervisor_id, COALESCE(NULLIF(m.host_ref, ''), m.host_name))
                m.host_name AS name, m.host_ref AS ref, m.cluster_name,
                m.hypervisor_id, h.name AS hypervisor_name,
                m.connection_state, m.overall_status,
@@ -888,7 +897,7 @@ def list_objects(
           AND (:cl_empty OR m.cluster_name ILIKE :cl)
           AND (:host_empty OR m.host_name ILIKE :host)
           AND {clause}
-        ORDER BY m.hypervisor_id, m.host_name, m.timestamp DESC
+        ORDER BY m.hypervisor_id, COALESCE(NULLIF(m.host_ref, ''), m.host_name), m.timestamp DESC
         LIMIT :lim
         """
         rows = _top_sql(db, sql, params_base)

@@ -11,12 +11,27 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.39] - 2026-10-05
+
+### Centrify / Level 1
+- Zone yönetimi (WinRM → ADEdit): rol, komut, atama, computer, unix profil sync.
+- Zone başına tek `list_zone_inventory` + WinRM throttle (`CENTRIFY_SYNC_*`).
+- Rol↔komut üyeliği ve login bayrakları senkronu; tepeden (parent) komut eşlemesi.
+- AI hesaplayıcılar: effective access, login teşhisi, expiring, similar roles/commands, explain role/command.
+- Centrify chat: `require_module("level1")`, tool çıktısı `<<<CENTRIFY_TOOL_DATA>>>`.
+- REST: `/centrify-mgmt/query/*`. Demo seed yalnızca API ile; dağıtım tar’ında demo satırı yok.
+
 ### Kurulum / güncelleme
 - `update-rhel.sh` / `install-rhel.sh` / `fix-load-ainew-images.sh`: parçalı imaj arşivleri (`.part*`) varken birleşmiş `.tar.gz` **her zaman** yeniden üretilir. Eski birleşmiş backend tar’ı boyuta bakılarak atlanıp yeni sürüm etiketinin eski imajı göstermesi engellendi.
 - Update sonrası `ainew-backend` / `ainew-frontend` sürüm etiketleri yoksa işlem durur (Dropt doğrulaması gibi).
 
 ### OpenShift Monitoring
 - `ocp_resource_metrics` sync: aynı örnek anında mükerrer `(kind, object_key)` (özellikle birden fazla virt-launcher → aynı VM) UniqueViolation ile tüm commit’i düşürüp tabloyu boş bırakıyordu; satırlar birleştirilerek tekilleştirildi.
+
+### Zabbix Other monitoring
+- Monitoring hub: Zabbix kaynağı için Özet / Hosts / Grafikler / Problems / Match map (`/monitoring/zabbix/*`).
+- Semantic catalog + item key match map (`cpu_util`, `mem_used_pct`, `fs_used_pct`, …).
+- Unified sohbet: `zabbix_query` (READ-ONLY; mesajda tam label); `custom_prometheus_query` Zabbix’e delege eder.
 
 ## [1.0.9.38] - 2026-09-29
 

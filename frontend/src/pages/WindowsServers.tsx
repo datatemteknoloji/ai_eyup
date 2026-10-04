@@ -912,10 +912,11 @@ const WindowsServers: React.FC = () => {
   const [page, setPage] = useState(1)
   const pageSize = 50
   const [showUnclassified, setShowUnclassified] = useState(false)
+  const [hvFilter, setHvFilter] = useState('all')
   const [pageBulkJobId, setPageBulkJobId] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
-  useEffect(() => { setPage(1) }, [search, showUnclassified])
+  useEffect(() => { setPage(1) }, [search, showUnclassified, hvFilter])
 
   useEffect(() => {
     let cancelled = false
@@ -930,7 +931,7 @@ const WindowsServers: React.FC = () => {
   }, [pageBulkJobId])
 
   const { data: serversPage, isLoading, refetch } = useQuery({
-    queryKey: ['windows-servers', showUnclassified, page, pageSize, search],
+    queryKey: ['windows-servers', showUnclassified, page, pageSize, search, hvFilter],
     queryFn: async () => {
       const sp = new URLSearchParams({
         include_unclassified: String(showUnclassified),
@@ -938,6 +939,9 @@ const WindowsServers: React.FC = () => {
         page_size: String(pageSize),
       })
       if (search.trim()) sp.set('q', search.trim())
+      if (hvFilter === 'physical') sp.set('unassigned_hypervisor', 'true')
+      else if (hvFilter.startsWith('type:')) sp.set('hypervisor_type', hvFilter.slice(5))
+      else if (hvFilter.startsWith('hv:')) sp.set('hypervisor_id', hvFilter.slice(3))
       const r = await fetch(`${WIN_API}/servers?${sp}`)
       if (!r.ok) throw new Error('Yüklenemedi')
       const data = await r.json()
@@ -950,9 +954,13 @@ const WindowsServers: React.FC = () => {
   })
 
   const { data: winSummary } = useQuery({
-    queryKey: ['windows-servers-summary', showUnclassified],
+    queryKey: ['windows-servers-summary', showUnclassified, hvFilter],
     queryFn: async () => {
-      const r = await fetch(`${WIN_API}/servers/summary?include_unclassified=${showUnclassified}`)
+      const sp = new URLSearchParams({ include_unclassified: String(showUnclassified) })
+      if (hvFilter === 'physical') sp.set('unassigned_hypervisor', 'true')
+      else if (hvFilter.startsWith('type:')) sp.set('hypervisor_type', hvFilter.slice(5))
+      else if (hvFilter.startsWith('hv:')) sp.set('hypervisor_id', hvFilter.slice(3))
+      const r = await fetch(`${WIN_API}/servers/summary?${sp}`)
       if (!r.ok) return null
       return r.json() as Promise<{
         total: number; online: number; winrm_configured: number; ai_ready: number
@@ -962,6 +970,16 @@ const WindowsServers: React.FC = () => {
     refetchInterval: 60_000,
   })
 
+  const { data: hvList } = useQuery({
+    queryKey: ['hypervisors', 'windows-filter'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/`)
+      if (!r.ok) return [] as Array<{ id: number; name: string; type?: string }>
+      const data = await r.json()
+      return Array.isArray(data) ? data : []
+    },
+    staleTime: 60_000,
+  })
   const servers = serversPage?.items ?? []
   const totalServers = serversPage?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(totalServers / pageSize))
@@ -1075,10 +1093,31 @@ const WindowsServers: React.FC = () => {
       )}
 
       {/* Search */}
+      <div className="flex flex-wrap items-center gap-3">
       <div className="relative max-w-xs">
         <Search size={14} className="absolute left-3 top-2.5 text-slate-500" />
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder={t('win_search')} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+      <select
+        value={hvFilter}
+        onChange={e => setHvFilter(e.target.value)}
+        className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+      >
+        <option value="all">{t('filter_all_hypervisors')}</option>
+        <option value="physical">{t('filter_physical_hosts')}</option>
+        {(hvList || []).some((h: { type?: string }) => (h.type || '').toLowerCase() === 'kvm') && (
+          <option value="type:kvm">{t('filter_all_olvm')}</option>
+        )}
+        {(hvList || []).some((h: { type?: string }) => (h.type || '').toLowerCase() === 'vmware') && (
+          <option value="type:vmware">{t('filter_all_vcenter')}</option>
+        )}
+        {(hvList || []).map((h: { id: number; name: string; type?: string }) => (
+          <option key={h.id} value={`hv:${h.id}`}>
+            {h.name}{h.type ? ` (${h.type === 'kvm' ? 'OLVM/oVirt' : h.type})` : ''}
+          </option>
+        ))}
+      </select>
       </div>
 
       {/* Server List */}

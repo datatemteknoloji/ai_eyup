@@ -664,9 +664,9 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
               {esxiHost && (
                 <span
                   className="inline-flex items-center gap-1 text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
-                  title={`ESXi host: ${esxiHost}`}
+                  title={`${t('label_virt_host')}: ${esxiHost}`}
                 >
-                  ESXi {esxiHost}
+                  {t('label_virt_host')} {esxiHost}
                 </span>
               )}
             </div>
@@ -719,7 +719,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                     'vCenter',
                     vcenterEndpoint ? `${vcenterLabel} (${vcenterEndpoint})` : vcenterLabel,
                   ]] : []),
-                  ...(esxiHost ? [['ESXi host', esxiHost]] : []),
+                  ...(esxiHost ? [[t('label_virt_host'), esxiHost]] : []),
                   [t('label_type'), server.server_type || '-'],
                   [t('label_os_distro'), server.os_release_id ? server.os_release_id.toUpperCase() : (server.os_type || '-')],
                   [t('label_os_version'), server.os_version_id ? `${server.os_version_id} — ${server.os_version || ''}` : (server.os_version || '-')],
@@ -866,7 +866,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                               )
                             : undefined,
                         },
-                        { label: 'ESXi host',          val: vmDetails.vm_host_name },
+                        { label: t('label_virt_host'), val: vmDetails.vm_host_name },
                         { label: 'Guest Host',         val: vmDetails.vm_guest_hostname },
                         { label: 'Guest IP',           val: vmDetails.vm_guest_ip },
                         { label: 'vCPU',               val: vmDetails.vm_cpu_count != null ? `${vmDetails.vm_cpu_count} core` : undefined },
@@ -1233,6 +1233,12 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 }
 
 
+const LINUX_HV_TYPES: { id: 'vmware' | 'kvm' | 'openshift_virt'; label: TranslationKey }[] = [
+  { id: 'vmware', label: 'filter_all_vcenter' },
+  { id: 'kvm', label: 'filter_all_olvm' },
+  { id: 'openshift_virt', label: 'filter_hv_openshift' },
+]
+
 const Servers: React.FC = () => {
   const t = useT()
   const { user, hasModule } = useAuth()
@@ -1249,6 +1255,9 @@ const Servers: React.FC = () => {
   const [osFilter, setOsFilter] = useState<string>('all') // all, linux, windows, other
   const [nodeExporterFilter, setNodeExporterFilter] = useState<string>('all') // all, installed, running, not_installed
   const [nameMismatchFilter, setNameMismatchFilter] = useState(false)
+  const [hvTypes, setHvTypes] = useState<string[]>([])
+  const [hvTypeOpen, setHvTypeOpen] = useState(false)
+  const hvTypeRef = useRef<HTMLDivElement>(null)
   const [page, setPage] = useState(1)
   const pageSize = 50
   const [bulkJobId, setBulkJobId] = useState<string | null>(null)
@@ -1402,10 +1411,25 @@ const Servers: React.FC = () => {
   // Filtre değişince ilk sayfaya dön
   React.useEffect(() => {
     setPage(1)
-  }, [searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter])
+  }, [searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter, hvTypes])
+
+  React.useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (hvTypeRef.current && !hvTypeRef.current.contains(e.target as Node)) {
+        setHvTypeOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [])
+
+  const hvParams = React.useMemo(() => {
+    if (!hvTypes.length) return {}
+    return { hypervisor_types: hvTypes.join(',') }
+  }, [hvTypes])
 
   const { data: serversPage, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['servers', 'linux', page, pageSize, searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter],
+    queryKey: ['servers', 'linux', page, pageSize, searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter, hvTypes],
     queryFn: () =>
       fetchServersPage<Server>({
         platform: 'linux',
@@ -1419,16 +1443,17 @@ const Servers: React.FC = () => {
         os: osFilter !== 'all' ? osFilter : undefined,
         node_exporter: nodeExporterFilter !== 'all' ? nodeExporterFilter : undefined,
         name_mismatch: canSeeNameMismatch && nameMismatchFilter ? true : null,
+        ...hvParams,
       }),
     refetchInterval: 60_000,
     placeholderData: (prev) => prev,
   })
 
   const { data: linuxSummary } = useQuery({
-    queryKey: ['servers', 'summary', 'linux'],
+    queryKey: ['servers', 'summary', 'linux', hvTypes],
     queryFn: async () => {
       const { fetchServersSummary } = await import('../api/servers')
-      return fetchServersSummary('linux')
+      return fetchServersSummary('linux', hvParams)
     },
     enabled: canSeeNameMismatch,
     refetchInterval: 120_000,
@@ -1734,6 +1759,40 @@ const Servers: React.FC = () => {
               <option value="VIRTUAL">Virtual</option>
               <option value="PHYSICAL">Physical</option>
             </select>
+            <div className="relative" ref={hvTypeRef}>
+              <button
+                type="button"
+                onClick={() => setHvTypeOpen((v) => !v)}
+                className="min-w-[160px] bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white text-left focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {!hvTypes.length
+                  ? t('filter_all_hypervisors')
+                  : hvTypes.length === 1
+                    ? t(LINUX_HV_TYPES.find((x) => x.id === hvTypes[0])?.label || 'filter_all_hypervisors')
+                    : t('filter_hv_n', { n: hvTypes.length })}
+              </button>
+              {hvTypeOpen && (
+                <div className="absolute z-40 top-full mt-1 w-56 overflow-auto bg-[#0d1422] border border-white/[0.1] rounded-xl shadow-xl">
+                  {LINUX_HV_TYPES.map((opt) => {
+                    const on = hvTypes.includes(opt.id)
+                    return (
+                      <label key={opt.id} className="flex items-center gap-2 px-3 py-2 text-xs text-slate-200 cursor-pointer hover:bg-white/[0.04]">
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={() => {
+                            setHvTypes((prev) =>
+                              on ? prev.filter((x) => x !== opt.id) : [...prev, opt.id],
+                            )
+                          }}
+                        />
+                        {t(opt.label)}
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
             {/* OS Filter */}
             <select
               value={osFilter}
@@ -1943,9 +2002,9 @@ const Servers: React.FC = () => {
                           {server.vm_host_name ? (
                             <span
                               className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
-                              title={`ESXi host: ${server.vm_host_name}`}
+                              title={`${t('label_virt_host')}: ${server.vm_host_name}`}
                             >
-                              ESXi {server.vm_host_name}
+                              {t('label_virt_host')} {server.vm_host_name}
                             </span>
                           ) : null}
                         </div>

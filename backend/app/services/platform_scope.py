@@ -193,7 +193,7 @@ def _platform_json(platform: str):
 # Kaynak (source) bazlı platform eşlemesi — raw_data.platform etiketi eksik olan
 # eski/legacy kayıtlarda bile bir modülün diğerine ait log kaynağını göstermemesi
 # için ek bir güvenlik katmanı (server_id eşleşmesine tek başına güvenilmiyor).
-_VIRT_SOURCES = ("vcenter_event", "vcenter_alarm", "vcenter_task", "virt_collector", "virt_resource", "openshift_virt_event")
+_VIRT_SOURCES = ("vcenter_event", "vcenter_alarm", "vcenter_task", "virt_collector", "virt_resource", "openshift_virt_event", "ovirt_event")
 _WINDOWS_SOURCES = ("windows_collector",)
 _LINUX_SOURCES = ("log_collector",)
 _EXADATA_SOURCES = ("exadata_collector",)

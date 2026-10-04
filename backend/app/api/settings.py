@@ -1159,7 +1159,7 @@ async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
 
     verify = bool(src.verify_ssl)
 
-    # Zabbix JSON-RPC
+    # Zabbix JSON-RPC — apiinfo.version URL’yi doğrular; asıl auth user.login / token
     if src.collector_type == "zabbix" or (
         src.binding == "none" and normalize_collector_type(src.collector_type, src.binding) == "zabbix"
     ):
@@ -1178,14 +1178,76 @@ async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
                 data = resp.json()
             except Exception:
                 pass
-            ok = resp.status_code == 200 and isinstance(data, dict) and "result" in data
+            ok_version = resp.status_code == 200 and isinstance(data, dict) and "result" in data
+            if not ok_version:
+                return {
+                    "ok": False,
+                    "status_code": resp.status_code,
+                    "url": api,
+                    "collector_type": "zabbix",
+                    "zabbix_version": None,
+                    "error": (data.get("error") or {}).get("data") if isinstance(data, dict) else "apiinfo.version başarısız",
+                }
+
+            version = data.get("result")
+            # Auth doğrulama: API token veya kullanıcı+şifre (grafik/chat için gerekli)
+            auth_ok = False
+            auth_error = None
+            auth_mode = None
+            tok = (src.token or "").strip()
+            if tok:
+                auth_mode = "token"
+                headers = {"Content-Type": "application/json", "Authorization": f"Bearer {tok}"}
+                host_body = {
+                    "jsonrpc": "2.0",
+                    "method": "host.get",
+                    "params": {"output": ["hostid"], "limit": 1},
+                    "id": 2,
+                }
+                async with httpx.AsyncClient(timeout=10.0, verify=verify) as client:
+                    hresp = await client.post(api, json=host_body, headers=headers)
+                try:
+                    hdata = hresp.json()
+                except Exception:
+                    hdata = {}
+                if isinstance(hdata, dict) and "result" in hdata:
+                    auth_ok = True
+                else:
+                    auth_error = ((hdata.get("error") or {}).get("data") if isinstance(hdata, dict) else None) or "API token reddedildi"
+            elif (src.username or "").strip() and (src.password or ""):
+                auth_mode = "password"
+                login_body = {
+                    "jsonrpc": "2.0",
+                    "method": "user.login",
+                    "params": {"username": src.username.strip(), "password": src.password},
+                    "id": 2,
+                }
+                async with httpx.AsyncClient(timeout=10.0, verify=verify) as client:
+                    lresp = await client.post(
+                        api, json=login_body, headers={"Content-Type": "application/json"},
+                    )
+                try:
+                    ldata = lresp.json()
+                except Exception:
+                    ldata = {}
+                if isinstance(ldata, dict) and ldata.get("result"):
+                    auth_ok = True
+                else:
+                    auth_error = (
+                        ((ldata.get("error") or {}).get("data") if isinstance(ldata, dict) else None)
+                        or "Kullanıcı/şifre reddedildi"
+                    )
+            else:
+                auth_error = "API token veya kullanıcı+şifre gerekli (apiinfo.version auth istemez)"
+
             return {
-                "ok": ok,
-                "status_code": resp.status_code,
+                "ok": bool(auth_ok),
+                "status_code": 200 if auth_ok else 401,
                 "url": api,
                 "collector_type": "zabbix",
-                "zabbix_version": data.get("result") if ok else None,
-                "error": (data.get("error") or {}).get("data") if not ok else None,
+                "zabbix_version": version,
+                "auth_mode": auth_mode,
+                "error": None if auth_ok else auth_error,
             }
         except httpx.HTTPError as e:
             raise HTTPException(status_code=502, detail=f"Zabbix bağlantı hatası: {e}")

@@ -339,3 +339,17 @@ try:
     )
 except Exception as e:
     logger.error(f"Could not load platform_status router: {e}", exc_info=True)
+
+# Centrify / Delinea Server Suite Zone Management
+try:
+    from app.api import centrify_mgmt
+    api_router.include_router(centrify_mgmt.router, tags=["centrify"])
+except Exception as e:
+    logger.error(f"Could not load centrify_mgmt router: {e}", exc_info=True)
+
+# Centrify AI Asistanı
+try:
+    from app.api import centrify_chat
+    api_router.include_router(centrify_chat.router, prefix="/centrify-chat", tags=["centrify-chat"])
+except Exception as e:
+    logger.error(f"Could not load centrify_chat router: {e}", exc_info=True)

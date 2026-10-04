@@ -6,6 +6,8 @@
 #   docker compose down
 include:
   - path: docker-compose.dropt.yml
+  - path: docker-compose.centrify.yml
+    env_file: .env
 
 x-logging: &default-logging
   driver: json-file
@@ -112,6 +114,12 @@ services:
       - DROPT_POSTGRES_USER=${DROPT_POSTGRES_USER:-dtt}
       - DROPT_POSTGRES_PASSWORD=${DROPT_POSTGRES_PASSWORD:-}
       - DROPT_POSTGRES_DB=${DROPT_POSTGRES_DB:-dttportal}
+      - CENTRIFY_DATABASE_URL=postgresql://${CENTRIFY_DB_USER:-centrify}:${CENTRIFY_DB_PASSWORD:-centrify}@localhost:5434/${CENTRIFY_DB_NAME:-centrify_zone_mgmt}
+      # WinRM sync throttle — hedef Access Manager yoğunluğunu sınırlar
+      - CENTRIFY_SYNC_MIN_INTERVAL_MS=${CENTRIFY_SYNC_MIN_INTERVAL_MS:-800}
+      - CENTRIFY_SYNC_ZONE_DELAY_SEC=${CENTRIFY_SYNC_ZONE_DELAY_SEC:-2}
+      - CENTRIFY_SYNC_INVENTORY_TIMEOUT=${CENTRIFY_SYNC_INVENTORY_TIMEOUT:-300}
+      - CENTRIFY_SYNC_MAX_RETRIES=${CENTRIFY_SYNC_MAX_RETRIES:-2}
       - HOST_ETC_HOSTS=/host-etc-hosts
       # Restore: migration-secrets → host .env yazımı
       - AINEW_INSTALL_MOUNT=/ainew-install

@@ -27,6 +27,7 @@ _LOCKS: Dict[str, threading.Lock] = {
     "windows_exporter": threading.Lock(),
     "windows_logs": threading.Lock(),
     "windows_live": threading.Lock(),
+    "centrify_sync": threading.Lock(),
 }
 
 _RELEASE_LUA = """

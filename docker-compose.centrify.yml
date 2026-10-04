@@ -1,0 +1,30 @@
+# Centrify Zone Management — ayrı Postgres DB (Dropt modeli).
+# Ana compose (docker-compose.yml) bu dosyayı include eder.
+# Port: 5434 (ainew=5432, dropt=5433 ile çakışmaz).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  centrify-db:
+    image: postgres:16-alpine
+    container_name: centrify_db
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      TZ: ${TZ:-Europe/Istanbul}
+      POSTGRES_USER: ${CENTRIFY_DB_USER:-centrify}
+      POSTGRES_PASSWORD: ${CENTRIFY_DB_PASSWORD:?CENTRIFY_DB_PASSWORD .env dosyasinda tanimli olmali}
+      POSTGRES_DB: ${CENTRIFY_DB_NAME:-centrify_zone_mgmt}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - ${DATA_DIR:-./data}/centrify/postgres:/var/lib/postgresql/data:Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CENTRIFY_DB_USER:-centrify} -d ${CENTRIFY_DB_NAME:-centrify_zone_mgmt}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

@@ -9,15 +9,14 @@ import {
 } from 'recharts'
 import { API_BASE_URL } from '../config/api'
 import { useT } from '../i18n/LocaleProvider'
-import { MonitoringShell } from '../components/monitoring/MonitoringShell'
+import { MonitoringShell, type MonitoringDataMode } from '../components/monitoring/MonitoringShell'
+import { VirtPromView } from '../components/monitoring/VirtPromView'
+import { CHART_COLORS } from '../components/monitoring/zabbix/zbxUi'
 
 const RANGES = ['15m', '30m', '1h', '2h', '8h', '24h', '7d', '30d', '60d'] as const
 const MAX_SEL = 8
 const SCOPE_LS_KEY = 'ainew.virt.monitoring.scope'
-const COLORS = [
-  '#3b82f6', '#10b981', '#f59e0b', '#ec4899',
-  '#06b6d4', '#a3e635', '#f97316', '#38bdf8',
-]
+const COLORS = CHART_COLORS
 const DEFAULT_METRICS: Record<string, string[]> = {
   host: ['cpu_pct', 'mem_pct', 'cpu_ready_pct', 'disk_latency_ms'],
   vm: ['cpu_pct', 'mem_pct', 'cpu_ready_pct', 'disk_latency_ms'],
@@ -33,7 +32,7 @@ type SeriesResp = {
   metric?: string
   as_of?: string | null
   native_interval_min?: number
-  series: { name: string; points: SeriesPoint[] }[]
+  series: { name: string; ref?: string; object?: string; points: SeriesPoint[] }[]
   note?: string
 }
 
@@ -118,7 +117,7 @@ function VirtChart({
 }: {
   title: string
   unit?: string
-  series: { name: string; points: SeriesPoint[] }[]
+  series: { name: string; ref?: string; object?: string; points: SeriesPoint[] }[]
   colorMap: Record<string, string>
   height?: number
   empty: string
@@ -142,6 +141,11 @@ function VirtChart({
     return { chartData: data, keys }
   }, [series])
 
+  const colorOf = (name: string, i: number) => {
+    const row = series.find((s) => s.name === name)
+    return colorMap[name] || (row?.ref && colorMap[row.ref]) || (row?.object && colorMap[row.object]) || COLORS[i % COLORS.length]
+  }
+
   if (!chartData.length || !keys.length) {
     return (
       <div className="h-full min-h-[200px] flex items-center justify-center text-sm text-slate-500 px-4 text-center">
@@ -155,10 +159,10 @@ function VirtChart({
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <defs>
-            {keys.map((k) => (
-              <linearGradient key={k} id={`vmn-${k.replace(/[^a-zA-Z0-9]/g, '')}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={colorMap[k] || COLORS[0]} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={colorMap[k] || COLORS[0]} stopOpacity={0} />
+            {keys.map((k, i) => (
+              <linearGradient key={k} id={`vmn-${i}-${k.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={colorOf(k, i)} stopOpacity={0.18} />
+                <stop offset="100%" stopColor={colorOf(k, i)} stopOpacity={0} />
               </linearGradient>
             ))}
           </defs>
@@ -174,16 +178,18 @@ function VirtChart({
             ]}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          {keys.map((k) => (
+          {keys.map((k, i) => (
             <Area
               key={k}
               type="monotone"
               dataKey={k}
-              stroke={colorMap[k] || COLORS[0]}
+              name={k}
+              stroke={colorOf(k, i)}
+              fill={`url(#vmn-${i}-${k.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)})`}
+              fillOpacity={1}
               strokeWidth={2}
-              fill={`url(#vmn-${k.replace(/[^a-zA-Z0-9]/g, '')})`}
               connectNulls
-              dot={{ r: 2, strokeWidth: 0 }}
+              dot={false}
               isAnimationActive={false}
             />
           ))}
@@ -197,12 +203,40 @@ const VirtMonitoring: React.FC<{
   embedded?: boolean
   sourceId?: string
   hubLeading?: React.ReactNode
+  onDataModeChange?: (mode: MonitoringDataMode) => void
 }> = ({
   embedded = false,
   sourceId,
   hubLeading,
+  onDataModeChange,
 }) => {
   const t = useT()
+  const [dataMode, setDataMode] = useState<MonitoringDataMode>(() => {
+    const m = localStorage.getItem('ainew.virt.monitoring.mode')
+    return m === 'prometheus' ? 'prometheus' : 'api'
+  })
+  const { data: monSettings } = useQuery({
+    queryKey: ['general-settings', 'virt-mon'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/settings/`)
+      if (!r.ok) return { monitoring_sources: [] as { binding: string }[] }
+      return r.json()
+    },
+    staleTime: 60_000,
+  })
+  const promConfigured = (monSettings?.monitoring_sources || []).some(
+    (s: { binding: string }) => s.binding === 'virtualization',
+  )
+  useEffect(() => {
+    if (promConfigured && dataMode === 'api' && !localStorage.getItem('ainew.virt.monitoring.mode')) {
+      setDataMode('prometheus')
+    }
+  }, [promConfigured, dataMode])
+  useEffect(() => {
+    localStorage.setItem('ainew.virt.monitoring.mode', dataMode)
+    onDataModeChange?.(dataMode)
+  }, [dataMode, onDataModeChange])
+
   const [kind, setKind] = useState<Kind>('vm')
   const [selected, setSelected] = useState<string[]>([])
   const [range, setRange] = useState<string>('30m')
@@ -213,7 +247,6 @@ const VirtMonitoring: React.FC<{
   const [hvPickerOpen, setHvPickerOpen] = useState(false)
   const hvDefaulted = useRef(false)
   const [clusterFilter, setClusterFilter] = useState('')
-  const [hostFilter, setHostFilter] = useState('')
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [fullscreen, setFullscreen] = useState<number | null>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -225,20 +258,20 @@ const VirtMonitoring: React.FC<{
     setSelected([])
     setSearch('')
     setLabels({})
-  }, [kind, hvKey, clusterFilter, hostFilter])
+  }, [kind, hvKey, clusterFilter])
 
-  // Chat ile paylaşılan Monitoring kapsamı (cluster/ESXi kaybolmaz — eksen ayrı)
+  // Chat ile paylaşılan Monitoring kapsamı (cluster kaybolmaz — eksen ayrı)
   useEffect(() => {
     const payload = {
       hypervisor_ids: hvIds,
       cluster: clusterFilter,
-      host: hostFilter,
+      host: '',
       kind,
     }
     try {
       localStorage.setItem(SCOPE_LS_KEY, JSON.stringify(payload))
     } catch { /* ignore */ }
-  }, [hvIds, clusterFilter, hostFilter, kind])
+  }, [hvIds, clusterFilter, kind])
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -266,17 +299,17 @@ const VirtMonitoring: React.FC<{
   })
 
   const vcenters = useMemo(
-    () => (hypervisors.data || []).filter((h: { type?: string }) => (h.type || '').toLowerCase() === 'vmware'),
+    () => (hypervisors.data || []).filter((h: { type?: string }) => {
+      const t = (h.type || '').toLowerCase()
+      return t === 'vmware' || t === 'kvm'
+    }),
     [hypervisors.data],
   )
 
   useEffect(() => {
     if (hvDefaulted.current || !vcenters.length) return
-    const first = [...vcenters].sort((a: { name?: string }, b: { name?: string }) =>
-      String(a.name || '').localeCompare(String(b.name || ''), 'tr'),
-    )[0]
     hvDefaulted.current = true
-    if (first?.id != null) setHvIds([String(first.id)])
+    setHvIds(vcenters.map((h: { id: number }) => String(h.id)))
   }, [vcenters])
 
   const sortedVcenters = useMemo(
@@ -320,12 +353,11 @@ const VirtMonitoring: React.FC<{
   })
 
   const objects = useQuery({
-    queryKey: ['virt-monitoring-objects', kind, hvKey, clusterFilter, hostFilter],
+    queryKey: ['virt-monitoring-objects', kind, hvKey, clusterFilter],
     queryFn: async () => {
       const p = new URLSearchParams({ kind, limit: '200' })
       if (hvKey) p.set('hypervisor_ids', hvKey)
       if (clusterFilter) p.set('cluster', clusterFilter)
-      if (hostFilter) p.set('host', hostFilter)
       const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/objects?${p}`)
       if (!r.ok) throw new Error('objects')
       return r.json()
@@ -334,7 +366,7 @@ const VirtMonitoring: React.FC<{
     staleTime: 60_000,
   })
 
-  // Cluster dropdown — host envanterinden (filtre yok)
+  // Cluster dropdown — host envanterinden
   const clusterOpts = useQuery({
     queryKey: ['virt-monitoring-clusters', hvKey],
     queryFn: async () => {
@@ -352,22 +384,6 @@ const VirtMonitoring: React.FC<{
     enabled: hvIds.length > 0 || (hypervisors.isFetched && vcenters.length === 0),
     staleTime: 60_000,
   })
-
-  // ESXi dropdown — seçili cluster'a göre (boş = tüm hostlar)
-  const hostOpts = useQuery({
-    queryKey: ['virt-monitoring-hosts', hvKey, clusterFilter],
-    queryFn: async () => {
-      const p = new URLSearchParams({ kind: 'host', limit: '200' })
-      if (hvKey) p.set('hypervisor_ids', hvKey)
-      if (clusterFilter) p.set('cluster', clusterFilter)
-      const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/objects?${p}`)
-      if (!r.ok) return [] as { name: string; cluster?: string }[]
-      const data = await r.json()
-      return (data.items || []).map((it: any) => ({ name: it.name, cluster: it.cluster }))
-    },
-    enabled: hvIds.length > 0 || (hypervisors.isFetched && vcenters.length === 0),
-    staleTime: 60_000,
-  })
   const filteredObjects = useMemo(() => {
     const items = objects.data?.items || []
     const q = search.trim().toLowerCase()
@@ -376,12 +392,6 @@ const VirtMonitoring: React.FC<{
       [o.name, o.hint, o.host, o.cluster, o.status, o.hypervisor_name].some((x) => String(x || '').toLowerCase().includes(q)),
     )
   }, [objects.data, search])
-
-  const colorMap = useMemo(() => {
-    const m: Record<string, string> = {}
-    selected.forEach((n, i) => { m[n] = COLORS[i % COLORS.length] })
-    return m
-  }, [selected])
 
   const hasSel = selected.length > 0
   const metricList: { id: string; unit: string }[] = metrics.data?.metrics || []
@@ -421,6 +431,31 @@ const VirtMonitoring: React.FC<{
   })
   const seriesQueries = [series0, series1, series2, series3]
 
+  const colorMap = useMemo(() => {
+    const m: Record<string, string> = {}
+    const assign = (key: string | undefined | null, i: number) => {
+      if (!key) return
+      m[key] = COLORS[i % COLORS.length]
+    }
+    selected.forEach((id, i) => {
+      assign(id, i)
+      assign(labels[id], i)
+    })
+    for (const q of seriesQueries) {
+      for (const s of q.data?.series || []) {
+        let i = selected.indexOf(s.ref || '')
+        if (i < 0) i = selected.indexOf(s.name)
+        if (i < 0) i = selected.findIndex((id) => labels[id] === s.name)
+        if (i < 0) i = selected.findIndex((id) => labels[id] === s.object)
+        if (i < 0) i = Math.max(0, Object.keys(m).length)
+        assign(s.ref, i)
+        assign(s.name, i)
+        assign(s.object, i)
+      }
+    }
+    return m
+  }, [selected, labels, series0.data, series1.data, series2.data, series3.data])
+
   const ov = overview.data
   const health = ov?.health
   const src = ov?.data_source
@@ -443,14 +478,13 @@ const VirtMonitoring: React.FC<{
   return (
     <MonitoringShell
       title={t('vmn_title')}
-      subtitle={t('vmn_subtitle')}
-      mode="api"
-      onModeChange={() => {}}
-      prometheusConfigured={false}
-      showModeToggle={false}
+      subtitle={dataMode === 'prometheus' ? t('vmn_subtitle_prom') : t('vmn_subtitle')}
+      mode={dataMode}
+      onModeChange={setDataMode}
+      prometheusConfigured={promConfigured}
       embedded={embedded}
       hubLeading={hubLeading}
-      extraHeader={
+      extraHeader={dataMode === 'api' ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 flex-1 min-w-0">
           <Link to="/virt/events" className="text-blue-400 hover:underline whitespace-nowrap">{t('vmn_open_events')}</Link>
           <Link to="/virt/chat" className="text-blue-400 hover:underline whitespace-nowrap" title={t('vmn_chat_scope_hint')}>
@@ -468,8 +502,11 @@ const VirtMonitoring: React.FC<{
           </span>
           {src?.stale && <span className="text-amber-400">{t('vmn_stale')}</span>}
         </div>
-      }
+      ) : undefined}
     >
+      {dataMode === 'prometheus' ? (
+        <VirtPromView sourceId={sourceId} />
+      ) : (
     <div className="space-y-3">
       {overview.isError && (
         <div className="text-sm text-red-400">{t('vmn_overview_fail')}</div>
@@ -529,7 +566,6 @@ const VirtMonitoring: React.FC<{
                             hvDefaulted.current = true
                             setHvIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
                             setClusterFilter('')
-                            setHostFilter('')
                           }}
                         />
                         <span className="truncate">{h.name}</span>
@@ -542,10 +578,7 @@ const VirtMonitoring: React.FC<{
           )}
           <select
             value={clusterFilter}
-            onChange={(e) => {
-              setClusterFilter(e.target.value)
-              setHostFilter('')
-            }}
+            onChange={(e) => setClusterFilter(e.target.value)}
             className="bg-[#0d1422] border border-white/[0.06] rounded-md px-2 py-1 text-xs text-white max-w-[180px]"
             title={
               (clusterOpts.data || []).length
@@ -556,17 +589,6 @@ const VirtMonitoring: React.FC<{
             <option value="">{t('vmn_all_clusters')}</option>
             {(clusterOpts.data || []).map((c) => (
               <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          <select
-            value={hostFilter}
-            onChange={(e) => setHostFilter(e.target.value)}
-            className="bg-[#0d1422] border border-white/[0.06] rounded-md px-2 py-1 text-xs text-white max-w-[160px]"
-            title={t('vmn_esxi_filter')}
-          >
-            <option value="">{t('vmn_all_esxi')}</option>
-            {(hostOpts.data || []).map((h) => (
-              <option key={h.name} value={h.name}>{h.name}</option>
             ))}
           </select>
           <div className="flex rounded-md border border-white/[0.06] overflow-hidden">
@@ -612,18 +634,27 @@ const VirtMonitoring: React.FC<{
                   />
                 </div>
                 <div className="flex gap-2 p-2 border-b border-white/[0.06]">
-                  <button type="button" className="text-xs text-slate-400" onClick={() => setSelected([])}>{t('vmn_clear')}</button>
                   <button
                     type="button"
-                    className="text-xs text-blue-400"
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                    disabled={!filteredObjects.length}
                     onClick={() => {
-                      setSelected(filteredObjects.map((x: any) => x.id).slice(0, MAX_SEL))
+                      const take = filteredObjects.slice(0, MAX_SEL)
+                      setSelected(take.map((x: any) => x.id))
                       const next: Record<string, string> = {}
-                      filteredObjects.slice(0, MAX_SEL).forEach((x: any) => { next[x.id] = objectLabel(x) })
+                      take.forEach((x: any) => { next[x.id] = objectLabel(x) })
                       setLabels((prev) => ({ ...prev, ...next }))
                     }}
                   >
-                    {t('vmn_select_filter', { n: MAX_SEL })}
+                    {t('vmn_select_all', { n: MAX_SEL })}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs text-slate-400 hover:text-white"
+                    disabled={selected.length === 0}
+                    onClick={() => setSelected([])}
+                  >
+                    {t('vmn_deselect_all')}
                   </button>
                 </div>
                 <div className="max-h-64 overflow-y-auto p-1">
@@ -713,8 +744,8 @@ const VirtMonitoring: React.FC<{
         <Panel>
           <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3">{t('vmn_inventory')}</div>
           <ul className="text-sm text-slate-300 space-y-1.5">
-            <li>vCenter <span className="float-right font-mono">{ov?.inventory?.vcenters ?? '—'}</span></li>
-            <li>ESXi <span className="float-right font-mono">{ov?.inventory?.esxi_hosts ?? '—'}</span></li>
+            <li>{t('vmn_managers')} <span className="float-right font-mono">{ov?.inventory?.vcenters ?? '—'}</span></li>
+            <li>{t('vmn_axis_host')} <span className="float-right font-mono">{ov?.inventory?.esxi_hosts ?? '—'}</span></li>
             <li>Cluster <span className="float-right font-mono">{ov?.inventory?.clusters ?? '—'}</span></li>
             <li>VM <span className="float-right font-mono">{ov?.inventory?.vms_running ?? 0}/{ov?.inventory?.vms ?? 0}</span></li>
             <li>Datastore <span className="float-right font-mono">{ov?.inventory?.datastores ?? '—'}</span></li>
@@ -814,6 +845,7 @@ const VirtMonitoring: React.FC<{
         </div>
       )}
     </div>
+      )}
     </MonitoringShell>
   )
 }

@@ -1,5 +1,5 @@
 /**
- * Virtualization Prometheus mode — vmware_exporter charts.
+ * Virtualization Prometheus mode — vmware_exporter katalog / seri.
  */
 import React, { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -10,112 +10,154 @@ import { API_BASE_URL } from '../../config/api'
 import { useT } from '../../i18n/LocaleProvider'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#a3e635', '#f97316', '#38bdf8']
+const RANGES = [
+  { id: '15m', sec: 900 },
+  { id: '1h', sec: 3600 },
+  { id: '8h', sec: 28800 },
+  { id: '24h', sec: 86400 },
+]
+
+type CatItem = { id: string; title: string; unit?: string; query?: string }
 
 export const VirtPromView: React.FC<{ sourceId?: string }> = ({ sourceId }) => {
   const t = useT()
-  const [metric, setMetric] = useState('vm_cpu')
-  const [rangeSec, setRangeSec] = useState(900)
-  const qs = sourceId ? `source_id=${encodeURIComponent(sourceId)}` : ''
+  const [metricId, setMetricId] = useState('vm_cpu')
+  const [rangeSec, setRangeSec] = useState(3600)
 
-  const { data: overview } = useQuery({
+  const overview = useQuery({
     queryKey: ['virt-prom-overview', sourceId],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/prom/overview?${qs}`)
-      return r.json()
+      const q = sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : ''
+      const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/prom/overview${q}`)
+      if (!r.ok) throw new Error('overview')
+      return r.json() as Promise<{ configured?: boolean; note?: string; catalog?: CatItem[]; metric_count?: number }>
     },
   })
 
-  const { data: catalog } = useQuery({
-    queryKey: ['virt-prom-catalog'],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/prom/catalog`)
-      return r.json() as Promise<{ metrics: { id: string; title: string }[] }>
-    },
-  })
+  const catalog = useMemo(() => overview.data?.catalog || [], [overview.data])
 
-  const { data: seriesData, isFetching } = useQuery({
-    queryKey: ['virt-prom-series', metric, rangeSec, sourceId],
+  React.useEffect(() => {
+    if (catalog.length && !catalog.find((c) => c.id === metricId)) {
+      setMetricId(catalog[0].id)
+    }
+  }, [catalog, metricId])
+
+  const series = useQuery({
+    queryKey: ['virt-prom-series', sourceId, metricId, rangeSec],
+    enabled: !!metricId && overview.data?.configured !== false,
     queryFn: async () => {
-      const r = await fetch(
-        `${API_BASE_URL}/hypervisors/monitoring/prom/series?metric=${metric}&range_sec=${rangeSec}&top_n=8&${qs}`,
-      )
-      return r.json()
+      const params = new URLSearchParams({
+        metric: metricId,
+        range_sec: String(rangeSec),
+        top_n: '8',
+      })
+      if (sourceId) params.set('source_id', sourceId)
+      const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/prom/series?${params}`)
+      if (!r.ok) throw new Error('series')
+      return r.json() as Promise<{
+        ok?: boolean
+        error?: string
+        unit?: string
+        series?: { name: string; points: { t: number | string; v: number | null }[] }[]
+      }>
     },
+    refetchInterval: 60_000,
   })
 
   const chartData = useMemo(() => {
-    const series = seriesData?.series || []
-    const byT: Record<number, Record<string, number | string>> = {}
-    series.forEach((s: { name: string; points: { t: number; v: number }[] }, i: number) => {
-      s.points.forEach((p) => {
-        if (!byT[p.t]) byT[p.t] = { t: p.t }
-        byT[p.t][`s${i}`] = p.v
-      })
-    })
+    const byT: Record<string, Record<string, number | string>> = {}
+    for (const [i, s] of (series.data?.series || []).entries()) {
+      for (const p of s.points || []) {
+        const key = String(p.t)
+        if (!byT[key]) byT[key] = { t: p.t }
+        if (p.v != null) byT[key][`s${i}`] = p.v
+      }
+    }
     return Object.values(byT).sort((a, b) => Number(a.t) - Number(b.t))
-  }, [seriesData])
+  }, [series.data])
 
-  if (overview && overview.configured === false) {
+  if (overview.isLoading) {
+    return <div className="text-sm text-slate-400 py-8 text-center">{t('loading')}</div>
+  }
+
+  if (overview.data?.configured === false) {
     return (
-      <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-6 text-sm text-slate-400">
-        {t('mon_virt_prom_missing')}
+      <div className="rounded-xl border border-amber-500/20 bg-cyber-card p-6 text-sm text-slate-400 space-y-2">
+        <p>{overview.data?.note || t('mon_prom_not_configured')}</p>
+        <p className="text-xs text-slate-500">{t('set_mon_sources_hint')}</p>
       </div>
     )
   }
 
+  const active = catalog.find((c) => c.id === metricId)
+
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <div className="rounded-xl border border-white/[0.06] bg-cyber-card px-3 py-2">
-          <div className="text-[10px] uppercase text-slate-500">{t('mon_discovered')}</div>
-          <div className="text-lg font-semibold text-slate-100">{overview?.metric_count ?? '—'}</div>
-        </div>
-        <div className="rounded-xl border border-white/[0.06] bg-cyber-card px-3 py-2 col-span-2">
-          <div className="text-[10px] uppercase text-slate-500">Source</div>
-          <div className="text-sm font-mono text-slate-200 truncate">{overview?.source?.label || '—'}</div>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <select
-          value={metric}
-          onChange={(e) => setMetric(e.target.value)}
-          className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2 py-1.5 text-xs text-slate-200"
-        >
-          {(catalog?.metrics || []).map((m) => (
-            <option key={m.id} value={m.id}>{m.title}</option>
-          ))}
-        </select>
-        <select
-          value={rangeSec}
-          onChange={(e) => setRangeSec(Number(e.target.value))}
-          className="bg-cyber-deep border border-white/[0.08] rounded-lg px-2 py-1.5 text-xs text-slate-200"
-        >
-          <option value={900}>15m</option>
-          <option value={3600}>1h</option>
-          <option value={21600}>6h</option>
-        </select>
-      </div>
-
-      <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 min-h-[280px]">
-        {isFetching && <p className="text-xs text-slate-500">{t('mon_loading')}</p>}
-        {seriesData && !seriesData.ok && (
-          <p className="text-xs text-amber-400">{seriesData.error}</p>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <label className="flex items-center gap-1.5 text-slate-400">
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">Metric</span>
+          <select
+            value={metricId}
+            onChange={(e) => setMetricId(e.target.value)}
+            className="bg-cyber-deep border border-white/[0.08] rounded-md px-2 py-1 text-xs text-slate-200"
+          >
+            {catalog.map((c) => (
+              <option key={c.id} value={c.id}>{c.title}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-slate-400">
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">Range</span>
+          <select
+            value={rangeSec}
+            onChange={(e) => setRangeSec(Number(e.target.value))}
+            className="bg-cyber-deep border border-white/[0.08] rounded-md px-2 py-1 text-xs text-slate-200"
+          >
+            {RANGES.map((r) => (
+              <option key={r.id} value={r.sec}>{r.id}</option>
+            ))}
+          </select>
+        </label>
+        {overview.data?.metric_count != null && (
+          <span className="text-slate-500 ml-auto">
+            {overview.data.metric_count} series · {overview.data.note || 'vmware_exporter'}
+          </span>
         )}
-        {chartData.length > 0 && (
+      </div>
+
+      <div className="rounded-xl border border-white/[0.06] bg-cyber-card p-3">
+        <div className="text-sm text-white mb-2">
+          {active?.title || metricId}
+          {active?.unit ? <span className="text-slate-500 text-xs ml-2">{active.unit}</span> : null}
+        </div>
+        {series.isFetching && !chartData.length ? (
+          <div className="h-64 flex items-center justify-center text-slate-500 text-sm">{t('loading')}</div>
+        ) : series.data?.error ? (
+          <div className="h-64 flex items-center justify-center text-amber-400 text-sm">{series.data.error}</div>
+        ) : chartData.length === 0 ? (
+          <div className="h-64 flex items-center justify-center text-slate-500 text-sm">{t('lm_not_found')}</div>
+        ) : (
           <ResponsiveContainer width="100%" height={280}>
             <AreaChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
               <XAxis
                 dataKey="t"
-                tickFormatter={(v) => new Date(Number(v) * 1000).toLocaleTimeString()}
-                stroke="#64748b"
-                fontSize={10}
+                tick={{ fill: '#64748b', fontSize: 10 }}
+                tickFormatter={(v) => {
+                  const d = new Date(typeof v === 'number' && v < 1e12 ? v * 1000 : v)
+                  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+                }}
               />
-              <YAxis stroke="#64748b" fontSize={10} width={48} />
-              <Tooltip contentStyle={{ background: '#0d1422', border: '1px solid rgba(255,255,255,0.1)' }} />
-              <Legend />
-              {(seriesData?.series || []).map((s: { name: string }, i: number) => (
+              <YAxis tick={{ fill: '#64748b', fontSize: 10 }} width={48} />
+              <Tooltip
+                contentStyle={{ background: '#0d1422', border: '1px solid #334155', fontSize: 12 }}
+                labelFormatter={(v) => {
+                  const d = new Date(typeof v === 'number' && v < 1e12 ? v * 1000 : v)
+                  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString('tr-TR')
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              {(series.data?.series || []).map((s, i) => (
                 <Area
                   key={s.name}
                   type="monotone"
@@ -123,9 +165,10 @@ export const VirtPromView: React.FC<{ sourceId?: string }> = ({ sourceId }) => {
                   name={s.name}
                   stroke={COLORS[i % COLORS.length]}
                   fill={COLORS[i % COLORS.length]}
-                  fillOpacity={0.1}
+                  fillOpacity={0.15}
                   strokeWidth={1.5}
                   dot={false}
+                  connectNulls
                 />
               ))}
             </AreaChart>

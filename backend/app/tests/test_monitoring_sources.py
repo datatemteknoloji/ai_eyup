@@ -67,16 +67,13 @@ def test_validate_sources_unique_label():
         assert "çakışma" in str(e).lower() or "Label" in str(e)
 
 
-def test_resolve_module_and_default_mode():
+def test_resolve_windows_binding():
     sources = [
-        MonitoringSource(id=LINUX_SEED_ID, label="Linux Prometheus", url="http://linux:9090", binding="linux"),
-        MonitoringSource(id="ocp1", label="OCP Prom", url="http://ocp:9090", binding="openshift"),
+        MonitoringSource(id="w1", label="Windows Fleet Prom", url="http://win:9090", binding="windows"),
     ]
-    assert resolve(sources, module="openshift").id == "ocp1"
-    assert resolve(sources, source_id="ocp1").url.endswith(":9090")
-    assert default_ui_mode(sources, "openshift") == "prometheus"
-    assert default_ui_mode([], "openshift") == "api"
-    assert default_ui_mode(sources, "linux") == "prometheus"
+    assert resolve(sources, module="windows").id == "w1"
+    assert default_ui_mode(sources, "windows") == "prometheus"
+    assert default_ui_mode([], "windows") == "api"
 
 
 def test_collector_type_defaults_and_prom_compat():

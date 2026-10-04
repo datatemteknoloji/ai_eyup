@@ -78,15 +78,15 @@ type MetricServerOverview = {
   }[]
 }
 
-const fetchMetricServersOverview = async (): Promise<MetricServerOverview> => {
-  const response = await fetch(`${API_BASE_URL}/monitoring/metrics/servers?platform=linux`)
+const fetchMetricServersOverview = async (platform: 'linux' | 'windows' = 'linux'): Promise<MetricServerOverview> => {
+  const response = await fetch(`${API_BASE_URL}/monitoring/metrics/servers?platform=${platform}`)
   if (!response.ok) throw new Error('Metric sunucu özeti alınamadı')
   return response.json()
 }
 
-const buildJobMatcher = (jobs: string[]): string => {
+const buildJobMatcher = (jobs: string[], fallback: string): string => {
   const cleaned = (jobs || []).map((j) => j.trim()).filter(Boolean)
-  if (cleaned.length === 0) return 'job="node-exporter"'
+  if (cleaned.length === 0) return `job="${fallback}"`
   if (cleaned.length === 1) {
     const j = cleaned[0].replace(/\\/g, '\\\\').replace(/"/g, '\\"')
     return `job="${j}"`
@@ -97,9 +97,12 @@ const buildJobMatcher = (jobs: string[]): string => {
   return `job=~"${pattern}"`
 }
 
-const fetchGeneralSettings = async (): Promise<{ prometheus_linux_jobs?: string[] }> => {
+const fetchGeneralSettings = async (): Promise<{
+  prometheus_linux_jobs?: string[]
+  prometheus_windows_jobs?: string[]
+}> => {
   const response = await fetch(`${API_BASE_URL}/settings/`)
-  if (!response.ok) return { prometheus_linux_jobs: ['node-exporter'] }
+  if (!response.ok) return { prometheus_linux_jobs: ['node-exporter'], prometheus_windows_jobs: ['windows-exporter'] }
   return response.json()
 }
 
@@ -133,12 +136,12 @@ const fetchInstanceLabels = async (jobMatcher: string): Promise<Record<string, s
   return map
 }
 
-const fetchNodeExporterMetricNames = async (): Promise<string[]> => {
+const fetchNodeExporterMetricNames = async (prefix: string): Promise<string[]> => {
   const response = await fetch(`${API_BASE_URL}/metrics/prometheus/labels/__name__`)
   if (!response.ok) return []
   const data = await response.json()
   const names: string[] = data?.data || []
-  return names.filter((n) => typeof n === 'string' && n.startsWith('node_')).sort()
+  return names.filter((n) => typeof n === 'string' && n.startsWith(prefix)).sort()
 }
 
 /** Kullanıcının grafikte seçebileceği preset metrikler + PromQL şablonu */
@@ -148,7 +151,7 @@ type MetricPreset = {
   unit: string
   buildRangeQuery: (selector: string, byInstance: boolean) => string
 }
-const METRIC_PRESETS: MetricPreset[] = [
+const LINUX_METRIC_PRESETS: MetricPreset[] = [
   {
     id: 'cpu',
     labelKey: 'lm_preset_cpu',
@@ -229,6 +232,92 @@ const METRIC_PRESETS: MetricPreset[] = [
         : `sum(rate(node_disk_written_bytes_total{${selector}}[5m]))`,
   },
 ]
+
+const WINDOWS_METRIC_PRESETS: MetricPreset[] = [
+  {
+    id: 'cpu',
+    labelKey: 'lm_preset_cpu',
+    unit: '%',
+    buildRangeQuery: (selector, byInstance) =>
+      byInstance
+        ? `100 - (avg by (instance) (rate(windows_cpu_time_total{mode="idle",${selector}}[5m])) * 100)`
+        : `100 - (avg(rate(windows_cpu_time_total{mode="idle",${selector}}[5m])) * 100)`,
+  },
+  {
+    id: 'memory',
+    labelKey: 'lm_preset_mem',
+    unit: '%',
+    buildRangeQuery: (selector, byInstance) =>
+      byInstance
+        ? `(1 - (windows_os_physical_memory_free_bytes{${selector}} / windows_cs_physical_memory_bytes{${selector}})) * 100`
+        : `(1 - (avg(windows_os_physical_memory_free_bytes{${selector}}) / avg(windows_cs_physical_memory_bytes{${selector}}))) * 100`,
+  },
+  {
+    id: 'disk',
+    labelKey: 'lm_preset_disk',
+    unit: '%',
+    buildRangeQuery: (selector, byInstance) =>
+      byInstance
+        ? `(1 - (windows_logical_disk_free_bytes{volume="C:",${selector}} / windows_logical_disk_size_bytes{volume="C:",${selector}})) * 100`
+        : `(1 - (avg(windows_logical_disk_free_bytes{volume="C:",${selector}}) / avg(windows_logical_disk_size_bytes{volume="C:",${selector}}))) * 100`,
+  },
+  {
+    id: 'load',
+    labelKey: 'lm_preset_load',
+    unit: '',
+    buildRangeQuery: (selector, byInstance) =>
+      byInstance
+        ? `windows_cs_logical_processors{${selector}}`
+        : `avg(windows_cs_logical_processors{${selector}})`,
+  },
+  {
+    id: 'net_rx',
+    labelKey: 'lm_preset_net_rx',
+    unit: 'B/s',
+    buildRangeQuery: (selector, byInstance) =>
+      byInstance
+        ? `sum by (instance) (rate(windows_net_bytes_received_total{${selector}}[5m]))`
+        : `sum(rate(windows_net_bytes_received_total{${selector}}[5m]))`,
+  },
+  {
+    id: 'net_tx',
+    labelKey: 'lm_preset_net_tx',
+    unit: 'B/s',
+    buildRangeQuery: (selector, byInstance) =>
+      byInstance
+        ? `sum by (instance) (rate(windows_net_bytes_sent_total{${selector}}[5m]))`
+        : `sum(rate(windows_net_bytes_sent_total{${selector}}[5m]))`,
+  },
+  {
+    id: 'mem_available',
+    labelKey: 'lm_preset_mem_avail',
+    unit: 'B',
+    buildRangeQuery: (selector, byInstance) =>
+      byInstance
+        ? `windows_os_physical_memory_free_bytes{${selector}}`
+        : `avg(windows_os_physical_memory_free_bytes{${selector}})`,
+  },
+  {
+    id: 'disk_read',
+    labelKey: 'lm_preset_disk_read',
+    unit: 'B/s',
+    buildRangeQuery: (selector, byInstance) =>
+      byInstance
+        ? `sum by (instance) (rate(windows_logical_disk_read_bytes_total{${selector}}[5m]))`
+        : `sum(rate(windows_logical_disk_read_bytes_total{${selector}}[5m]))`,
+  },
+  {
+    id: 'disk_written',
+    labelKey: 'lm_preset_disk_write',
+    unit: 'B/s',
+    buildRangeQuery: (selector, byInstance) =>
+      byInstance
+        ? `sum by (instance) (rate(windows_logical_disk_write_bytes_total{${selector}}[5m]))`
+        : `sum(rate(windows_logical_disk_write_bytes_total{${selector}}[5m]))`,
+  },
+]
+
+const METRIC_PRESETS = LINUX_METRIC_PRESETS // geriye uyum (test/import)
 
 function buildRawMetricQuery(metricName: string, selector: string, byInstance: boolean): string {
   if (metricName.includes('_total') || metricName.endsWith('_total')) {
@@ -505,9 +594,16 @@ function escapePrometheusRegex(s: string): string {
   return s
 }
 
-const LiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
+const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows' }> = ({
+  embedded = false,
+  platform = 'linux',
+}) => {
   const t = useT()
   const pageVisible = usePageVisible()
+  const isWindows = platform === 'windows'
+  const activePresets = isWindows ? WINDOWS_METRIC_PRESETS : LINUX_METRIC_PRESETS
+  const metricNamePrefix = isWindows ? 'windows_' : 'node_'
+  const jobFallback = isWindows ? 'windows-exporter' : 'node-exporter'
   const [selectedInstances, setSelectedInstances] = useState<string[]>([])
   const [realTimeRefetchMs, setRealTimeRefetchMs] = useState(DEFAULT_realTimeRefetchMs)
   const [instanceDropdownOpen, setInstanceDropdownOpen] = useState(false)
@@ -540,8 +636,8 @@ const LiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => 
     : false
 
   const { data: metricsOverview } = useQuery({
-    queryKey: ['metrics-servers-overview'],
-    queryFn: fetchMetricServersOverview,
+    queryKey: ['metrics-servers-overview', platform],
+    queryFn: () => fetchMetricServersOverview(platform),
     refetchInterval: refetchIntervalSlow,
     refetchIntervalInBackground: false,
   })
@@ -552,8 +648,14 @@ const LiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => 
     staleTime: 60000,
   })
   const jobMatcher = useMemo(
-    () => buildJobMatcher(promSettings?.prometheus_linux_jobs || ['node-exporter']),
-    [promSettings?.prometheus_linux_jobs]
+    () =>
+      buildJobMatcher(
+        isWindows
+          ? promSettings?.prometheus_windows_jobs || ['windows-exporter']
+          : promSettings?.prometheus_linux_jobs || ['node-exporter'],
+        jobFallback,
+      ),
+    [promSettings?.prometheus_linux_jobs, promSettings?.prometheus_windows_jobs, isWindows, jobFallback],
   )
 
   const onlineMetricServers = useMemo(
@@ -576,8 +678,8 @@ const LiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => 
   })
 
   const { data: nodeMetricNames = [] } = useQuery({
-    queryKey: ['prometheus-node-metric-names'],
-    queryFn: fetchNodeExporterMetricNames,
+    queryKey: ['prometheus-node-metric-names', metricNamePrefix],
+    queryFn: () => fetchNodeExporterMetricNames(metricNamePrefix),
     staleTime: 60000
   })
 
@@ -594,26 +696,13 @@ const LiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => 
 
   /* Tüm sunucular: ortalama tek seri (yüzlerce host legend'ı grafiği bozmasın).
      Seçili host(lar): instance bazlı. */
-  const cpuQuery = byInstance
-    ? `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle",${selector}}[5m])) * 100)`
-    : `100 - (avg(rate(node_cpu_seconds_total{mode="idle",${selector}}[5m])) * 100)`
-
-  const memoryQuery = byInstance
-    ? `(1 - (node_memory_MemAvailable_bytes{${selector}} / node_memory_MemTotal_bytes{${selector}})) * 100`
-    : `(1 - (avg(node_memory_MemAvailable_bytes{${selector}}) / avg(node_memory_MemTotal_bytes{${selector}}))) * 100`
-
-  const diskQuery = byInstance
-    ? `(1 - (node_filesystem_avail_bytes{mountpoint="/",${selector}} / node_filesystem_size_bytes{mountpoint="/",${selector}})) * 100`
-    : `(1 - (avg(node_filesystem_avail_bytes{mountpoint="/",${selector}}) / avg(node_filesystem_size_bytes{mountpoint="/",${selector}}))) * 100`
-
-  const loadQuery = byInstance ? `node_load1{${selector}}` : `avg(node_load1{${selector}})`
-
-  const netRxQuery = byInstance
-    ? `sum by (instance) (rate(node_network_receive_bytes_total{device!~"lo",${selector}}[5m]))`
-    : `sum(rate(node_network_receive_bytes_total{device!~"lo",${selector}}[5m]))`
-  const netTxQuery = byInstance
-    ? `sum by (instance) (rate(node_network_transmit_bytes_total{device!~"lo",${selector}}[5m]))`
-    : `sum(rate(node_network_transmit_bytes_total{device!~"lo",${selector}}[5m]))`
+  const presetById = (id: string) => activePresets.find((p) => p.id === id)
+  const cpuQuery = presetById('cpu')?.buildRangeQuery(selector, byInstance) || ''
+  const memoryQuery = presetById('memory')?.buildRangeQuery(selector, byInstance) || ''
+  const diskQuery = presetById('disk')?.buildRangeQuery(selector, byInstance) || ''
+  const loadQuery = presetById('load')?.buildRangeQuery(selector, byInstance) || ''
+  const netRxQuery = presetById('net_rx')?.buildRangeQuery(selector, byInstance) || ''
+  const netTxQuery = presetById('net_tx')?.buildRangeQuery(selector, byInstance) || ''
 
   const effectiveRangeIndex = realTimeMode ? 0 : timeRangeIndex
   const rangeSeconds = TIME_RANGES[effectiveRangeIndex].value
@@ -625,46 +714,49 @@ const LiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => 
       const rawName = metricKey.slice(4)
       return buildRawMetricQuery(rawName, selector, byInstance)
     }
-    const preset = METRIC_PRESETS.find((p) => p.id === metricKey)
+    const preset = activePresets.find((p) => p.id === metricKey)
     return preset ? preset.buildRangeQuery(selector, byInstance) : ''
   }
   const getLabelForMetricKey = (metricKey: string): string => {
     if (metricKey.startsWith('raw:')) return metricKey.slice(4)
-    const preset = METRIC_PRESETS.find((p) => p.id === metricKey)
+    const preset = activePresets.find((p) => p.id === metricKey)
     return preset ? t(preset.labelKey) : metricKey
   }
   const getUnitForMetricKey = (metricKey: string): string => {
     if (metricKey.startsWith('raw:')) return ''
-    const preset = METRIC_PRESETS.find((p) => p.id === metricKey)
+    const preset = activePresets.find((p) => p.id === metricKey)
     return preset ? preset.unit : ''
   }
 
-  const cpuRangeQuery = chartInstances.length === 0
-    ? `100 - (avg(rate(node_cpu_seconds_total{mode="idle",${jobMatcher}}[5m])) * 100)`
-    : `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle",${selector}}[5m])) * 100)`
-  const memoryRangeQuery = chartInstances.length === 0
-    ? `(1 - (avg(node_memory_MemAvailable_bytes{${jobMatcher}}) / avg(node_memory_MemTotal_bytes{${jobMatcher}}))) * 100`
-    : `(1 - (node_memory_MemAvailable_bytes{${selector}} / node_memory_MemTotal_bytes{${selector}})) * 100`
-  const diskRangeQuery = chartInstances.length === 0
-    ? `(1 - (avg(node_filesystem_avail_bytes{mountpoint="/",${jobMatcher}}) / avg(node_filesystem_size_bytes{mountpoint="/",${jobMatcher}}))) * 100`
-    : `(1 - (node_filesystem_avail_bytes{mountpoint="/",${selector}} / node_filesystem_size_bytes{mountpoint="/",${selector}})) * 100`
+  const cpuRangeQuery = presetById('cpu')?.buildRangeQuery(
+    chartInstances.length === 0 ? jobMatcher : selector,
+    chartInstances.length > 0,
+  ) || ''
+  const memoryRangeQuery = presetById('memory')?.buildRangeQuery(
+    chartInstances.length === 0 ? jobMatcher : selector,
+    chartInstances.length > 0,
+  ) || ''
+  const diskRangeQuery = presetById('disk')?.buildRangeQuery(
+    chartInstances.length === 0 ? jobMatcher : selector,
+    chartInstances.length > 0,
+  ) || ''
 
   const { data: cpuResults = [], isLoading: cpuLoading } = useQuery({
-    queryKey: ['prometheus-cpu', instanceQueryKey, realTimeMode],
+    queryKey: ['prometheus-cpu', platform, instanceQueryKey, realTimeMode],
     queryFn: () => fetchPrometheus(cpuQuery),
     refetchInterval: refetchIntervalInstant,
     refetchIntervalInBackground: false,
   })
 
   const { data: memoryResults = [], isLoading: memoryLoading } = useQuery({
-    queryKey: ['prometheus-memory', instanceQueryKey, realTimeMode],
+    queryKey: ['prometheus-memory', platform, instanceQueryKey, realTimeMode],
     queryFn: () => fetchPrometheus(memoryQuery),
     refetchInterval: refetchIntervalInstant,
     refetchIntervalInBackground: false,
   })
 
   const { data: diskResults = [], isLoading: diskLoading } = useQuery({
-    queryKey: ['prometheus-disk', instanceQueryKey, realTimeMode],
+    queryKey: ['prometheus-disk', platform, instanceQueryKey, realTimeMode],
     queryFn: () => fetchPrometheus(diskQuery),
     refetchInterval: refetchIntervalSlow,
     refetchIntervalInBackground: false,
@@ -1164,7 +1256,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => 
                   className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[220px]"
                 >
                     <optgroup label={t('lm_presets')} className="bg-slate-900 text-white">
-                    {METRIC_PRESETS.map((p) => (
+                    {activePresets.map((p) => (
                       <option key={p.id} value={p.id} className="bg-slate-900 text-white">{t(p.labelKey)}</option>
                     ))}
                   </optgroup>

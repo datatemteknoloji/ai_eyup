@@ -388,6 +388,85 @@ def linux_family_detail_queries(selector: str) -> Dict[str, Dict[str, str]]:
     }
 
 
+def windows_promql_selector(instances: Optional[List[str]] = None) -> str:
+    """windows_exporter job + isteğe bağlı instance filtresi."""
+    job = promql_job_matcher(kind="windows")
+    insts = [i for i in (instances or []) if i]
+    if not insts:
+        return job
+    if len(insts) == 1:
+        return f'{job},instance="{_escape_promql_label(insts[0])}"'
+    alts = "|".join(_promql_regex_literal(i) for i in insts)
+    return f'{job},instance=~"{alts}"'
+
+
+def windows_live_preset_queries(selector: str) -> Dict[str, str]:
+    """Windows Canlı Metrikler / chat preset — Linux sütun adlarıyla aynı JOIN şeması."""
+    return {
+        "cpu": (
+            f'100 - (avg by (instance) (rate(windows_cpu_time_total{{mode="idle",{selector}}}[5m])) * 100)'
+        ),
+        "memory": (
+            f'(1 - (windows_os_physical_memory_free_bytes{{{selector}}} '
+            f'/ windows_cs_physical_memory_bytes{{{selector}}})) * 100'
+        ),
+        "disk": (
+            f'(1 - (windows_logical_disk_free_bytes{{volume="C:",{selector}}} '
+            f'/ windows_logical_disk_size_bytes{{volume="C:",{selector}}})) * 100'
+        ),
+        "load": f'windows_cs_logical_processors{{{selector}}}',
+        "net_rx": (
+            f'sum by (instance) (rate(windows_net_bytes_received_total{{{selector}}}[5m]))'
+        ),
+        "net_tx": (
+            f'sum by (instance) (rate(windows_net_bytes_sent_total{{{selector}}}[5m]))'
+        ),
+        "mem_avail": f'windows_os_physical_memory_free_bytes{{{selector}}}',
+        "disk_read": (
+            f'sum by (instance) (rate(windows_logical_disk_read_bytes_total{{{selector}}}[5m]))'
+        ),
+        "disk_write": (
+            f'sum by (instance) (rate(windows_logical_disk_write_bytes_total{{{selector}}}[5m]))'
+        ),
+    }
+
+
+def windows_family_detail_queries(selector: str) -> Dict[str, Dict[str, str]]:
+    """Windows aile detayı — cpu user/privileged, bellek, volume bazlı disk."""
+    cpu_mode = (
+        lambda mode: f'avg by (instance) (rate(windows_cpu_time_total{{mode="{mode}",{selector}}}[5m])) * 100'
+    )
+    return {
+        "cpu": {
+            "cpu_user": cpu_mode("user"),
+            "cpu_system": cpu_mode("privileged"),
+            "cpu_iowait": cpu_mode("interrupt"),
+            "cpu_steal": cpu_mode("dpc"),
+            "cpu_softirq": cpu_mode("idle"),
+        },
+        "memory": {
+            "mem_total": f'windows_cs_physical_memory_bytes{{{selector}}}',
+            "mem_cached": f'windows_os_physical_memory_free_bytes{{{selector}}}',
+            "mem_buffers": f'windows_os_virtual_memory_free_bytes{{{selector}}}',
+            "swap_pct": (
+                f'(1 - windows_os_virtual_memory_free_bytes{{{selector}}} '
+                f'/ (windows_os_virtual_memory_bytes{{{selector}}} + 1)) * 100'
+            ),
+        },
+        "disk": {
+            "disk_mount_pct": (
+                f'(1 - (windows_logical_disk_free_bytes{{{selector}}} '
+                f'/ windows_logical_disk_size_bytes{{{selector}}})) * 100'
+            ),
+        },
+        "network": {},
+        "load": {
+            "load5": f'windows_cs_logical_processors{{{selector}}}',
+            "load15": f'windows_cs_physical_processors{{{selector}}}',
+        },
+    }
+
+
 def join_series_by_instance(
     columns: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[str, Dict[str, Any]]:
@@ -397,8 +476,9 @@ def join_series_by_instance(
         for item in series or []:
             inst = item.get("instance") or "?"
             rows.setdefault(inst, {})[col] = item.get("value")
-            if item.get("mountpoint"):
-                rows[inst].setdefault("_mounts", {})[str(item.get("mountpoint"))] = item.get("value")
+            mp = item.get("mountpoint") or item.get("volume")
+            if mp:
+                rows[inst].setdefault("_mounts", {})[str(mp)] = item.get("value")
     return rows
 
 
@@ -457,12 +537,14 @@ def format_disk_mount_table(
     rows: Dict[str, Dict[str, Any]],
     *,
     max_lines: int = 80,
+    volume_label: str = "mountpoint",
 ) -> str:
-    """Aile detayı: mountpoint JOIN (kök dışı volume'lar)."""
+    """Aile detayı: mountpoint/volume JOIN (kök dışı volume'lar)."""
+    col = volume_label if volume_label in ("mountpoint", "volume") else "mountpoint"
     lines = [
-        "Disk mount kullanımı (%). Boş satır = o mount bu anlık sorguda yok.",
+        f"Disk {col} kullanımı (%). Boş satır = o {col} bu anlık sorguda yok.",
         "",
-        "| instance | mountpoint | % |",
+        f"| instance | {col} | % |",
         "| --- | --- | --- |",
     ]
     n = 0
@@ -974,8 +1056,14 @@ class PrometheusMetricsService:
             logger.error(f"Sunucu metrikleri hatası: {e}")
         return metrics
 
-    async def get_metrics_context_for_ai(self, message: str) -> str:
-        """AI context: instance JOIN tablosu (preset / aile detayı / node_*)."""
+    async def get_metrics_context_for_ai(self, message: str, *, kind: str = "linux") -> str:
+        """AI context: instance JOIN tablosu (preset / aile detayı / node_*|windows_*).
+
+        kind: 'linux' (node_exporter) | 'windows' (windows_exporter).
+        """
+        kind_l = (kind or "linux").strip().lower()
+        if kind_l not in ("linux", "windows"):
+            kind_l = "linux"
         ml = (message or "").lower()
         want_uptime = any(
             kw in ml for kw in ("uptime", "çalışma süresi", "calisma suresi", "boot", "restart")
@@ -984,25 +1072,38 @@ class PrometheusMetricsService:
         families = intent["families"]
         depth = intent["depth"]
 
-        up_map = get_node_exporter_up_map()
-        named = resolve_prometheus_instances_from_message(message, up_map)
-        selector = linux_promql_selector(named or None)
+        if kind_l == "windows":
+            up_map = get_windows_exporter_up_map()
+            named = resolve_prometheus_instances_from_message(message, up_map)
+            selector = windows_promql_selector(named or None)
+            exporter_label = "windows_exporter"
+            preset_fn = windows_live_preset_queries
+            family_fn = windows_family_detail_queries
+            mount_extra = ["volume"]
+        else:
+            up_map = get_node_exporter_up_map()
+            named = resolve_prometheus_instances_from_message(message, up_map)
+            selector = linux_promql_selector(named or None)
+            exporter_label = "node_exporter"
+            preset_fn = linux_live_preset_queries
+            family_fn = linux_family_detail_queries
+            mount_extra = ["mountpoint"]
 
         parts: List[str] = []
         if named:
             parts.append(
-                "Prometheus Node Exporter — scrape instance etiketi birebir "
+                f"Prometheus {exporter_label} — scrape instance etiketi birebir "
                 f"({len(named)} host). Kısa ad öneki (örn. oprbigdata → oprbigdata3/5/…). "
                 "Tek tablo, instance JOIN."
             )
         else:
             parts.append(
-                "Prometheus filo (tüm node-exporter instance). Tek tablo JOIN; "
+                f"Prometheus filo (tüm {exporter_label} instance). Tek tablo JOIN; "
                 "ayrı CPU/RAM sıralamalarını birleştirme. Boş hücre = bu seride anlık değer yok."
             )
 
         try:
-            preset_q = linux_live_preset_queries(selector)
+            preset_q = preset_fn(selector)
             queries: Dict[str, str] = {}
             extra_labels: Dict[str, List[str]] = {}
             col_keys = chat_metric_col_keys(families, depth=depth)
@@ -1010,12 +1111,12 @@ class PrometheusMetricsService:
                 if key in preset_q:
                     queries[key] = preset_q[key]
             if depth in ("family", "all_node"):
-                fam_q = linux_family_detail_queries(selector)
+                fam_q = family_fn(selector)
                 for fam in families:
                     for key, q in (fam_q.get(fam) or {}).items():
                         queries[key] = q
                         if key == "disk_mount_pct":
-                            extra_labels[key] = ["mountpoint"]
+                            extra_labels[key] = list(mount_extra)
             columns = await self._query_columns(queries, extra_labels)
             joined = join_series_by_instance(columns)
             if named:
@@ -1034,19 +1135,24 @@ class PrometheusMetricsService:
             if table:
                 parts.append(table)
             if depth in ("family", "all_node") and "disk" in families:
-                mounts = format_disk_mount_table(rows)
+                mounts = format_disk_mount_table(rows, volume_label=mount_extra[0])
                 if mounts:
                     parts.append(mounts)
         except Exception as e:
-            logger.error(f"Prometheus chat JOIN hatası: {e}")
+            logger.error(f"Prometheus chat JOIN hatası ({kind_l}): {e}")
 
-        if depth == "all_node":
+        if depth == "all_node" and kind_l == "linux":
             try:
                 parts.append(await self._all_node_context(selector, families, named))
             except Exception as e:
                 logger.debug("all_node context: %s", e)
+        elif depth == "all_node" and kind_l == "windows":
+            try:
+                parts.append(await self._all_windows_context(selector, families, named))
+            except Exception as e:
+                logger.debug("all_windows context: %s", e)
 
-        if want_uptime:
+        if want_uptime and kind_l == "linux":
             parts.append(await self._uptime_context(named or None))
 
         return "\n".join(p for p in parts if p)
@@ -1119,6 +1225,63 @@ class PrometheusMetricsService:
             if shown >= 80:
                 lines.append("(örnek seri kesildi; max 80)")
                 break
+        return "\n".join(lines) + "\n"
+
+    async def _all_windows_context(
+        self,
+        selector: str,
+        families,
+        named: Optional[List[str]],
+    ) -> str:
+        """Ham windows_* isimleri + isteğe bağlı örnek seri."""
+        prefixes = {
+            "cpu": ("windows_cpu_",),
+            "memory": ("windows_os_", "windows_cs_physical_memory"),
+            "disk": ("windows_logical_disk_",),
+            "network": ("windows_net_",),
+            "load": ("windows_cs_", "windows_system_"),
+        }
+        wanted: List[str] = []
+        for fam in families or _ALL_PRESET_FAMILIES:
+            wanted.extend(prefixes.get(fam) or ())
+        if not wanted:
+            wanted = ["windows_"]
+        try:
+            names = await self.get_node_exporter_metrics()
+        except Exception:
+            names = []
+        filtered = [n for n in names if any(n.startswith(p) for p in wanted)][:80]
+        lines = [
+            "Ham windows_* (windows_exporter). Filo dump yok; isim listesi:",
+            ", ".join(filtered) if filtered else "(isim alınamadı)",
+        ]
+        if not named or len(named) > 12:
+            lines.append("Belirli hostname yazınca örnek seriler de gelir.")
+            return "\n".join(lines) + "\n"
+        alts = "|".join(re.escape(p.rstrip("_")) + ".*" for p in wanted)
+        query = f'{{__name__=~"{alts}",{selector}}}'
+        data = await self.query_metric(query)
+        series = self._instant_series(data, extra_labels=["mode", "volume", "nic"])
+        if not series:
+            return "\n".join(lines) + "\n"
+        lines.append("")
+        lines.append("| instance | metrik | etiket | değer |")
+        lines.append("| --- | --- | --- | --- |")
+        shown = 0
+        for item in series[:80]:
+            tags = []
+            for lab in ("mode", "volume", "nic"):
+                if item.get(lab):
+                    tags.append(f"{lab}={item[lab]}")
+            try:
+                val = f"{float(item['value']):.4g}"
+            except (TypeError, ValueError, KeyError):
+                val = ""
+            lines.append(
+                f"| {item.get('instance') or '?'} | {item.get('__name__') or '?'} | "
+                f"{','.join(tags)} | {val} |"
+            )
+            shown += 1
         return "\n".join(lines) + "\n"
 
     async def _uptime_context(self, instances: Optional[List[str]]) -> str:

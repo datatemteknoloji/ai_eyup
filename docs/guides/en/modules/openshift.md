@@ -41,7 +41,9 @@ There is **no** separate sidebar group.
 1. Integrations → vCenter/OLVM (`/integrations/hypervisors`)
 2. Type **oVirt / KVM** (`kvm`), engine FQDN/IP, user/password, 443
 3. Test → save → sync VMs
-4. Results: Virtualization dashboard `/hypervisors`, infra reports, `/virt/chat`
+4. Results: Virtualization dashboard `/hypervisors`, infra reports, `/virt/chat`, monitoring `/virt/monitoring`
+
+Periodic jobs write the same tables as vCenter: hosts, storage domains, clusters, VM statistics, engine events (`ovirt_event`). VM sync is paginated and prunes VMs removed from the engine. Linux/Windows server lists can filter by hypervisor (e.g. OLVM only).
 
 ```diagram
   OLVM Engine (REST)

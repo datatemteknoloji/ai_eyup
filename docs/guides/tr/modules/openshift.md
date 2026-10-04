@@ -67,7 +67,9 @@ Ayrı sol menü grubu **yoktur**.
 1. **Entegrasyonlar → vCenter/OLVM** (`/integrations/hypervisors`)  
 2. Tip **oVirt / KVM** (`kvm`), engine FQDN/IP, kullanıcı/şifre, port 443  
 3. Bağlantıyı test et → kaydet → VM senkron  
-4. Sonuç: **Sanallaştırma → Dashboard** (`/hypervisors`), **Altyapı raporları**, **Asistan** (`/virt/chat`)
+4. Sonuç: **Sanallaştırma → Dashboard** (`/hypervisors`), **Altyapı raporları**, **Asistan** (`/virt/chat`), **İzleme** (`/virt/monitoring`)
+
+Periyodik işler vCenter ile aynı tablolara yazar: host (`hypervisor_host_metrics`), storage domain (`virt_datastores`), cluster (`virt_clusters`), VM istatistik (`virt_vm_metrics`), engine olayları (`system_events` source=`ovirt_event`). VM senkronu sayfalıdır; engine’den silinen VM’ler envanterden düşer. Linux/Windows sunucu listelerinde hypervisor süzgeci (ör. yalnızca OLVM) vardır.
 
 ```diagram
   OLVM Engine (REST)

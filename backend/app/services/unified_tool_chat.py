@@ -58,8 +58,8 @@ SYSTEM_PROMPT = (
     "Namespace/node bazlı CPU·mem·net·OOM·restart·throttle için Views kullan.\n"
     "  Other (binding=none) → istediğiniz kadar kaynak; collector_type= "
     "prometheus|telegraf|opentelemetry|zabbix. Hub’da Other değil label görünür. "
-    "Unified chat: mesajda tam label → custom_prometheus_query "
-    "(Prom uyumlu: keşif/PromQL; Zabbix adaptörü sonraki faz). "
+    "Unified chat: mesajda tam label → custom_prometheus_query (Prom) veya zabbix_query "
+    "(Zabbix semantic metric_id + match map). "
     "Views şablonu yok. prometheus_query (Linux node-exporter) OpenShift için KULLANMA. Grafik için /grafik.\n"
     "- KubeVirt VM DataVolume/import/clone durumu → list_datavolumes; CANLI LIVE MIGRATION "
     "(hangi node'a taşınıyor, transfer hızı/ilerleme) → list_ocp_migrations.\n"
@@ -215,7 +215,8 @@ _PLATFORM_HINTS = {
         "(mode=views|catalog|series|allocation; view=global|namespaces|nodes|pods). "
         "Disk/net Prometheus’ta Views ile gelir; Timescale’de yok — uydurma. "
         "Other (binding=none): hub’da label listesi; Unified + tam label → "
-        "custom_prometheus_query (prometheus/telegraf/otel→Prom; Zabbix sonraki faz). "
+        "custom_prometheus_query (prometheus/telegraf/otel→Prom) veya zabbix_query "
+        "(catalog metric_id: cpu_util, mem_used_pct, …; mode=overview|hosts|series|coverage). "
         "VM detayı → kubevirt_vm_detail(fields=[...] veya question=...); kullanıcı "
         "sormadığı alanları DÖKME. Snapshot/Restore → kubevirt_snapshots. DataVolume → "
         "list_datavolumes. Live Migration → list_ocp_migrations. "
@@ -342,12 +343,13 @@ def run_read_only_tool_loop(
     except Exception as e:
         yield {"type": "skipped", "reason": f"tool şemaları alınamadı: {e}"}
         return
-    # Other Prometheus yalnız Unified chat
+    # Other Prometheus / Zabbix yalnız Unified chat
     plat0 = (platform or "").strip().lower()
     if plat0 not in ("unified", ""):
         specs = [
             s for s in specs
-            if ((s.get("function") or {}).get("name") or "") != "custom_prometheus_query"
+            if ((s.get("function") or {}).get("name") or "")
+            not in ("custom_prometheus_query", "zabbix_query")
         ]
     if not specs:
         yield {"type": "skipped", "reason": "kullanılabilir araç yok"}

@@ -919,7 +919,16 @@ async def unified_chat_stream(
                         if not _plan.need_prometheus:
                             return ""
                         from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
-                        return await PrometheusMetricsService().get_metrics_context_for_ai(message)
+                        svc = PrometheusMetricsService()
+                        domains = set(_plan.domains or ())
+                        chunks: list[str] = []
+                        if "linux" in domains or "exadata" in domains or (
+                            "windows" not in domains and "openshift" not in domains
+                        ):
+                            chunks.append(await svc.get_metrics_context_for_ai(message, kind="linux"))
+                        if "windows" in domains:
+                            chunks.append(await svc.get_metrics_context_for_ai(message, kind="windows"))
+                        return "\n\n".join(c for c in chunks if c)
                     except Exception as e:
                         logger.debug("Unified prometheus context error: %s", e)
                         return ""

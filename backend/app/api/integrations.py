@@ -15,6 +15,38 @@ from app.services.inventory_dedup import detect_duplicate_groups, auto_deduplica
 router = APIRouter()
 
 
+def _centrify_source() -> dict:
+    """Centrify entegrasyon kaynağı — DB erişilmezse sessizce boş döner."""
+    try:
+        from app.services.centrify.database import get_centrify_thread_session
+        from app.models.centrify_zone import CentrifyIntegrationConfig, CentrifyZone
+
+        db = get_centrify_thread_session()
+        if db is None:
+            return {"id": "centrify", "name": "Delinea Server Suite",
+                    "description": "Centrify zone, role, right, assignment yönetimi",
+                    "count": 0, "enabled": False, "path": "/integrations/centrify"}
+        try:
+            cfg = db.query(CentrifyIntegrationConfig).filter_by(enabled=True).first()
+            zone_count = db.query(CentrifyZone).filter_by(deleted_in_ad=False).count() if cfg else 0
+            return {
+                "id": "centrify", "name": "Delinea Server Suite",
+                "description": "Centrify zone, role, right, assignment yönetimi",
+                "count": zone_count, "enabled": cfg is not None,
+                "path": "/integrations/centrify",
+            }
+        except Exception:
+            return {"id": "centrify", "name": "Delinea Server Suite",
+                    "description": "Centrify zone, role, right, assignment yönetimi",
+                    "count": 0, "enabled": False, "path": "/integrations/centrify"}
+        finally:
+            db.close()
+    except Exception:
+        return {"id": "centrify", "name": "Delinea Server Suite",
+                "description": "Centrify zone, role, right, assignment yönetimi",
+                "count": 0, "enabled": False, "path": "/integrations/centrify"}
+
+
 class MergeRequest(BaseModel):
     keep_id: int
     merge_ids: list[int]
@@ -89,6 +121,7 @@ async def integrations_summary(db: Session = Depends(get_db)):
                 "project_count": ocp_projects,
                 "path": "/integrations/openshift",
             },
+            _centrify_source(),
         ],
         "inventory": {
             "total_servers": total_servers,

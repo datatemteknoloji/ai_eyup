@@ -2,7 +2,7 @@
 Multi-source monitoring registry.
 
 Kaynaklar AppSettings `monitoring_prometheus_sources` JSON listesinde tutulur.
-Her kayıt: id, label, url, token (şifreli), binding (linux|openshift|virtualization|none),
+Her kayıt: id, label, url, token (şifreli), binding (linux|windows|openshift|virtualization|none),
 collector_type (prometheus|telegraf|opentelemetry|zabbix), isteğe bağlı username/password.
 
 Geriye uyum: registry boşsa settings.PROMETHEUS_URL → binding=linux seed.
@@ -19,8 +19,8 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
-Binding = Literal["linux", "openshift", "virtualization", "none"]
-VALID_BINDINGS = frozenset({"linux", "openshift", "virtualization", "none"})
+Binding = Literal["linux", "windows", "openshift", "virtualization", "none"]
+VALID_BINDINGS = frozenset({"linux", "windows", "openshift", "virtualization", "none"})
 
 CollectorType = Literal["prometheus", "telegraf", "opentelemetry", "zabbix"]
 VALID_COLLECTORS = frozenset({"prometheus", "telegraf", "opentelemetry", "zabbix"})
@@ -334,6 +334,8 @@ def resolve(
         binding: Binding = "openshift"
     elif mod in ("virtualization", "virt", "vmware"):
         binding = "virtualization"
+    elif mod in ("windows", "win"):
+        binding = "windows"
     elif mod in ("none", "other", "custom"):
         binding = "none"
     else:

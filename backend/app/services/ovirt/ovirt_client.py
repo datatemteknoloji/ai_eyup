@@ -1,12 +1,37 @@
 """
-oVirt/RHEV REST API Client
+oVirt/RHEV / OLVM REST API Client
 """
-import requests
+from __future__ import annotations
+
 import logging
 import time
-from typing import List, Dict, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, Dict, List, Optional, Tuple
+
+import requests
 from requests.auth import HTTPBasicAuth
 from urllib3.exceptions import InsecureRequestWarning
+
+from app.services.ovirt.ovirt_parse import (
+    OVirtError,
+    cluster_row,
+    cpu_count,
+    event_severity,
+    first_ipv4,
+    guest_os_full,
+    host_metrics_from_stats,
+    memory_bytes,
+    nested_id,
+    nested_name,
+    next_link,
+    nics_to_network_info,
+    power_fields,
+    statistic_map,
+    storage_domain_row,
+    to_int,
+    unwrap_items,
+    vm_stats_to_live,
+)
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 logger = logging.getLogger(__name__)
@@ -62,104 +87,127 @@ class OVirtClient:
     
     @staticmethod
     def _to_int(val, default: int = 0) -> int:
-        """oVirt API bazen sayıları string olarak döndürür. Güvenli dönüşüm."""
-        try:
-            return int(val)
-        except (TypeError, ValueError):
-            return default
+        return to_int(val, default)
+
+    def _request(self, method: str, path: str, *, params=None, json=None, timeout: int = 30):
+        url = path if str(path).startswith("http") else f"{self.base_url}/{path.lstrip('/')}"
+        r = self.session.request(method, url, params=params, json=json, timeout=timeout)
+        return r
+
+    def _paged(self, path: str, *item_keys: str, params: Optional[dict] = None, timeout: int = 60) -> List[Dict]:
+        params = dict(params or {})
+        params.setdefault("max", 200)
+        items: List[Dict] = []
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        use_params = params
+        pages = 0
+        while url and pages < 80:
+            r = self.session.get(url, params=use_params, timeout=timeout)
+            if r.status_code != 200:
+                raise OVirtError(
+                    f"HTTP {r.status_code}: {(r.text or '')[:240]}",
+                    status_code=r.status_code,
+                )
+            chunk = unwrap_items(r.json() if r.text else {}, *item_keys)
+            items.extend(chunk)
+            nxt = next_link(r.headers)
+            if nxt:
+                url = nxt if nxt.startswith("http") else self._resolve_url(nxt)
+                use_params = None
+                pages += 1
+                continue
+            if len(chunk) < int(params.get("max") or 200):
+                break
+            pages += 1
+            use_params = dict(params)
+            use_params["page"] = pages + 1
+            url = f"{self.base_url}/{path.lstrip('/')}"
+        return items
+
+    def _inventory_row(self, vm: Dict) -> Dict:
+        vm_id = vm.get("id") or ""
+        vm_name = vm.get("name") or "Unknown"
+        status, power = power_fields(vm.get("status"))
+        mem_b = memory_bytes(vm)
+        os_type = ((vm.get("os") or {}).get("type") if isinstance(vm.get("os"), dict) else "") or ""
+        gos = guest_os_full(vm)
+        fqdn = (vm.get("fqdn") or "").strip()
+        host_name = nested_name(vm.get("host"))
+        host_ref = nested_id(vm.get("host"))
+        cluster_name = nested_name(vm.get("cluster"))
+        nics = unwrap_items(vm.get("nics") if isinstance(vm.get("nics"), dict) else vm, "nic", "nics")
+        if not nics and isinstance(vm.get("nics"), list):
+            nics = [x for x in vm["nics"] if isinstance(x, dict)]
+        devices = unwrap_items(
+            vm.get("reported_devices") if isinstance(vm.get("reported_devices"), dict) else {},
+            "reported_device", "reported_devices",
+        )
+        ip_address = first_ipv4(devices)
+        guest_hn = fqdn if fqdn and fqdn.lower() != vm_name.lower() else (fqdn or "")
+        return {
+            "name": vm_name,
+            "ip_address": ip_address,
+            "hostname": guest_hn or vm_name,
+            "os_type": gos or os_type,
+            "cpu_cores": cpu_count(vm),
+            "memory_gb": mem_b // (1024 ** 3) if mem_b > 0 else 0,
+            "status": status,
+            "power_state": power,
+            "vm_id": vm_id,
+            "vm_power_state": power,
+            "vm_host_name": host_name or None,
+            "vm_host_ref": host_ref or None,
+            "vm_cluster": cluster_name or None,
+            "vm_guest_hostname": guest_hn or None,
+            "vm_guest_os_full": gos or None,
+            "vm_guest_ip": ip_address or None,
+            "vm_network_info": nics_to_network_info(nics, devices) if nics or devices else None,
+        }
 
     def list_vms(self) -> List[Dict]:
-        """VM listesini getir — oVirt ve OLVM (Oracle Linux Virtualization Manager) destekli."""
+        """VM listesi — sayfalı. HTTP hatasında OVirtError (boş liste ≠ hata)."""
+        follow = "host,cluster,nics,guest_operating_system"
         try:
-            # Sayfalama: max=100 ile toplu çek
-            response = self.session.get(
-                f"{self.base_url}/vms",
-                params={"max": 500},
-                timeout=30,
-            )
-            if response.status_code != 200:
-                logger.error(f"oVirt API error: {response.status_code} - {response.text[:200]}")
-                return []
+            raw = self._paged("vms", "vm", "vms", params={"follow": follow}, timeout=90)
+        except OVirtError as exc:
+            if exc.status_code in (400, 404):
+                raw = self._paged("vms", "vm", "vms", timeout=90)
+            else:
+                raise
+        inventory = [self._inventory_row(vm) for vm in raw]
+        logger.info("oVirt/OLVM %s: %s VM listelendi", self.host, len(inventory))
+        return inventory
 
-            data = response.json()
-            # oVirt: {"vm": [...]}  veya  {"vms": [...]}
-            vms = data.get("vm") or data.get("vms") or []
-            if isinstance(vms, dict):
-                vms = [vms]
-
-            inventory = []
-            for vm in vms:
-                vm_name = vm.get("name", "Unknown")
-                vm_id   = vm.get("id", "")
-
-                # ── IP adresi (/vms/{id}/reporteddevices) ────────────────────
-                ip_address = ""
+    def fetch_full_details_parallel(
+        self,
+        vms: List[Dict],
+        on_progress: Optional[Callable[[int, int], None]] = None,
+        max_workers: int = 8,
+    ) -> Dict[str, Dict]:
+        need = []
+        for vm in vms:
+            vid = (vm.get("vm_id") or vm.get("id") or "").strip()
+            if vid:
+                need.append(vid)
+        out: Dict[str, Dict] = {}
+        if not need:
+            return out
+        workers = max(1, min(max_workers, len(need)))
+        done = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = {pool.submit(self.get_vm_full_details, vid): vid for vid in need}
+            for fut in as_completed(futs):
+                vid = futs[fut]
+                done += 1
                 try:
-                    rd_r = self.session.get(
-                        f"{self.base_url}/vms/{vm_id}/reporteddevices",
-                        timeout=10,
-                    )
-                    if rd_r.status_code == 200:
-                        rd_data = rd_r.json()
-                        devices = rd_data.get("reported_device", [])
-                        if isinstance(devices, dict):
-                            devices = [devices]
-                        for dev in devices:
-                            ip_list = dev.get("ips", {}).get("ip", [])
-                            if isinstance(ip_list, dict):
-                                ip_list = [ip_list]
-                            for ip_entry in ip_list:
-                                addr = ip_entry.get("address", "")
-                                ver  = ip_entry.get("version", "v4")
-                                if (addr and ver == "v4"
-                                        and not addr.startswith("127.")
-                                        and not addr.startswith("169.254")):
-                                    ip_address = addr
-                                    break
-                            if ip_address:
-                                break
+                    details = fut.result()
+                    if details:
+                        out[vid] = details
                 except Exception as exc:
-                    logger.debug(f"IP bilgisi alınamadı ({vm_name}): {exc}")
-
-                # ── CPU / RAM ─────────────────────────────────────────────────
-                cpu_topology = vm.get("cpu", {}).get("topology", {})
-                cores   = self._to_int(cpu_topology.get("cores",   1), 1)
-                sockets = self._to_int(cpu_topology.get("sockets", 1), 1)
-                threads = self._to_int(cpu_topology.get("threads", 1), 1)
-                cpu_cores = cores * sockets * threads
-
-                memory_bytes = self._to_int(vm.get("memory", 0), 0)
-                memory_gb    = memory_bytes // (1024 ** 3) if memory_bytes > 0 else 0
-
-                # ── OS Tipi ──────────────────────────────────────────────────
-                os_type = vm.get("os", {}).get("type", "") or ""
-
-                # ── Durum ────────────────────────────────────────────────────
-                # oVirt status: "up" | "down" | "suspended" | "paused" | ...
-                raw_status = vm.get("status", "unknown")
-                if isinstance(raw_status, dict):
-                    raw_status = raw_status.get("#text", raw_status.get("state", "unknown"))
-                status = "ONLINE" if str(raw_status).lower() in ("up", "powering_up") else \
-                         "OFFLINE" if str(raw_status).lower() in ("down", "not_responding") else \
-                         str(raw_status).upper()
-
-                inventory.append({
-                    "name":       vm_name,
-                    "ip_address": ip_address,
-                    "hostname":   vm_name,
-                    "os_type":    os_type,
-                    "cpu_cores":  cpu_cores,
-                    "memory_gb":  memory_gb,
-                    "status":     status,
-                    "vm_id":      vm_id,
-                })
-
-            logger.info(f"oVirt/OLVM {self.host}: {len(inventory)} VM senkronize edildi")
-            return inventory
-
-        except Exception as e:
-            logger.error(f"oVirt list_vms error: {e}", exc_info=True)
-            return []
+                    logger.debug("oVirt full_details %s: %s", vid, exc)
+                if on_progress:
+                    on_progress(done, len(need))
+        return out
 
     def _resolve_url(self, href: str) -> str:
         if not href:
@@ -319,201 +367,318 @@ class OVirtClient:
             return False, str(e)
 
     def find_vm_by_name_or_ip(self, name: str = "", ip: str = "") -> Optional[str]:
-        """VM'i isim veya IP ile bul, vm_id döner."""
+        """Tam isim veya IPv4 eşleşmesi — prefix eşleşme yok."""
+        name_l = (name or "").strip().lower()
+        ip_s = (ip or "").strip()
         try:
-            vms_raw = self.session.get(f"{self.base_url}/vms", params={"max": 500}, timeout=30)
-            if vms_raw.status_code != 200:
-                return None
-            data = vms_raw.json()
-            vms = data.get("vm") or data.get("vms") or []
-            if isinstance(vms, dict):
-                vms = [vms]
-
-            name_l = (name or "").lower()
-
-            # 1) İsim eşleşmesi
             if name_l:
-                for vm in vms:
-                    if vm.get("name", "").lower() == name_l:
-                        return vm.get("id")
-                # Kısmi eşleşme (hostname prefix)
-                for vm in vms:
-                    if name_l and vm.get("name", "").lower().startswith(name_l[:8]):
-                        return vm.get("id")
-
-            # 2) IP eşleşmesi (reporteddevices)
-            if ip:
-                for vm in vms:
-                    vm_id = vm.get("id", "")
-                    if not vm_id:
-                        continue
-                    try:
-                        rd_r = self.session.get(
-                            f"{self.base_url}/vms/{vm_id}/reporteddevices", timeout=8
-                        )
-                        if rd_r.status_code != 200:
-                            continue
-                        devices = rd_r.json().get("reported_device", [])
-                        if isinstance(devices, dict):
-                            devices = [devices]
-                        for dev in devices:
-                            for ip_entry in (dev.get("ips", {}).get("ip", []) or []):
-                                if isinstance(ip_entry, dict) and ip_entry.get("address") == ip:
-                                    return vm_id
-                    except Exception:
-                        continue
+                safe = name_l.replace("'", "")
+                r = self.session.get(
+                    f"{self.base_url}/vms",
+                    params={"search": f"name={safe}", "max": 20},
+                    timeout=20,
+                )
+                if r.status_code == 200:
+                    for vm in unwrap_items(r.json(), "vm", "vms"):
+                        if (vm.get("name") or "").lower() == name_l:
+                            return vm.get("id")
+            if ip_s:
+                r = self.session.get(
+                    f"{self.base_url}/vms",
+                    params={"search": f"ipaddr={ip_s}", "max": 20},
+                    timeout=20,
+                )
+                if r.status_code == 200:
+                    found = unwrap_items(r.json(), "vm", "vms")
+                    if len(found) == 1:
+                        return found[0].get("id")
+                    for vm in found:
+                        devices = unwrap_items(
+                            self.session.get(
+                                f"{self.base_url}/vms/{vm.get('id')}/reporteddevices",
+                                timeout=8,
+                            ).json() if vm.get("id") else {},
+                            "reported_device", "reported_devices",
+                        ) if vm.get("id") else []
+                        if first_ipv4(devices) == ip_s:
+                            return vm.get("id")
         except Exception as e:
-            logger.error(f"oVirt find_vm_by_name_or_ip error: {e}")
+            logger.error("oVirt find_vm_by_name_or_ip error: %s", e)
         return None
 
     def get_vm_full_details(self, vm_id: str) -> Optional[Dict]:
-        """VM'in tüm detaylarını tek sözlükte döner (CPU, RAM, disk, ağ, guest, cluster)."""
+        """CPU, RAM, disk, ağ, guest, cluster, host."""
         try:
-            r = self.session.get(f"{self.base_url}/vms/{vm_id}", timeout=20)
+            r = self.session.get(
+                f"{self.base_url}/vms/{vm_id}",
+                params={"follow": "host,cluster,nics,guest_operating_system,disk_attachments"},
+                timeout=25,
+            )
+            if r.status_code != 200:
+                r = self.session.get(f"{self.base_url}/vms/{vm_id}", timeout=20)
             if r.status_code != 200:
                 return None
-            vm = r.json().get("vm") or r.json()
+            payload = r.json()
+            vm = payload.get("vm") or payload
             if isinstance(vm, list):
                 vm = vm[0] if vm else {}
 
-            # CPU
-            cpu_topo = vm.get("cpu", {}).get("topology", {})
-            cpu_count = (
-                self._to_int(cpu_topo.get("cores", 1), 1)
-                * self._to_int(cpu_topo.get("sockets", 1), 1)
-                * self._to_int(cpu_topo.get("threads", 1), 1)
-            )
+            ncpu = cpu_count(vm)
+            mem_b = memory_bytes(vm)
+            mem_mb = mem_b // (1024 * 1024) if mem_b > 0 else 0
+            _, power_state = power_fields(vm.get("status"))
 
-            # RAM
-            mem_bytes = self._to_int(vm.get("memory", 0), 0)
-            mem_mb = mem_bytes // (1024 * 1024) if mem_bytes > 0 else 0
+            cluster_name = nested_name(vm.get("cluster"))
+            if not cluster_name:
+                href = (vm.get("cluster") or {}).get("href", "")
+                if href:
+                    try:
+                        cr = self.session.get(self._resolve_url(href), timeout=8)
+                        if cr.status_code == 200:
+                            cd = cr.json()
+                            cluster_name = nested_name(cd.get("cluster") or cd)
+                    except Exception:
+                        pass
 
-            # Güç durumu
-            raw_status = vm.get("status", "unknown")
-            if isinstance(raw_status, dict):
-                raw_status = raw_status.get("#text", "unknown")
-            power_state = str(raw_status).lower()
+            host_name = nested_name(vm.get("host"))
+            host_ref = nested_id(vm.get("host"))
+            if not host_name:
+                href = (vm.get("host") or {}).get("href", "")
+                if href:
+                    try:
+                        hr = self.session.get(self._resolve_url(href), timeout=8)
+                        if hr.status_code == 200:
+                            hd = hr.json().get("host") or hr.json()
+                            host_name = nested_name(hd)
+                            host_ref = hd.get("id") or host_ref
+                    except Exception:
+                        pass
 
-            # Cluster
-            cluster_href = (vm.get("cluster") or {}).get("href", "")
-            cluster_name = ""
-            if cluster_href:
-                try:
-                    cr = self.session.get(self._resolve_url(cluster_href), timeout=8)
-                    if cr.status_code == 200:
-                        cd = cr.json()
-                        cluster_name = (cd.get("cluster") or cd).get("name", "") if isinstance(cd, dict) else ""
-                except Exception:
-                    pass
-
-            # Disk bilgileri
             disk_gb = 0
             disk_names: list = []
+            vm_disks: list = []
+            storage_domain_name = ""
             try:
                 da_r = self.session.get(f"{self.base_url}/vms/{vm_id}/diskattachments", timeout=10)
-                if da_r.status_code == 200:
-                    das = da_r.json().get("disk_attachment") or []
-                    if isinstance(das, dict):
-                        das = [das]
-                    for da in das:
-                        disk_href = (da.get("disk") or {}).get("href", "")
-                        if disk_href:
-                            try:
-                                dr = self.session.get(self._resolve_url(disk_href), timeout=8)
-                                if dr.status_code == 200:
-                                    disk_d = dr.json().get("disk") or dr.json()
-                                    psize = self._to_int(disk_d.get("provisioned_size", 0), 0)
-                                    disk_gb += psize // (1024 ** 3)
-                                    disk_names.append(disk_d.get("name", ""))
-                            except Exception:
-                                pass
+                das = unwrap_items(da_r.json() if da_r.status_code == 200 else {}, "disk_attachment", "disk_attachments")
+                for da in das:
+                    disk_href = (da.get("disk") or {}).get("href", "")
+                    disk_id = (da.get("disk") or {}).get("id", "")
+                    if not disk_href and disk_id:
+                        disk_href = f"{self.base_url}/disks/{disk_id}"
+                    if not disk_href:
+                        continue
+                    try:
+                        dr = self.session.get(self._resolve_url(disk_href), timeout=8)
+                        if dr.status_code != 200:
+                            continue
+                        disk_d = dr.json().get("disk") or dr.json()
+                        psize = self._to_int(disk_d.get("provisioned_size", 0), 0)
+                        gb = psize // (1024 ** 3)
+                        disk_gb += gb
+                        dname = disk_d.get("name") or ""
+                        disk_names.append(dname)
+                        sds = unwrap_items(disk_d.get("storage_domains") or {}, "storage_domain", "storage_domains")
+                        ds_name = nested_name(sds[0]) if sds else ""
+                        if sds and not ds_name:
+                            sd_href = sds[0].get("href", "")
+                            if sd_href:
+                                sr = self.session.get(self._resolve_url(sd_href), timeout=8)
+                                if sr.status_code == 200:
+                                    ds_name = nested_name(sr.json().get("storage_domain") or sr.json())
+                        if ds_name and not storage_domain_name:
+                            storage_domain_name = ds_name
+                        vm_disks.append({
+                            "name": dname,
+                            "capacity_gb": gb,
+                            "datastore": ds_name,
+                            "thin": str(disk_d.get("sparse") or "").lower() in ("true", "1"),
+                        })
+                    except Exception:
+                        continue
             except Exception:
                 pass
 
-            # Guest (network + hostname via reporteddevices)
-            guest_ip = ""
-            networks: list = []
-            guest_hostname = ""
+            devices: list = []
             try:
                 rd_r = self.session.get(f"{self.base_url}/vms/{vm_id}/reporteddevices", timeout=10)
                 if rd_r.status_code == 200:
-                    devices = rd_r.json().get("reported_device", [])
-                    if isinstance(devices, dict):
-                        devices = [devices]
-                    for dev in devices:
-                        mac = (dev.get("mac") or {}).get("address", "")
-                        ips: list = []
-                        for ip_entry in (dev.get("ips", {}).get("ip", []) or []):
-                            if isinstance(ip_entry, dict):
-                                addr = ip_entry.get("address", "")
-                                ver = ip_entry.get("version", "v4")
-                                if addr and not addr.startswith("127.") and not addr.startswith("169.254"):
-                                    ips.append({"address": addr, "version": ver})
-                                    if ver == "v4" and not guest_ip:
-                                        guest_ip = addr
-                        networks.append({"name": dev.get("name", ""), "mac": mac, "ips": ips})
+                    devices = unwrap_items(rd_r.json(), "reported_device", "reported_devices")
             except Exception:
                 pass
+            guest_ip = first_ipv4(devices)
+            nics = unwrap_items(vm.get("nics") if isinstance(vm.get("nics"), dict) else {}, "nic", "nics")
+            networks = nics_to_network_info(nics, devices) if (nics or devices) else []
+            if not networks:
+                for dev in devices:
+                    mac = (dev.get("mac") or {}).get("address", "")
+                    ips = []
+                    ip_list = ((dev.get("ips") or {}).get("ip")) or []
+                    if isinstance(ip_list, dict):
+                        ip_list = [ip_list]
+                    for ip_entry in ip_list:
+                        if isinstance(ip_entry, dict) and ip_entry.get("address"):
+                            ips.append({"address": ip_entry.get("address"), "version": ip_entry.get("version") or "v4"})
+                    networks.append({"name": dev.get("name", ""), "mac": mac, "ips": ips})
 
-            # Guest hostname (fqdn field)
             guest_hostname = (vm.get("fqdn") or "").strip()
-
-            # Tools status
             gstat = vm.get("guest_operating_system") or {}
             tools_status = ""
             if isinstance(gstat, dict):
-                tools_status = gstat.get("kernel_version", "")
-            ga_status = (vm.get("guest_status") or {})
+                tools_status = str(gstat.get("kernel_version") or "")
+            ga_status = vm.get("guest_status") or {}
             if isinstance(ga_status, dict):
-                tools_status = ga_status.get("state", tools_status)
+                tools_status = str(ga_status.get("state") or tools_status)
 
-            # Storage domain (primary)
-            storage_domain_name = ""
-            try:
-                if disk_names:
-                    pass  # already have disk name
-                sd_r = self.session.get(f"{self.base_url}/vms/{vm_id}/diskattachments", timeout=8)
-                if sd_r.status_code == 200:
-                    das = sd_r.json().get("disk_attachment") or []
-                    if isinstance(das, dict):
-                        das = [das]
-                    if das:
-                        disk_href = (das[0].get("disk") or {}).get("href", "")
-                        if disk_href:
-                            dr2 = self.session.get(self._resolve_url(disk_href), timeout=8)
-                            if dr2.status_code == 200:
-                                dd = dr2.json().get("disk") or dr2.json()
-                                sds = (dd.get("storage_domains") or {}).get("storage_domain", [])
-                                if isinstance(sds, dict):
-                                    sds = [sds]
-                                if sds:
-                                    sd_href = sds[0].get("href", "")
-                                    if sd_href:
-                                        sr = self.session.get(self._resolve_url(sd_href), timeout=8)
-                                        if sr.status_code == 200:
-                                            sd_d = sr.json()
-                                            storage_domain_name = (sd_d.get("storage_domain") or sd_d).get("name", "")
-            except Exception:
-                pass
-
+            gos = guest_os_full(vm)
             return {
-                "vm_id":              vm_id,
-                "vm_name":            vm.get("name", ""),
-                "vm_guest_hostname":  guest_hostname or vm.get("name", ""),
-                "vm_guest_ip":        guest_ip,
-                "vm_cpu_count":       cpu_count,
-                "vm_memory_mb":       mem_mb,
-                "vm_disk_gb":         disk_gb,
-                "vm_power_state":     power_state,
-                "vm_tools_status":    tools_status,
-                "vm_network_info":    networks,
-                "vm_cluster":         cluster_name,
-                "vm_datastore":       storage_domain_name,
-                "vm_hardware_version": vm.get("version", {}).get("major", "") if isinstance(vm.get("version"), dict) else "",
-                "os_type":            (vm.get("os") or {}).get("type", ""),
-                "disk_names":         [d for d in disk_names if d],
+                "vm_id": vm_id,
+                "vm_name": vm.get("name", ""),
+                "vm_guest_hostname": guest_hostname or None,
+                "vm_guest_ip": guest_ip,
+                "vm_cpu_count": ncpu,
+                "vm_memory_mb": mem_mb,
+                "vm_disk_gb": disk_gb,
+                "vm_power_state": power_state,
+                "vm_tools_status": tools_status,
+                "vm_network_info": networks,
+                "vm_cluster": cluster_name,
+                "vm_host_name": host_name,
+                "vm_host_ref": host_ref,
+                "vm_datastore": storage_domain_name,
+                "vm_hardware_version": (
+                    vm.get("version", {}).get("major", "") if isinstance(vm.get("version"), dict) else ""
+                ),
+                "vm_guest_os_full": gos,
+                "os_type": gos or ((vm.get("os") or {}).get("type", "") if isinstance(vm.get("os"), dict) else ""),
+                "disk_names": [d for d in disk_names if d],
+                "vm_disks": vm_disks,
             }
         except Exception as e:
-            logger.error(f"oVirt get_vm_full_details error: {e}", exc_info=True)
+            logger.error("oVirt get_vm_full_details error: %s", e, exc_info=True)
             return None
+
+    def _statistics(self, path: str) -> Dict[str, float]:
+        r = self.session.get(f"{self.base_url}/{path.lstrip('/')}", timeout=15)
+        if r.status_code != 200:
+            return {}
+        return statistic_map(r.json())
+
+    def get_all_host_stats(self) -> List[Dict]:
+        try:
+            hosts = self._paged("hosts", "host", "hosts", params={"follow": "cluster,summary"}, timeout=60)
+        except OVirtError:
+            hosts = self._paged("hosts", "host", "hosts", timeout=60)
+        out = []
+        for host in hosts:
+            hid = host.get("id") or ""
+            stats = self._statistics(f"hosts/{hid}/statistics") if hid else {}
+            if not nested_name(host.get("cluster")):
+                href = (host.get("cluster") or {}).get("href", "")
+                if href:
+                    try:
+                        cr = self.session.get(self._resolve_url(href), timeout=8)
+                        if cr.status_code == 200:
+                            cd = cr.json().get("cluster") or cr.json()
+                            host = {**host, "cluster": cd}
+                    except Exception:
+                        pass
+            row = host_metrics_from_stats(host, stats)
+            out.append(row)
+        return out
+
+    def list_datastores_status(self) -> List[Dict]:
+        sds = self._paged("storagedomains", "storage_domain", "storage_domains", timeout=60)
+        rows = []
+        for sd in sds:
+            row = storage_domain_row(sd)
+            if row.get("name"):
+                rows.append(row)
+        return rows
+
+    def list_clusters_status(self) -> List[Dict]:
+        clusters = self._paged("clusters", "cluster", "clusters", timeout=45)
+        hosts = []
+        try:
+            hosts = self._paged("hosts", "host", "hosts", timeout=45)
+        except OVirtError:
+            hosts = []
+        by_cluster: Dict[str, int] = {}
+        refs: Dict[str, list] = {}
+        for h in hosts:
+            cid = nested_id(h.get("cluster"))
+            if not cid:
+                continue
+            by_cluster[cid] = by_cluster.get(cid, 0) + 1
+            refs.setdefault(cid, []).append(h.get("id"))
+        rows = []
+        for c in clusters:
+            row = cluster_row(c, host_count=by_cluster.get(c.get("id") or "", 0))
+            row["host_refs"] = refs.get(c.get("id") or "", [])
+            if row.get("name"):
+                rows.append(row)
+        return rows
+
+    def get_all_vm_live_stats(self) -> List[Dict]:
+        try:
+            vms = self._paged("vms", "vm", "vms", params={"follow": "host,cluster"}, timeout=90)
+        except OVirtError:
+            vms = self._paged("vms", "vm", "vms", timeout=90)
+
+        def _one(vm: Dict) -> Dict:
+            vid = vm.get("id") or ""
+            stats = self._statistics(f"vms/{vid}/statistics") if vid else {}
+            return vm_stats_to_live(vm, stats)
+
+        if not vms:
+            return []
+        workers = max(1, min(8, len(vms)))
+        out: List[Dict] = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for row in pool.map(_one, vms):
+                out.append(row)
+        return out
+
+    def collect_platform_logs(self, hours: int = 48, max_events: int = 800) -> Dict[str, List[Dict]]:
+        from datetime import datetime, timedelta, timezone
+
+        since = datetime.now(timezone.utc) - timedelta(hours=max(1, hours))
+        # oVirt search: events since date
+        stamp = since.strftime("%Y-%m-%d %H:%M")
+        events = []
+        try:
+            events = self._paged(
+                "events",
+                "event",
+                "events",
+                params={"search": f"time>={stamp}", "max": min(200, max_events)},
+                timeout=60,
+            )
+        except OVirtError as exc:
+            logger.warning("oVirt events search failed (%s), unfiltered page", exc)
+            events = self._paged("events", "event", "events", params={"max": min(200, max_events)}, timeout=60)
+        out = []
+        for ev in events[:max_events]:
+            sev_raw = ev.get("severity")
+            if isinstance(sev_raw, dict):
+                sev_raw = sev_raw.get("state") or sev_raw.get("#text")
+            vm_obj = ev.get("vm") if isinstance(ev.get("vm"), dict) else {}
+            host_obj = ev.get("host") if isinstance(ev.get("host"), dict) else {}
+            desc = ev.get("description") or ev.get("name") or "oVirt olayı"
+            out.append({
+                "id": ev.get("id") or ev.get("code"),
+                "event_key": ev.get("id"),
+                "kind": "ovirt_event",
+                "severity": event_severity(sev_raw),
+                "title": desc,
+                "timestamp": ev.get("time") or ev.get("origin"),
+                "vm_ref": vm_obj.get("id"),
+                "vm_name": vm_obj.get("name"),
+                "host_ref": host_obj.get("id"),
+                "host_name": host_obj.get("name"),
+                "entity_name": vm_obj.get("name") or host_obj.get("name") or ev.get("name"),
+                "user_name": (ev.get("user") or {}).get("name") if isinstance(ev.get("user"), dict) else None,
+                "event_type_id": str(ev.get("code") or ""),
+            })
+        return {"events": out, "errors": []}
 

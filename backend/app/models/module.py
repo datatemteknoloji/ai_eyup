@@ -64,6 +64,8 @@ DEFAULT_MODULES = [
      "icon": "FileBarChart2", "color": "lime", "sort_order": 11},
     {"id": "monitoring",     "name": "Monitoring",       "description": "Ana Monitoring hub — Linux / Windows / OpenShift / Sanallaştırma metrikleri (API veya Prometheus)",
      "icon": "Activity", "color": "sky",     "sort_order": 12},
+    {"id": "centrify",       "name": "Centrify / Delinea", "description": "Delinea Server Suite zone, role, right, assignment yönetimi",
+     "icon": "KeyRound", "color": "purple",  "sort_order": 13},
 ]
 
 # 'aiops' kaldırıldı (2026-07) — Komuta Merkezi/Events özellikleri 'linux' kapsamında.

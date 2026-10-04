@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, RadialBarChart, RadialBar,
-  AreaChart, Area,
 } from 'recharts'
 import { ShieldOff, BarChart3, AlertTriangle, Zap } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
@@ -13,6 +12,7 @@ import { ServerDetailDrawer } from './Servers'
 import { useAuth } from '../auth/AuthContext'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import type { TranslationKey } from '../i18n/messages'
+import { virtHostIpHint, virtHostTitle } from '../lib/virtHostLabel'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface DashboardServer {
@@ -25,6 +25,7 @@ interface DashboardServer {
 interface Hypervisor { id: number; name: string; type: string; ip_address: string }
 interface EsxHost {
   host_name: string; host_ref?: string; last_updated?: string
+  display_name?: string | null; ip_address?: string | null; roles?: string[]
   cpu_usage_pct: number | null; cpu_usage_mhz: number | null; cpu_total_mhz: number | null
   cpu_cores: number | null; mem_used_mb: number | null; mem_total_mb: number | null
   mem_usage_pct: number | null; ds_used_gb: number | null; ds_total_gb: number | null
@@ -47,7 +48,19 @@ interface MetricServerRow {
   cpu_usage: number | null; memory_usage: number | null; disk_usage: number | null
   last_update: string | null
 }
-interface MetricDashboard { total_servers: number; servers: MetricServerRow[] }
+interface MetricDashboard {
+  total_servers: number
+  servers: MetricServerRow[]
+  summary?: {
+    avg_cpu: number | null
+    avg_memory: number | null
+    avg_disk: number | null
+    with_metrics: number
+    platform: string
+    top_n: number
+    sort: string
+  }
+}
 interface FeedEvent {
   id: number; title: string; severity: string; server_name?: string
   created_at?: string; resolved: boolean
@@ -57,6 +70,31 @@ export type DashboardScope = 'admin' | 'linux' | 'windows'
 
 function isWindowsOs(s: DashboardServer) {
   return (s.os_type || '').toLowerCase().includes('windows')
+}
+
+function hypervisorTypeBreakdown(
+  hypervisors: { type?: string }[],
+  t: (key: TranslationKey, vars?: Record<string, string | number>) => string,
+): string {
+  const counts = new Map<string, number>()
+  for (const h of hypervisors) {
+    const tp = (h.type || '').toLowerCase() || 'other'
+    counts.set(tp, (counts.get(tp) || 0) + 1)
+  }
+  const labelFor = (tp: string) => {
+    if (tp === 'vmware') return t('dash_hv_vmware')
+    if (tp === 'kvm') return t('dash_hv_olvm')
+    if (tp === 'openshift_virt') return t('dash_hv_ocp_virt')
+    if (tp === 'proxmox') return 'Proxmox'
+    if (tp === 'hyperv') return 'Hyper-V'
+    return tp
+  }
+  const preferred = ['vmware', 'kvm', 'openshift_virt', 'proxmox', 'hyperv']
+  const keys = [
+    ...preferred.filter((k) => counts.has(k)),
+    ...[...counts.keys()].filter((k) => !preferred.includes(k)).sort(),
+  ]
+  return keys.map((k) => `${counts.get(k)} ${labelFor(k)}`).join(' · ')
 }
 
 // ── Design tokens (aligned with DESIGN.md) ────────────────────────────────
@@ -174,7 +212,8 @@ function EsxHostCard({ hvName, host }: { hvName: string; host: EsxHost }) {
   const dateLoc = locale === 'en' ? 'en-GB' : 'tr-TR'
   const inMaint = host.maintenance_mode === 1
   const disconnected = host.connection_state === 'disconnected' || host.connection_state === 'notResponding'
-  const shortName = host.host_name.split('.')[0]
+  const shortName = virtHostTitle(host)
+  const ipHint = virtHostIpHint(host)
   const cpuPct = host.cpu_usage_pct ?? (host.cpu_usage_mhz && host.cpu_total_mhz ? (host.cpu_usage_mhz / host.cpu_total_mhz) * 100 : 0)
   const ramPct = host.mem_usage_pct ?? (host.mem_used_mb && host.mem_total_mb ? (host.mem_used_mb / host.mem_total_mb) * 100 : 0)
   const dskPct = host.ds_usage_pct ?? (host.ds_used_gb && host.ds_total_gb ? (host.ds_used_gb / host.ds_total_gb) * 100 : 0)
@@ -195,7 +234,18 @@ function EsxHostCard({ hvName, host }: { hvName: string; host: EsxHost }) {
             }}
           />
           <span className="font-semibold text-white text-sm">{shortName}</span>
-          <span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{hvName}</span>
+          <span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>
+            {ipHint ? `${ipHint} · ${hvName}` : hvName}
+          </span>
+          {(host.roles || []).map((role) => (
+            <span
+              key={role}
+              className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+              style={{ background: 'rgba(244,63,94,0.12)', color: '#fb7185', border: '1px solid rgba(244,63,94,0.28)' }}
+            >
+              {role === 'master' ? t('dash_role_master') : role === 'infra' ? t('dash_role_infra') : role === 'worker' ? t('dash_role_worker') : role}
+            </span>
+          ))}
           {inMaint && (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-medium"
               style={{ background: 'rgba(245,158,11,0.15)', color: NEON.orange, border: '1px solid rgba(245,158,11,0.3)' }}>
@@ -253,12 +303,15 @@ function EsxHostCard({ hvName, host }: { hvName: string; host: EsxHost }) {
 // ── ESX Panel ──────────────────────────────────────────────────────────────
 function EsxResourcePanel({ hypervisors }: { hypervisors: Hypervisor[] }) {
   const t = useT()
-  const vmwareHvs = hypervisors.filter(hv => hv.type?.toLowerCase() === 'vmware')
+  const virtHvs = hypervisors.filter(hv => {
+    const tp = hv.type?.toLowerCase() || ''
+    return tp === 'vmware' || tp === 'kvm' || tp === 'openshift_virt'
+  })
   const [allHosts, setAllHosts] = useState<{ hvName: string; host: EsxHost }[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   const load = () => {
-    if (vmwareHvs.length === 0) { setIsLoading(false); return }
+    if (virtHvs.length === 0) { setIsLoading(false); return }
     fetch(`${API_BASE_URL}/hypervisors/host-metrics`)
       .then(r => r.ok ? r.json() : null)
       .then((data: { hosts?: { hvName: string; host: EsxHost }[] } | null) => {
@@ -274,7 +327,7 @@ function EsxResourcePanel({ hypervisors }: { hypervisors: Hypervisor[] }) {
     return () => clearInterval(t)
   }, [hypervisors.map(h => h.id).join(',')])
 
-  if (vmwareHvs.length === 0) return null
+  if (virtHvs.length === 0) return null
 
   return (
     <div className="cyber-card">
@@ -631,7 +684,13 @@ function HeroKpi({
 }
 
 // ── Kaynak Kullanımı ───────────────────────────────────────────────────────
-function ResourceUsageChart({ metrics }: { metrics: MetricDashboard | undefined }) {
+function ResourceUsageChart({
+  metrics,
+  platformLabel,
+}: {
+  metrics: MetricDashboard | undefined
+  platformLabel: string
+}) {
   const t = useT()
   const rows = (metrics?.servers || [])
     .filter(s => s.cpu_usage != null || s.memory_usage != null)
@@ -642,6 +701,12 @@ function ResourceUsageChart({ metrics }: { metrics: MetricDashboard | undefined 
       ram: Math.round(s.memory_usage ?? 0),
       disk: Math.round(s.disk_usage ?? 0),
     }))
+  const sum = metrics?.summary
+  const subParts = [
+    t('dash_resource_top_cpu', { n: rows.length || (sum?.top_n ?? 8) }),
+    platformLabel,
+  ]
+  if (sum?.avg_cpu != null) subParts.push(t('dash_resource_avg_cpu', { pct: sum.avg_cpu }))
 
   if (!rows.length) {
     return (
@@ -668,7 +733,33 @@ function ResourceUsageChart({ metrics }: { metrics: MetricDashboard | undefined 
 
   return (
     <div className="cyber-card p-5 h-full animate-fade-in">
-      <SectionTitle title={t('dash_resource')} accent={NEON.blue} sub={t('dash_watched_n', { n: metrics?.total_servers ?? 0 })} />
+      <SectionTitle
+        title={t('dash_resource')}
+        accent={NEON.blue}
+        sub={subParts.join(' · ')}
+      />
+      {(sum?.avg_cpu != null || sum?.avg_memory != null || sum?.avg_disk != null) && (
+        <div className="flex flex-wrap gap-3 mb-3 text-[11px] text-slate-400">
+          {sum.avg_cpu != null && (
+            <span className="px-2 py-0.5 rounded border border-white/[0.06] bg-white/[0.02]">
+              {t('dash_avg_short', { label: 'CPU', pct: sum.avg_cpu })}
+            </span>
+          )}
+          {sum.avg_memory != null && (
+            <span className="px-2 py-0.5 rounded border border-white/[0.06] bg-white/[0.02]">
+              {t('dash_avg_short', { label: 'RAM', pct: sum.avg_memory })}
+            </span>
+          )}
+          {sum.avg_disk != null && (
+            <span className="px-2 py-0.5 rounded border border-white/[0.06] bg-white/[0.02]">
+              {t('dash_avg_short', { label: 'Disk /', pct: sum.avg_disk })}
+            </span>
+          )}
+          <span className="px-2 py-0.5 rounded border border-white/[0.06] bg-white/[0.02] text-slate-500">
+            {t('dash_with_metrics_n', { n: sum.with_metrics ?? rows.length })}
+          </span>
+        </div>
+      )}
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={rows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }} barGap={2}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.08)" vertical={false} />
@@ -676,12 +767,12 @@ function ResourceUsageChart({ metrics }: { metrics: MetricDashboard | undefined 
           <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
           <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(34,211,238,0.06)' }} />
           <Bar dataKey="cpu" name="CPU" fill={NEON.blue} radius={[4, 4, 0, 0]} maxBarSize={18} />
-          <Bar dataKey="ram" name="Memory" fill={NEON.blue} radius={[4, 4, 0, 0]} maxBarSize={18} />
+          <Bar dataKey="ram" name="Memory" fill="#38bdf8" radius={[4, 4, 0, 0]} maxBarSize={18} />
           <Bar dataKey="disk" name="Disk" fill={NEON.green} radius={[4, 4, 0, 0]} maxBarSize={18} />
         </BarChart>
       </ResponsiveContainer>
       <div className="flex justify-center gap-4 mt-2">
-        {[{ c: NEON.blue, l: 'CPU' }, { c: NEON.blue, l: 'Memory' }, { c: NEON.green, l: 'Disk' }].map(x => (
+        {[{ c: NEON.blue, l: 'CPU' }, { c: '#38bdf8', l: 'Memory' }, { c: NEON.green, l: 'Disk /' }].map(x => (
           <div key={x.l} className="flex items-center gap-1.5 text-[10px] text-slate-500">
             <div className="w-2 h-2 rounded-sm" style={{ background: x.c }} />{x.l}
           </div>
@@ -691,46 +782,39 @@ function ResourceUsageChart({ metrics }: { metrics: MetricDashboard | undefined 
   )
 }
 
-// ── Fleet trend (dekoratif area — online oranı) ──────────────────────────
-function FleetTrendChart({ online, offline, warning }: { online: number; offline: number; warning: number }) {
+/** Modül kırılımı — sahte fleet trend yerine gerçek envanter sayıları (ekstra API yok). */
+function ModuleBreakdownPanel({
+  tiles,
+}: {
+  tiles: { id: string; label: string; value: number; sub: string; to: string; accent: string }[]
+}) {
   const t = useT()
-  const total = online + offline + warning || 1
-  const data = [
-    { t: t('dash_dow_mon'), up: Math.max(0, online - 2), dn: offline },
-    { t: t('dash_dow_tue'), up: Math.max(0, online - 1), dn: offline },
-    { t: t('dash_dow_wed'), up: online, dn: offline },
-    { t: t('dash_dow_thu'), up: online, dn: Math.max(0, offline - 1) },
-    { t: t('dash_dow_fri'), up: online, dn: offline },
-    { t: t('dash_dow_sat'), up: Math.max(0, online - 1), dn: offline + 1 },
-    { t: t('dash_today'), up: online, dn: offline + warning },
-  ]
-
+  if (!tiles.length) return null
   return (
     <div className="cyber-card p-5 animate-fade-in h-full">
-      <SectionTitle title={t('dash_fleet_trend')} accent={NEON.cyan} sub={t('dash_uptime_target', { pct: ((online/total)*100).toFixed(0) })} />
-      <ResponsiveContainer width="100%" height={160}>
-        <AreaChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-          <defs>
-            <linearGradient id="gOnline" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={NEON.green} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={NEON.green} stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="gOffline" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={NEON.red} stopOpacity={0.25} />
-              <stop offset="100%" stopColor={NEON.red} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.06)" vertical={false} />
-          <XAxis dataKey="t" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-          <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
-          <Tooltip contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-strong)', borderRadius: 8, fontSize: 12 }} />
-          <Area type="monotone" dataKey="up" name="Online" stroke={NEON.green} fill="url(#gOnline)" strokeWidth={2} />
-          <Area type="monotone" dataKey="dn" name={t('dash_problematic')} stroke={NEON.red} fill="url(#gOffline)" strokeWidth={2} />
-        </AreaChart>
-      </ResponsiveContainer>
+      <SectionTitle title={t('dash_by_module')} accent={NEON.cyan} sub={t('dash_by_module_sub')} />
+      <div className="space-y-2 mt-1">
+        {tiles.map((tile) => (
+          <Link
+            key={tile.id}
+            to={tile.to}
+            className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 border border-white/[0.05] bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/[0.1] transition-colors"
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white truncate">{tile.label}</p>
+              <p className="text-[11px] text-slate-500 truncate">{tile.sub}</p>
+            </div>
+            <div className="text-right flex-shrink-0">
+              <p className="text-xl font-semibold tabular-nums leading-none" style={{ color: tile.accent }}>{tile.value}</p>
+            </div>
+          </Link>
+        ))}
+      </div>
     </div>
   )
 }
+
+// ── Fleet trend kaldırıldı (sahte veri); ModuleBreakdownPanel kullanılıyor ──
 
 function SectionTitle({ title, accent, sub }: { title: string; accent: string; sub?: string }) {
   return (
@@ -1161,7 +1245,7 @@ function HypervisorCards({ hypervisors }: { hypervisors: Hypervisor[] }) {
       <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
         {hypervisors.map(hv => {
           const isVmware = hv.type?.toLowerCase() === 'vmware'
-          const isOvirt  = hv.type?.toLowerCase().includes('ovirt') || hv.type?.toLowerCase().includes('olvm')
+          const isOvirt  = hv.type?.toLowerCase() === 'kvm' || hv.type?.toLowerCase().includes('ovirt') || hv.type?.toLowerCase().includes('olvm')
           const accent   = isVmware ? NEON.blue : isOvirt ? NEON.orange : NEON.cyan
           return (
             <div
@@ -1242,17 +1326,19 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
     queryKey: ['servers-summary', 'linux'],
     queryFn: () => fetchServersSummary('linux'),
     enabled: showLinux && !isWindowsScope,
-    refetchInterval: 30_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
 
   const { data: serversRaw = [] } = useQuery<DashboardServer[]>({
-    queryKey: ['servers', 'linux', 'recent'],
+    queryKey: ['servers', 'linux', 'recent', 8],
     queryFn: async () => {
-      const p = await fetchServersPage<DashboardServer>({ platform: 'linux', page: 1, page_size: 50, hide_offline: false })
+      const p = await fetchServersPage<DashboardServer>({ platform: 'linux', page: 1, page_size: 8, hide_offline: false })
       return p.items
     },
-    enabled: showLinux && !isWindowsScope,
-    refetchInterval: 30_000,
+    enabled: showLinux && !isWindowsScope && !isAdminScope,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
   const servers = serversRaw.filter(s => !isWindowsOs(s))
 
@@ -1260,17 +1346,19 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
     queryKey: ['servers-summary', 'all'],
     queryFn: () => fetchServersSummary(),
     enabled: isAdminScope,
-    refetchInterval: 30_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
 
   const { data: allServersRaw = [] } = useQuery<DashboardServer[]>({
-    queryKey: ['servers-all', 'recent'],
+    queryKey: ['servers-all', 'recent', 8],
     queryFn: async () => {
-      const p = await fetchServersPage<DashboardServer>({ page: 1, page_size: 50 })
+      const p = await fetchServersPage<DashboardServer>({ page: 1, page_size: 8 })
       return p.items
     },
     enabled: isAdminScope,
-    refetchInterval: 30_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
 
   interface WindowsDashboardServer {
@@ -1290,21 +1378,23 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       }>
     },
     enabled: isWindowsScope || (isAdminScope && hasModule('windows')),
-    refetchInterval: 30_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
   const { data: windowsServers = [] } = useQuery<WindowsDashboardServer[]>({
-    queryKey: ['windows-dashboard-servers', 'recent'],
+    queryKey: ['windows-dashboard-servers', 'recent', 8],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/windows/servers?page=1&page_size=50`)
+      const r = await fetch(`${API_BASE_URL}/windows/servers?page=1&page_size=8`)
       if (!r.ok) return []
       const data = await r.json()
       return Array.isArray(data) ? data : (data.items || [])
     },
     enabled: isWindowsScope || (isAdminScope && hasModule('windows')),
-    refetchInterval: 30_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
 
-  const { data: hypervisors = [], isLoading: hypervisorsLoading } = useQuery<Hypervisor[]>({
+  const { data: hypervisors = [] } = useQuery<Hypervisor[]>({
     queryKey: ['hypervisors'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/hypervisors/`)
@@ -1312,7 +1402,8 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       return r.json()
     },
     enabled: showVirt,
-    refetchInterval: 60_000,
+    staleTime: 60_000,
+    refetchInterval: 120_000,
   })
 
   const { data: eventStats } = useQuery<EventStats>({
@@ -1341,14 +1432,17 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
     refetchInterval: 60_000,
   })
 
+  const metricsPlatform = isWindowsScope ? 'windows' : isLinuxScope ? 'linux' : (isAdminScope ? 'all' : 'linux')
   const { data: metricDashboard } = useQuery<MetricDashboard>({
-    queryKey: ['metrics-dashboard', isWindowsScope ? 'windows' : 'linux'],
+    queryKey: ['metrics-dashboard', metricsPlatform, 8],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/metrics/dashboard?platform=${isWindowsScope ? 'windows' : 'linux'}`)
+      const plat = metricsPlatform === 'all' ? '' : `platform=${metricsPlatform}&`
+      const r = await fetch(`${API_BASE_URL}/metrics/dashboard?${plat}top_n=8`)
       if (!r.ok) return { total_servers: 0, servers: [] }
       return r.json()
     },
     enabled: showLinux || isWindowsScope,
+    staleTime: 45_000,
     refetchInterval: 60_000,
   })
 
@@ -1363,7 +1457,8 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       if (!r.ok) return { total_online_installed: 0, total_live: 0, scrape_errors: 0 }
       return r.json()
     },
-    enabled: showLinux,
+    enabled: showLinux && !isAdminScope,
+    staleTime: 45_000,
     refetchInterval: 60_000,
   })
 
@@ -1376,7 +1471,8 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       return r.json()
     },
     enabled: showAiops,
-    refetchInterval: 45_000,
+    staleTime: 45_000,
+    refetchInterval: 60_000,
   })
 
   const { data: digest } = useQuery<{
@@ -1394,11 +1490,17 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       return r.json()
     },
     enabled: showAiops,
+    staleTime: 120_000,
     refetchInterval: 300_000,  // 5 dk
   })
 
-  if ((showLinux && serversLoading) || (showVirt && hypervisorsLoading) || (isWindowsScope && windowsLoading)
-      || (isAdminScope && allServersLoading)) {
+  // Progressive: yalnızca kritik özet yoksa tam ekran spinner — listeler/metrikler sonra dolar
+  const primaryLoading =
+    (showLinux && !isWindowsScope && !isAdminScope && serversLoading && !linuxSummary)
+    || (isWindowsScope && windowsLoading && !windowsSummary)
+    || (isAdminScope && allServersLoading && !allSummary)
+
+  if (primaryLoading) {
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center gap-4">
         <div className="relative w-16 h-16">
@@ -1466,7 +1568,13 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const lastRefresh = now.toLocaleTimeString(dateLoc, { hour: '2-digit', minute: '2-digit' })
 
   const secondaryStats = [
-    ...(showVirt ? [{ label: 'Hypervisor', value: hypervisors.length, sub: `${hypervisors.filter(h => h.type?.toLowerCase() === 'vmware').length} VMware`, accent: NEON.blue, pct: hypervisors.length > 0 ? 100 : 0 }] : []),
+    ...(showVirt ? [{
+      label: t('dash_hypervisor_kpi'),
+      value: hypervisors.length,
+      sub: hypervisorTypeBreakdown(hypervisors, t),
+      accent: NEON.blue,
+      pct: hypervisors.length > 0 ? 100 : 0,
+    }] : []),
     ...(showLinux || isWindowsScope ? [
       { label: t('dash_total_cpu'), value: totalCpu, sub: t('cores'), accent: NEON.orange, pct: Math.min(100, totalCpu * 2) },
       { label: t('dash_total_mem'), value: `${totalRam} GB`, sub: t('dash_inventory'), accent: NEON.green, pct: Math.min(100, totalRam / 2) },
@@ -1478,6 +1586,58 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       { label: t('dash_warn_crit'), value: warningServers + criticalServers, sub: t('dash_offline_n', { n: offlineServers }), accent: problemSrv > 0 ? NEON.red : '#64748b', pct: totalServers > 0 ? ((warningServers + criticalServers) / totalServers) * 100 : 0 },
     ] : []),
   ]
+
+  const moduleTiles = (() => {
+    if (!isAdminScope) return []
+    const tiles: { id: string; label: string; value: number; sub: string; to: string; accent: string }[] = []
+    if (hasModule('linux')) {
+      tiles.push({
+        id: 'linux',
+        label: t('nav_linux'),
+        value: linuxSummary?.total ?? 0,
+        sub: t('dash_online_n', { n: linuxSummary?.online ?? 0 }),
+        to: '/linux/dashboard',
+        accent: NEON.green,
+      })
+    }
+    if (hasModule('windows')) {
+      tiles.push({
+        id: 'windows',
+        label: t('nav_windows'),
+        value: windowsSummary?.total ?? 0,
+        sub: t('dash_online_n', { n: windowsSummary?.online ?? 0 }),
+        to: '/windows/dashboard',
+        accent: NEON.blue,
+      })
+    }
+    if (hasModule('virtualization')) {
+      tiles.push({
+        id: 'virt',
+        label: t('nav_virt'),
+        value: hypervisors.length,
+        sub: t('dash_hypervisor_n', { n: hypervisors.length }),
+        to: '/hypervisors',
+        accent: '#818cf8',
+      })
+    }
+    if (hasModule('executive')) {
+      tiles.push({
+        id: 'executive',
+        label: t('nav_executive'),
+        value: (eventStats?.unresolved ?? 0) + ((incidentStats?.open ?? 0) + (incidentStats?.investigating ?? 0)),
+        sub: t('dash_exec_open_ops'),
+        to: '/executive',
+        accent: NEON.orange,
+      })
+    }
+    return tiles
+  })()
+
+  const resourcePlatformLabel = isWindowsScope
+    ? t('dash_plat_windows_exporter')
+    : isAdminScope
+      ? t('dash_plat_all_exporters')
+      : t('dash_plat_node_exporter')
 
   if (!hasAnyModule) {
     return (
@@ -1534,7 +1694,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
           <div className={`grid grid-cols-1 gap-4 ${(showLinux || isWindowsScope) && showAiops ? 'xl:grid-cols-3' : ''}`}>
             {(showLinux || isWindowsScope) && (
               <div className={showAiops ? 'xl:col-span-2' : ''}>
-                <ResourceUsageChart metrics={metricDashboard} />
+                <ResourceUsageChart metrics={metricDashboard} platformLabel={resourcePlatformLabel} />
               </div>
             )}
             {showAiops && !isWindowsScope && (
@@ -1562,7 +1722,28 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
         {(showLinux || isWindowsScope) && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <ServerStatusChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
-            <FleetTrendChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
+            {isAdminScope && moduleTiles.length > 0 ? (
+              <ModuleBreakdownPanel tiles={moduleTiles} />
+            ) : (
+              <div className="cyber-card p-5 animate-fade-in h-full">
+                <SectionTitle title={t('dash_capacity')} accent={NEON.cyan} sub={t('dash_inventory')} />
+                <div className="space-y-3 mt-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">{t('dash_total_cpu')}</span>
+                    <span className="text-white font-medium tabular-nums">{totalCpu} {t('cores')}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">{t('dash_total_mem')}</span>
+                    <span className="text-white font-medium tabular-nums">{totalRam} GB</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">{t('dash_monitored')}</span>
+                    <span className="text-white font-medium tabular-nums">{monitoredLive}/{totalServers}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 pt-2 border-t border-white/[0.04]">{t('dash_capacity_hint')}</p>
+                </div>
+              </div>
+            )}
             <OsDistChart
               byOs={isWindowsScope ? undefined : fleetSummary?.by_os}
               servers={isWindowsScope ? (windowsServers as unknown as DashboardServer[]) : (isAdminScope ? allServersRaw : servers)}
@@ -1570,7 +1751,10 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
           </div>
         )}
 
-        {showVirt && hypervisors.some(hv => hv.type?.toLowerCase() === 'vmware') && (
+        {showVirt && hypervisors.some(hv => {
+          const tp = hv.type?.toLowerCase() || ''
+          return tp === 'vmware' || tp === 'kvm' || tp === 'openshift_virt'
+        }) && (
           <EsxResourcePanel hypervisors={hypervisors} />
         )}
 

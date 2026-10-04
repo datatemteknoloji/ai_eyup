@@ -18,6 +18,29 @@ logger = logging.getLogger(__name__)
 _SYSTEM_NAMESPACE_PREFIXES = ("openshift", "kube-", "default")
 
 
+def node_roles_from_labels(labels: Dict) -> List[str]:
+    """Compact kümede master+worker birlikte olabilir; hepsini topla."""
+    keys = list(labels or {})
+    roles: List[str] = []
+    if any(
+        k.startswith("node-role.kubernetes.io/master")
+        or k.startswith("node-role.kubernetes.io/control-plane")
+        for k in keys
+    ):
+        roles.append("master")
+    if any(k.startswith("node-role.kubernetes.io/infra") for k in keys):
+        roles.append("infra")
+    if any(k.startswith("node-role.kubernetes.io/worker") for k in keys):
+        roles.append("worker")
+    if not roles:
+        roles.append("worker")
+    return roles
+
+
+def node_role_label(roles: List[str]) -> str:
+    return ", ".join(roles)[:32]
+
+
 class OpenShiftClient:
     """OpenShift Container Platform API client — node/proje/pod/deployment/route envanteri + olay toplama.
 
@@ -208,11 +231,8 @@ class OpenShiftClient:
                 labels = meta.get("labels", {}) or {}
                 name = meta.get("name", "")
 
-                role = "worker"
-                if any(k.startswith("node-role.kubernetes.io/master") or k.startswith("node-role.kubernetes.io/control-plane") for k in labels):
-                    role = "master"
-                elif any(k.startswith("node-role.kubernetes.io/infra") for k in labels):
-                    role = "infra"
+                roles = node_roles_from_labels(labels)
+                role = node_role_label(roles)
 
                 status_obj = n.get("status", {}) or {}
                 conditions = status_obj.get("conditions", []) or []
@@ -246,6 +266,7 @@ class OpenShiftClient:
                 nodes.append({
                     "name": name,
                     "role": role,
+                    "roles": roles,
                     "status": node_status,
                     "cpu_cores": cpu_cap,
                     "memory_gb": mem_cap,

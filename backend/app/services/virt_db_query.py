@@ -380,8 +380,6 @@ def list_esx_hosts_db(
         )
         if hv:
             q = q.filter(HypervisorHostMetric.hypervisor_id == hv.id)
-    if name_filter:
-        q = q.filter(HypervisorHostMetric.host_name.ilike(f"%{name_filter.strip()}%"))
     if cluster:
         q = q.filter(HypervisorHostMetric.cluster_name.ilike(f"%{cluster.strip()}%"))
 
@@ -467,6 +465,15 @@ def list_esx_hosts_db(
             "as_of": r.timestamp.isoformat() if r.timestamp else None,
             "_inventory_joined": inv is not None,
         })
+
+    if name_filter:
+        n = name_filter.strip().lower()
+        joined = [
+            j for j in joined
+            if n in (j.get("name") or "").lower()
+            or n in (j.get("host_name") or "").lower()
+            or n in (j.get("ip") or "").lower()
+        ]
 
     wanted = normalize_fields(
         fields,

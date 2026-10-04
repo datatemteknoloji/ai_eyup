@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.hypervisor import Hypervisor, HypervisorType
+from app.models.hypervisor_inventory import HypervisorHostInventory
 from app.models.hypervisor_metric import HypervisorHostMetric
 from app.models.openshift import OpenShiftCluster, OpenShiftNode
 from app.models.server import Server
@@ -138,6 +139,8 @@ def sync_openshift_virt_host_metrics(db: Session) -> Dict[str, Any]:
                 else None
             )
             conn = "connected" if (node.status or "").lower() == "ready" else "notResponding"
+            meta = node.meta_data if isinstance(getattr(node, "meta_data", None), dict) else {}
+            ip = (meta.get("ip_address") or meta.get("internal_ip") or "").strip() or None
             db.add(
                 HypervisorHostMetric(
                     timestamp=now,
@@ -161,6 +164,30 @@ def sync_openshift_virt_host_metrics(db: Session) -> Dict[str, Any]:
                     overall_status="green" if conn == "connected" else "red",
                 )
             )
+            href = f"ocp-node/{node.name}"
+            inv = (
+                db.query(HypervisorHostInventory)
+                .filter(
+                    HypervisorHostInventory.hypervisor_id == hv.id,
+                    HypervisorHostInventory.host_ref == href,
+                )
+                .first()
+            )
+            if inv is None:
+                inv = HypervisorHostInventory(hypervisor_id=hv.id, host_ref=href)
+                db.add(inv)
+            inv.host_name = node.name
+            inv.product_full_name = "OpenShift node"
+            inv.product_version = getattr(node, "kubelet_version", None)
+            inv.vnics = [{"device": "mgmt", "portgroup": "management", "ip_address": ip}] if ip else []
+            inv.dns = {
+                "host_name": node.name,
+                "address": ip,
+                "roles": getattr(node, "role", None) or "worker",
+            }
+            inv.cluster_name = cluster.name
+            inv.overall_status = "green" if conn == "connected" else "red"
+            inv.last_synced_at = now
             total_hosts += 1
 
         hv.status = "ONLINE"

@@ -55,6 +55,97 @@ async def custom_prom_series(
     return series(metric, range_sec=range_sec, source_id=source_id, db=db, top_n=top_n)
 
 
+# --- Zabbix Other source -----------------------------------------------------
+
+@router.get("/zabbix/sources")
+async def zabbix_sources(db: Session = Depends(get_db)):
+    from app.services.zabbix_monitoring import list_sources
+    return {"ok": True, "sources": list_sources(db)}
+
+
+@router.get("/zabbix/overview")
+async def zabbix_overview(source_id: Optional[str] = None, db: Session = Depends(get_db)):
+    from app.services.zabbix_monitoring import overview
+    return overview(source_id, db=db)
+
+
+@router.get("/zabbix/catalog")
+async def zabbix_catalog(family: Optional[str] = None):
+    from app.services.zabbix_monitoring import catalog, families
+    return {"ok": True, "catalog": catalog(family), "families": families(), "source_kind": "zabbix"}
+
+
+@router.get("/zabbix/hosts")
+async def zabbix_hosts(
+    source_id: Optional[str] = None,
+    search: str = "",
+    groupid: Optional[str] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    from app.services.zabbix_monitoring import list_hosts
+    return list_hosts(source_id, search=search, groupid=groupid, limit=limit, db=db)
+
+
+@router.get("/zabbix/problems")
+async def zabbix_problems(
+    source_id: Optional[str] = None,
+    hostid: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    from app.services.zabbix_monitoring import list_problems
+    return list_problems(source_id, hostid=hostid, limit=limit, db=db)
+
+
+@router.get("/zabbix/coverage")
+async def zabbix_coverage(
+    source_id: Optional[str] = None,
+    hostid: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    from app.services.zabbix_monitoring import coverage
+    return coverage(source_id, hostid=hostid, db=db)
+
+
+@router.get("/zabbix/series")
+async def zabbix_series(
+    metric: str,
+    source_id: Optional[str] = None,
+    hostid: Optional[str] = None,
+    hostids: Optional[str] = None,
+    host: str = "",
+    range_sec: int = 900,
+    top_n: int = 8,
+    db: Session = Depends(get_db),
+):
+    from app.services.zabbix_monitoring import series
+    ids: list[str] | None = None
+    if hostids:
+        ids = [x.strip() for x in hostids.split(",") if x.strip()]
+    elif hostid:
+        ids = [hostid]
+    return series(
+        metric,
+        source_id=source_id,
+        hostids=ids,
+        host_search=host,
+        range_sec=range_sec,
+        top_n=top_n if not ids else max(top_n, len(ids)),
+        db=db,
+    )
+
+
+@router.get("/zabbix/host/{hostid}/values")
+async def zabbix_host_values(
+    hostid: str,
+    source_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    from app.services.zabbix_monitoring import host_last_values
+    return host_last_values(hostid, source_id=source_id, db=db)
+
+
 @router.get("/metrics/servers")
 async def list_metric_servers(
     platform: str | None = None,
@@ -86,14 +177,24 @@ async def list_metric_servers(
 
     from app.services.monitoring.prometheus_metrics import (
         get_node_exporter_up_map,
+        get_windows_exporter_up_map,
         match_prometheus_instance,
         sync_node_exporter_running_from_prometheus,
+        sync_windows_exporter_running_from_prometheus,
+        WINDOWS_EXPORTER_PORT,
     )
 
     from app.services.platform_scope import apply_server_platform_filter, get_physical_host_ids, vm_filter_condition
 
-    sync_stats = sync_node_exporter_running_from_prometheus(db)
-    up_map = get_node_exporter_up_map()
+    is_windows = requested_platform == "windows"
+    if is_windows:
+        sync_stats = sync_windows_exporter_running_from_prometheus(db)
+        up_map = get_windows_exporter_up_map()
+        default_port = WINDOWS_EXPORTER_PORT
+    else:
+        sync_stats = sync_node_exporter_running_from_prometheus(db)
+        up_map = get_node_exporter_up_map()
+        default_port = 9100
 
     base_query = db.query(Server).filter(
         Server.ip_address.isnot(None),
@@ -131,13 +232,28 @@ async def list_metric_servers(
         if not instance:
             host_label = (s.hostname or s.name or s.ip_address or "").strip()
             # FQDN ise kısa ad da olabilir; gösterimde kayıtlı adı kullan
-            instance = f"{host_label}:9100" if host_label else "?:9100"
+            instance = f"{host_label}:{default_port}" if host_label else f"?:{default_port}"
             live = False
+            # Windows fiziksel: IP:9182 eşlemesi (scrape instance çoğu zaman IP)
+            if is_windows and s.ip_address:
+                cand = f"{s.ip_address.strip()}:{WINDOWS_EXPORTER_PORT}"
+                if cand in up_map:
+                    instance = cand
+                    live = up_map[cand] == "1"
+
+        installed_flag = (
+            bool(getattr(s, "windows_exporter_installed", False)) if is_windows
+            else bool(s.node_exporter_installed)
+        )
+        running_flag = (
+            bool(getattr(s, "windows_exporter_running", False)) if is_windows
+            else bool(s.node_exporter_running)
+        )
 
         # Listede tut: canlı Prometheus hedefi VEYA daha önce kurulu işaretli
-        # VEYA ONLINE Linux sunucu (kurulum bayrağı gecikmeli olsa bile seçicide görünsün)
+        # VEYA ONLINE sunucu (kurulum bayrağı gecikmeli olsa bile seçicide görünsün)
         status_up = (s.status or "").upper() in ("ONLINE", "WARNING")
-        if not live and not s.node_exporter_installed and not s.node_exporter_running and not status_up:
+        if not live and not installed_flag and not running_flag and not status_up:
             continue
 
         matched_instances.add(instance)
@@ -151,8 +267,8 @@ async def list_metric_servers(
             "status": s.status,
             "instance": instance,
             "live": live,
-            "installed": bool(s.node_exporter_installed) or live,
-            "running_db": bool(s.node_exporter_running) or live,
+            "installed": installed_flag or live,
+            "running_db": running_flag or live,
         })
 
     # DB'de eşleşmeyen ama Prometheus'ta canlı hedefler (merkezi scrape)

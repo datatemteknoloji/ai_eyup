@@ -37,6 +37,10 @@ export type ListServersParams = {
   ip?: string
   name_mismatch?: boolean | null
   include_connection_config?: boolean
+  hypervisor_id?: number
+  hypervisor_type?: string
+  hypervisor_types?: string
+  unassigned_hypervisor?: boolean
 }
 
 /** Parse list API — supports new `{items,...}` and legacy raw arrays. */
@@ -74,6 +78,10 @@ export async function fetchServersPage<T = Record<string, unknown>>(
   if (params.ip) sp.set('ip', params.ip)
   if (params.name_mismatch === true) sp.set('name_mismatch', 'true')
   if (params.include_connection_config) sp.set('include_connection_config', 'true')
+  if (params.hypervisor_id != null) sp.set('hypervisor_id', String(params.hypervisor_id))
+  if (params.hypervisor_type) sp.set('hypervisor_type', params.hypervisor_type)
+  if (params.hypervisor_types) sp.set('hypervisor_types', params.hypervisor_types)
+  if (params.unassigned_hypervisor) sp.set('unassigned_hypervisor', 'true')
   const r = await fetch(`${API_BASE_URL}/servers/?${sp}`)
   if (!r.ok) {
     let detail = `HTTP ${r.status}`
@@ -109,9 +117,18 @@ export async function fetchServersForPicker<T = Record<string, unknown>>(opts: {
   return items
 }
 
-export async function fetchServersSummary(platform?: string): Promise<ServerSummary> {
-  const sp = platform ? `?platform=${encodeURIComponent(platform)}` : ''
-  const r = await fetch(`${API_BASE_URL}/servers/summary${sp}`)
+export async function fetchServersSummary(
+  platform?: string,
+  extra: { hypervisor_id?: number; hypervisor_type?: string; hypervisor_types?: string; unassigned_hypervisor?: boolean } = {},
+): Promise<ServerSummary> {
+  const sp = new URLSearchParams()
+  if (platform) sp.set('platform', platform)
+  if (extra.hypervisor_id != null) sp.set('hypervisor_id', String(extra.hypervisor_id))
+  if (extra.hypervisor_type) sp.set('hypervisor_type', extra.hypervisor_type)
+  if (extra.hypervisor_types) sp.set('hypervisor_types', extra.hypervisor_types)
+  if (extra.unassigned_hypervisor) sp.set('unassigned_hypervisor', 'true')
+  const q = sp.toString()
+  const r = await fetch(`${API_BASE_URL}/servers/summary${q ? `?${q}` : ''}`)
   if (!r.ok) throw new Error(`summary HTTP ${r.status}`)
   return r.json()
 }

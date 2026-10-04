@@ -43,7 +43,7 @@ const OpenShiftVmConsolePage = lazy(() => import('./pages/OpenShiftVmConsolePage
 const IntegrationsHub = lazy(() => import('./pages/IntegrationsHub'))
 const PhysicalHostsPage = lazy(() => import('./pages/PhysicalHostsPage'))
 const WindowsServers = lazy(() => import('./pages/WindowsServers'))
-const WindowsLiveMetrics = lazy(() => import('./pages/WindowsLiveMetrics'))
+const WindowsMonitoring = lazy(() => import('./pages/WindowsMonitoring'))
 const UCMDBImport = lazy(() => import('./pages/UCMDBImport'))
 const Level1OpsCenter = lazy(() => import('./pages/level1/Level1OpsCenter'))
 const Level1Ops = lazy(() => import('./pages/level1/Level1Ops'))
@@ -51,6 +51,8 @@ const Level1Console = lazy(() => import('./pages/level1/Level1Console'))
 const Level1Jobs = lazy(() => import('./pages/level1/Level1Jobs'))
 const Level1Audit = lazy(() => import('./pages/level1/Level1Audit'))
 const Level1Settings = lazy(() => import('./pages/level1/Level1Settings'))
+const CentrifyPage = lazy(() => import('./pages/level1/CentrifyPage'))
+const CentrifySettingsPage = lazy(() => import('./pages/level1/CentrifySettingsPage'))
 const UserManager = lazy(() => import('./pages/UserManager'))
 const CustomReports = lazy(() => import('./pages/CustomReports'))
 
@@ -351,7 +353,7 @@ function App() {
                       <Route path="/windows/reports" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsInfraReportsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/windows/compare" element={<Navigate to="/windows/reports?tab=compare" replace />} />
                       <Route path="/windows" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsServers /></ErrorBoundary></RequireModule>} />
-                      <Route path="/windows/live-metrics" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsLiveMetrics /></ErrorBoundary></RequireModule>} />
+                      <Route path="/windows/live-metrics" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsMonitoring /></ErrorBoundary></RequireModule>} />
                       <Route path="/windows/events" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsServers /></ErrorBoundary></RequireModule>} />
                       <Route path="/windows/updates" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsServers /></ErrorBoundary></RequireModule>} />
                       <Route path="/windows/ansible" element={<RequireModule moduleId="windows"><ErrorBoundary><WindowsAnsible /></ErrorBoundary></RequireModule>} />
@@ -362,11 +364,13 @@ function App() {
                       <Route path="/integrations/physical-hosts" element={<RequireModule moduleId="integrations"><ErrorBoundary><PhysicalHostsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/exadata" element={<RequireAnyModule moduleIds={['integrations', 'exadata']}><ErrorBoundary><ExadataDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/openshift" element={<RequireAnyModule moduleIds={['integrations', 'openshift']}><ErrorBoundary><OpenShiftDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
+                      <Route path="/integrations/centrify" element={<RequireAnyModule moduleIds={['integrations', 'level1']}><ErrorBoundary><CentrifySettingsPage /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/ucmdb/import" element={<Navigate to="/integrations/ucmdb" replace />} />
                       <Route path="/level1" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1OpsCenter /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/ops/*" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/console/:id" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Console /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/jobs/*" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Jobs /></ErrorBoundary></RequireModule>} />
+                      <Route path="/level1/centrify" element={<RequireModule moduleId="level1"><ErrorBoundary><CentrifyPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/audit" element={<RequireModule moduleId="level1"><RequireAdmin><ErrorBoundary><Level1Audit /></ErrorBoundary></RequireAdmin></RequireModule>} />
                       <Route path="/level1/settings" element={<RequireModule moduleId="level1"><RequireAdmin><ErrorBoundary><Level1Settings /></ErrorBoundary></RequireAdmin></RequireModule>} />
                       <Route path="/level1/:category" element={<Navigate to="/level1" replace />} />

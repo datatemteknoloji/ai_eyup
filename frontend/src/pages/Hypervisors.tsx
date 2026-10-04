@@ -12,6 +12,7 @@ import {
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { isVmOnline, isPoweredOn as isPowerStateOn } from '../utils/powerState'
 import { useT, useLocale } from '../i18n/LocaleProvider'
+import { virtHostIpHint, virtHostTitle } from '../lib/virtHostLabel'
 
 // DESIGN.md: "Mor (purple, violet) kullanılmaz — blue-600 tek aksan rengidir."
 // `info` DESIGN.md'deki --info token'ıyla aynı (#38bdf8) — RAM/VM-sayısı gibi
@@ -95,6 +96,7 @@ interface VmLiveMetrics {
 
 interface EsxHost {
   host_name: string; host_ref?: string; cpu_usage_pct: number; mem_usage_pct: number
+  display_name?: string | null; ip_address?: string | null; roles?: string[]
   cpu_total_mhz: number; cpu_usage_mhz: number; cpu_cores: number
   mem_total_mb: number; mem_used_mb: number; ds_total_gb: number; ds_used_gb: number
   ds_usage_pct: number; vms_running: number; vms_total: number
@@ -103,19 +105,29 @@ interface EsxHost {
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
-const fmtMem = (mb: number) => mb >= 1024 ? `${(mb/1024).toFixed(0)} GB` : `${Math.round(mb)} MB`
-const fmtDisk = (gb: number) => gb >= 1024 ? `${(gb/1024).toFixed(1)} TB` : `${gb.toFixed(0)} GB`
+const fmtMem = (mb: number | null | undefined) => {
+  if (mb == null || Number.isNaN(Number(mb))) return '—'
+  const n = Number(mb)
+  return n >= 1024 ? `${(n / 1024).toFixed(0)} GB` : `${Math.round(n)} MB`
+}
+const fmtDisk = (gb: number | null | undefined) => {
+  if (gb == null || Number.isNaN(Number(gb))) return '—'
+  const n = Number(gb)
+  return n >= 1024 ? `${(n / 1024).toFixed(1)} TB` : `${n.toFixed(0)} GB`
+}
 /** Host CPU — vCenter/OLVM değerleri MHz; büyük değerleri GHz göster. */
-const fmtCpu = (mhz: number) => {
-  const n = Number(mhz) || 0
+const fmtCpu = (mhz: number | null | undefined) => {
+  if (mhz == null || Number.isNaN(Number(mhz))) return '—'
+  const n = Number(mhz)
   if (n >= 1000) return `${(n / 1000).toFixed(1)} GHz`
   return `${Math.round(n)} MHz`
 }
-const fmtResource = (value: number, unit: string) => {
+const fmtResource = (value: number | null | undefined, unit: string) => {
   if (unit === 'GB') return fmtDisk(value)
   if (unit === 'MB') return fmtMem(value)
   if (unit === 'MHz') return fmtCpu(value)
-  return `${Math.round(value)} ${unit}`
+  if (value == null || Number.isNaN(Number(value))) return '—'
+  return `${Math.round(Number(value))} ${unit}`
 }
 
 // ── Confirm Modal ───────────────────────────────────────────────────────────
@@ -252,12 +264,15 @@ const HostResourceChart = ({ hosts }: { hosts: EsxHost[] }) => {
   const t = useT()
   if (hosts.length === 0) return null
 
-  const data = hosts.slice(0, 6).map(h => ({
-    name: h.host_name.length > 12 ? h.host_name.slice(0, 12) + '...' : h.host_name,
-    CPU: h.cpu_usage_pct || 0,
-    Memory: h.mem_usage_pct || 0,
-    Disk: h.ds_usage_pct || 0,
-  }))
+  const data = hosts.slice(0, 6).map(h => {
+    const label = virtHostTitle(h)
+    return {
+      name: label.length > 14 ? label.slice(0, 14) + '…' : label,
+      CPU: h.cpu_usage_pct || 0,
+      Memory: h.mem_usage_pct || 0,
+      Disk: h.ds_usage_pct || 0,
+    }
+  })
 
   return (
     <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
@@ -792,23 +807,37 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
             <Database className="w-5 h-5 text-cyan-400" />
           </div>
           <div>
-            <div className="text-sm font-medium text-white">{host.host_name}</div>
-            <div className="text-xs text-slate-500">{t('hv_host_vms', { hv: hvName, running: host.vms_running, total: host.vms_total })}</div>
+            <div className="text-sm font-medium text-white flex items-center gap-1.5 flex-wrap">
+              <span>{virtHostTitle(host)}</span>
+              {(host.roles || []).map((role) => (
+                <span
+                  key={role}
+                  className="px-1.5 py-0.5 rounded text-[10px] font-medium text-rose-300 bg-rose-500/15 border border-rose-500/30"
+                >
+                  {role === 'master' ? t('dash_role_master') : role === 'infra' ? t('dash_role_infra') : role === 'worker' ? t('dash_role_worker') : role}
+                </span>
+              ))}
+            </div>
+            <div className="text-xs text-slate-500">
+              {[virtHostIpHint(host), t('hv_host_vms', { hv: hvName, running: host.vms_running, total: host.vms_total })]
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-4">
           {/* Quick Stats */}
           <div className="flex gap-3">
             <div className="text-center">
-              <div className="text-xs font-bold" style={{ color: getStatusColor(host.cpu_usage_pct) }}>{host.cpu_usage_pct?.toFixed(0) || 0}%</div>
+              <div className="text-xs font-bold" style={{ color: getStatusColor(host.cpu_usage_pct || 0) }}>{host.cpu_usage_pct != null ? host.cpu_usage_pct.toFixed(0) : '—'}%</div>
               <div className="text-[10px] text-slate-500">CPU</div>
             </div>
             <div className="text-center">
-              <div className="text-xs font-bold" style={{ color: getStatusColor(host.mem_usage_pct) }}>{host.mem_usage_pct?.toFixed(0) || 0}%</div>
+              <div className="text-xs font-bold" style={{ color: getStatusColor(host.mem_usage_pct || 0) }}>{host.mem_usage_pct != null ? host.mem_usage_pct.toFixed(0) : '—'}%</div>
               <div className="text-[10px] text-slate-500">Memory</div>
             </div>
             <div className="text-center">
-              <div className="text-xs font-bold" style={{ color: getStatusColor(host.ds_usage_pct) }}>{host.ds_usage_pct?.toFixed(0) || 0}%</div>
+              <div className="text-xs font-bold" style={{ color: getStatusColor(host.ds_usage_pct || 0) }}>{host.ds_usage_pct != null ? host.ds_usage_pct.toFixed(0) : '—'}%</div>
               <div className="text-[10px] text-slate-500">Disk</div>
             </div>
           </div>
@@ -829,11 +858,13 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
                 <span className="text-slate-400">{r.label}</span>
                 <span className="text-slate-300">
                   {fmtResource(r.used, r.unit)} / {fmtResource(r.total, r.unit)}
-                  <span className="ml-2" style={{ color: getStatusColor(r.pct) }}>({r.pct?.toFixed(0)}%)</span>
+                  {r.pct != null && (
+                    <span className="ml-2" style={{ color: getStatusColor(r.pct) }}>({Number(r.pct).toFixed(0)}%)</span>
+                  )}
                 </span>
               </div>
               <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all" style={{ width: `${r.pct}%`, background: r.color }} />
+                <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(0, Math.min(100, Number(r.pct) || 0))}%`, background: r.color }} />
               </div>
             </div>
           ))}
@@ -1249,7 +1280,7 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
               className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
               <option value="vmware">VMware vCenter / ESXi</option>
               <option value="hyperv">Microsoft Hyper-V</option>
-              <option value="kvm">KVM / oVirt</option>
+              <option value="kvm">KVM / oVirt / OLVM</option>
               <option value="proxmox">Proxmox VE</option>
               <option value="openshift_virt">{t('hv_type_ocp_virt')}</option>
             </select>
@@ -1411,8 +1442,11 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
   const [hostsLoading, setHostsLoading] = useState(true)
 
   useEffect(() => {
-    const vmwareHvs = hypervisors.filter(h => h.type?.toLowerCase() === 'vmware')
-    if (vmwareHvs.length === 0) { setHostsLoading(false); return }
+    const virtHvs = hypervisors.filter(h => {
+      const t = h.type?.toLowerCase() || ''
+      return t === 'vmware' || t === 'kvm' || t === 'openshift_virt'
+    })
+    if (virtHvs.length === 0) { setHostsLoading(false); return }
 
     fetch(`${API_BASE_URL}/hypervisors/host-metrics`)
       .then(r => r.ok ? r.json() : null)
@@ -1614,7 +1648,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             {/* Quick Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
               <StatCard icon={Database} label={t('hv_hypervisor')} value={hypervisors.length} sub={t('hv_n_vmware', { n: hypervisors.filter(h => h.type === 'vmware').length })} accent={NEON.blue} />
-              <StatCard icon={Server} label="Host" value={allHosts.length} sub="ESX/KVM" accent={NEON.cyan} />
+              <StatCard icon={Server} label="Host" value={allHosts.length} sub={t('label_virt_host')} accent={NEON.cyan} />
               <StatCard icon={Monitor} label={t('hv_stat_total_vm')} value={virtSummary?.total ?? vmsTotal} sub={t('hv_sub_running', { n: poweredOn })} accent={NEON.info} />
               <StatCard icon={Power} label={t('hv_stat_active_vm')} value={poweredOn} sub={t('hv_sub_off', { n: poweredOff })} accent={NEON.green} />
               <StatCard icon={Cpu} label={t('hv_stat_vcpu')} value={totalVmCpu} sub={t('hv_sub_cores')} accent={NEON.orange} />
