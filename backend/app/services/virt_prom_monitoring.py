@@ -16,6 +16,7 @@ from app.services.monitoring_sources import (
     resolve,
     prom_base_url,
     prom_headers,
+    prom_verify,
     MonitoringSource,
 )
 
@@ -54,7 +55,7 @@ def _virt_source(db=None, source_id: Optional[str] = None) -> Optional[Monitorin
 def _query_range(src: MonitoringSource, query: str, start: float, end: float, step: int = 30) -> Dict[str, Any]:
     base = prom_base_url(src)
     headers = prom_headers(src)
-    with httpx.Client(timeout=20.0, verify=False) as client:
+    with httpx.Client(timeout=20.0, verify=prom_verify(src)) as client:
         resp = client.get(
             f"{base}/api/v1/query_range",
             params={"query": query, "start": start, "end": end, "step": step},
@@ -75,7 +76,7 @@ def discover_metrics(db=None, source_id: Optional[str] = None, prefix: str = "vm
     base = prom_base_url(src)
     headers = prom_headers(src)
     try:
-        with httpx.Client(timeout=15.0, verify=False) as client:
+        with httpx.Client(timeout=15.0, verify=prom_verify(src)) as client:
             resp = client.get(f"{base}/api/v1/label/__name__/values", headers=headers)
             resp.raise_for_status()
             names = resp.json().get("data") or []

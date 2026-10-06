@@ -77,6 +77,49 @@ def create_dropt_session(user: User = Depends(get_current_user)) -> DroptSession
     )
 
 
+def _level1_usernames(db: Session) -> set[str]:
+    """Level 1 modülüne erişebilen aktif kullanıcılar (admin tüm modüllere erişir)."""
+    from app.models.module import UserModule
+
+    names = {
+        u.username
+        for u in db.query(User).filter(User.is_active == True, User.role == "admin").all()  # noqa: E712
+    }
+    rows = (
+        db.query(User.username)
+        .join(UserModule, UserModule.user_id == User.id)
+        .filter(UserModule.module_id == "level1", User.is_active == True)  # noqa: E712
+        .all()
+    )
+    names.update(r[0] for r in rows)
+    return names
+
+
+@router.get("/dashboard")
+def level1_dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """
+    Dropt özetini getirir; kullanıcı listeleri yalnız Level 1 kullanıcılarıyla sınırlanır
+    (diğer modüllerin kullanıcıları bu görünümde yer almaz).
+    """
+    session_out = create_dropt_session(user)
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            r = client.get(
+                f"{_dropt_base()}/api/dashboard",
+                headers={"Authorization": f"Bearer {session_out.access_token}"},
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(503, detail=f"Dropt API erişilemiyor: {exc}") from exc
+    if r.status_code >= 400:
+        _raise_dropt_upstream(r.status_code, r.text[:300] or "Dropt dashboard hatası")
+    data = r.json()
+    allowed = _level1_usernames(db)
+    data["users"] = [u for u in data.get("users") or [] if u.get("username") in allowed]
+    stats = data.get("stats") or {}
+    stats["top_operators_7d"] = [o for o in stats.get("top_operators_7d") or [] if o.get("username") in allowed]
+    return data
+
+
 def _raise_dropt_upstream(status_code: int, detail: str) -> None:
     """Dropt hata kodunu ainew JWT 401'inden ayır — aksi halde FE oturumu düşer."""
     # authStore her /api/v1 401'inde clearToken yapıyor; upstream 401/403 ≠ ainew oturumu

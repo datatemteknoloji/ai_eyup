@@ -945,3 +945,43 @@ async def executive_summary(db: Session = Depends(get_db)):
         "open_incident_items": open_incident_items,
         "top_alerts": top_alerts,
     }
+
+
+def _exadata_report_block(db: Session) -> Dict[str, Any]:
+    """Yönetici raporu için Exadata özeti (rack/düğüm envanteri + aktif olaylar)."""
+    from app.models.exadata import ExadataNode, ExadataRack
+
+    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    racks = db.query(ExadataRack).all()
+    node_count = db.query(ExadataNode).count()
+    ok = {"online", "healthy", "ok", "connected", "active", "ready"}
+    unhealthy = sum(
+        1 for r in racks
+        if (r.status or "unknown").lower() not in ok and (r.status or "unknown").lower() != "unknown"
+    )
+    try:
+        events = _active_events(db, since, platform="exadata")
+        groups = group_events(events, _server_map(db))
+        crit, warn = group_severity_counts(groups)
+        health = _calc_health_score(unique_events(events), max(len(racks), 1))["score"] if racks else None
+    except Exception:
+        logger.exception("Yönetici raporu: Exadata olayları alınamadı")
+        crit = warn = 0
+        health = 100 if racks else None
+    return {
+        "rack_count": len(racks),
+        "node_count": node_count,
+        "racks_unhealthy": unhealthy,
+        "critical": crit,
+        "warning": warn + unhealthy,
+        "health_score": health,
+    }
+
+
+@router.get("/executive-report")
+async def executive_report(db: Session = Depends(get_db)):
+    """Yönetici raporu — tüm ortamlar (Linux, Windows, Sanallaştırma, OpenShift, Exadata)."""
+    from app.services.executive_report import build_executive_report
+
+    summary = await executive_summary(db)
+    return build_executive_report(summary, _exadata_report_block(db))

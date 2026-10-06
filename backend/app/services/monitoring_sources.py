@@ -26,6 +26,11 @@ CollectorType = Literal["prometheus", "telegraf", "opentelemetry", "zabbix"]
 VALID_COLLECTORS = frozenset({"prometheus", "telegraf", "opentelemetry", "zabbix"})
 PROM_COMPATIBLE = frozenset({"prometheus", "telegraf", "opentelemetry"})
 
+# Self-signed route/CA kullanan tipik bağlamalar: açıkça seçilmediyse TLS doğrulaması KAPALI
+# (1.0.9.38 öncesi davranış). Linux/Windows kaynaklarında UI anahtarı yok → eski lenient davranış.
+LENIENT_TLS_BINDINGS = frozenset({"openshift", "virtualization"})
+_NO_TLS_TOGGLE_BINDINGS = frozenset({"linux", "windows"})
+
 SETTINGS_KEY = "monitoring_prometheus_sources"
 LINUX_SEED_ID = "linux-default"
 
@@ -251,7 +256,11 @@ def _from_item(item: Dict[str, Any]) -> Optional[MonitoringSource]:
     username = str(item.get("username") or "").strip()
     verify_ssl = item.get("verify_ssl")
     if verify_ssl is None:
-        verify_ssl = True
+        verify_ssl = default_verify_ssl(binding)
+    elif binding in LENIENT_TLS_BINDINGS and not item.get("verify_ssl_explicit"):
+        # Eski kayıt: anahtar UI'da görünmediği için True "varsayılan" olarak yazılmıştı
+        # ve çalışma zamanı sorguları zaten doğrulamasızdı → kullanıcı seçmedikçe False say.
+        verify_ssl = False
     if not label or not url:
         return None
     jobs = normalize_jobs(item.get("jobs"))
@@ -395,6 +404,8 @@ def sources_to_storage(sources: Sequence[MonitoringSource], *, keep_tokens: Opti
                 "username": (s.username or "").strip(),
                 "password": _encrypt(password_plain) if password_plain else "",
                 "verify_ssl": bool(s.verify_ssl),
+                # Kullanıcı/UI kaydı: bundan sonra verify_ssl değeri aynen uygulanır.
+                "verify_ssl_explicit": True,
                 "jobs": list(s.jobs or []),
                 "extra_selectors": (s.extra_selectors or "").strip(),
             }
@@ -440,7 +451,7 @@ def validate_sources_payload(items: Sequence[Dict[str, Any]]) -> Tuple[List[Moni
         password = str(item.get("password") or "")
         verify_ssl = item.get("verify_ssl")
         if verify_ssl is None:
-            verify_ssl = True
+            verify_ssl = default_verify_ssl(binding)
         jobs = normalize_jobs(item.get("jobs"))
         extra = str(item.get("extra_selectors") or "").strip()
         err_x = validate_extra_selectors(extra)
@@ -543,9 +554,37 @@ def save_sources(db, sources: Sequence[MonitoringSource], *, previous: Optional[
     return warnings
 
 
-def prom_headers(source: Optional[MonitoringSource]) -> Dict[str, str]:
+def default_verify_ssl(binding: Optional[str]) -> bool:
+    """verify_ssl belirtilmediğinde varsayılan: OCP/Virtualization → False, diğerleri → True."""
+    return str(binding or "").strip().lower() not in LENIENT_TLS_BINDINGS
+
+
+def prom_verify(source: Optional[MonitoringSource]) -> bool:
+    """Prom-uyumlu kaynak sorgularında (test + runtime) httpx ``verify=`` değeri.
+
+    Ayarlar > Monitoring "SSL doğrula" anahtarı tek doğruluk kaynağıdır. Linux/Windows
+    bağlamasında anahtar gösterilmediği için eski (doğrulamasız) davranış korunur.
+    """
+    if source is None:
+        return False
+    if str(source.binding) in _NO_TLS_TOGGLE_BINDINGS:
+        return False
+    return bool(source.verify_ssl)
+
+
+def prom_headers(source: Optional[MonitoringSource], *, auto_refresh: bool = True) -> Dict[str, str]:
+    """Authorization başlığı. OpenShift bağlamasında süresi dolmuş ``sha256~`` OAuth token'ı,
+    kayıtlı OpenShift küme girişiyle otomatik yenilenir (bellekte; DB'ye yazılmaz)."""
     if source and source.token:
-        return {"Authorization": f"Bearer {source.token}"}
+        token = source.token
+        if auto_refresh and str(source.binding) == "openshift":
+            try:
+                from app.services.openshift.ocp_token import resolve_token
+
+                token = resolve_token(token, source.url or "")
+            except Exception:  # noqa: BLE001
+                token = source.token
+        return {"Authorization": f"Bearer {token}"}
     return {}
 
 

@@ -926,6 +926,7 @@ async def put_monitoring_sources(payload: dict, db: Session = Depends(get_db)):
         save_sources,
         validate_sources_payload,
         normalize_collector_type,
+        default_verify_ssl,
         MonitoringSource,
     )
     from app.services.settings_broadcast import broadcast_settings_reload, reload_runtime_settings_from_db
@@ -968,7 +969,7 @@ async def put_monitoring_sources(payload: dict, db: Session = Depends(get_db)):
         )
         verify_ssl = item.get("verify_ssl")
         if verify_ssl is None:
-            verify_ssl = prev.verify_ssl if prev else True
+            verify_ssl = prev.verify_ssl if prev else default_verify_ssl(binding)
         username = item.get("username")
         if username is None:
             username = prev.username if prev else ""
@@ -1088,6 +1089,7 @@ async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
     Prom uyumlu (prometheus/telegraf/opentelemetry): /api/v1/query?query=up
     Zabbix: api_jsonrpc.php apiinfo.version (auth gerekmez)
     """
+    import dataclasses
     import httpx
     from app.services.monitoring_sources import (
         load_sources_from_db,
@@ -1097,6 +1099,8 @@ async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
         validate_url,
         normalize_collector_type,
         is_prom_compatible,
+        prom_verify,
+        default_verify_ssl,
         zabbix_api_url,
         MonitoringSource,
     )
@@ -1107,9 +1111,7 @@ async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
     username = (payload.get("username") or "").strip()
     password = (payload.get("password") or "").strip()
     collector_raw = payload.get("collector_type")
-    verify_ssl = payload.get("verify_ssl")
-    if verify_ssl is None:
-        verify_ssl = True
+    verify_ssl = payload.get("verify_ssl")  # None → kayıtlı değer / binding varsayılanı
 
     sources = load_sources_from_db(db)
     src = None
@@ -1131,12 +1133,14 @@ async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
             collector_type=ct,
             username=username or existing.username,
             password=password or existing.password,
-            verify_ssl=bool(verify_ssl if payload.get("verify_ssl") is not None else existing.verify_ssl),
+            verify_ssl=bool(verify_ssl if verify_ssl is not None else existing.verify_ssl),
         )
     elif source_id:
         src = resolve(sources, source_id=source_id)
         if not src:
             raise HTTPException(status_code=404, detail="Kaynak bulunamadı")
+        if verify_ssl is not None:
+            src = dataclasses.replace(src, verify_ssl=bool(verify_ssl))
     elif url:
         err = validate_url(url)
         if err:
@@ -1152,11 +1156,12 @@ async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
             collector_type=ct,
             username=username,
             password=password,
-            verify_ssl=bool(verify_ssl),
+            verify_ssl=bool(verify_ssl if verify_ssl is not None else default_verify_ssl(binding)),
         )
     else:
         raise HTTPException(status_code=400, detail="source_id veya url gerekli")
 
+    # Zabbix: kaynağın kendi anahtarı; Prom uyumlu: runtime ile aynı kural (prom_verify).
     verify = bool(src.verify_ssl)
 
     # Zabbix JSON-RPC — apiinfo.version URL’yi doğrular; asıl auth user.login / token
@@ -1259,7 +1264,9 @@ async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
         )
 
     base = prom_base_url(src)
-    headers = prom_headers(src)
+    # Formda elle token girildiyse olduğu gibi sına; kayıtlı token ise otomatik yenileme uygulanır.
+    headers = prom_headers(src, auto_refresh=not token)
+    verify = prom_verify(src)
     try:
         async with httpx.AsyncClient(timeout=8.0, verify=verify) as client:
             resp = await client.get(f"{base}/api/v1/query", params={"query": "up"}, headers=headers)
@@ -1277,7 +1284,10 @@ async def test_monitoring_source(payload: dict, db: Session = Depends(get_db)):
             "prometheus_status": body.get("status"),
         }
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Bağlantı hatası: {e}")
+        hint = ""
+        if "CERTIFICATE_VERIFY_FAILED" in str(e) and verify:
+            hint = " — Self-signed sertifika için bu kaynakta 'SSL doğrula' seçeneğini kapatın."
+        raise HTTPException(status_code=502, detail=f"Bağlantı hatası: {e}{hint}")
 
 
 @router.put("/ollama-model")

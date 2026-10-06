@@ -11,6 +11,7 @@ from app.api import (
     auth,
     bridge,
     centrify,
+    dashboard,
     health,
     hostname_api,
     identity,
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(ops.router, prefix="/api")
     app.include_router(jobs.router, prefix="/api")
     app.include_router(audit.router, prefix="/api")
+    app.include_router(dashboard.router, prefix="/api")
     app.include_router(admin_system.router, prefix="/api")
     app.include_router(terminal.router, prefix="/api")
     return app

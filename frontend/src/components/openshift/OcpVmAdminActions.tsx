@@ -1,16 +1,19 @@
 /**
- * Admin-only KubeVirt VM yaşam döngüsü: güç, klon, sil, snapshot, disk, network.
+ * Admin-only KubeVirt VM yaşam döngüsü: güç, klon, sil, snapshot, disk, network, ISO/CD-ROM.
  * Menü createPortal + fixed — tablo overflow-x-auto altında kesilmesin.
+ * ⋯ düğmesi VEYA satıra sağ tık (contextPos) aynı menüyü açar.
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Square, RotateCcw, Copy, Trash2, Camera, HardDrive, Network, MoreHorizontal, X, RefreshCw,
+  Disc3, Monitor,
 } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import { useAuth } from '../../auth/AuthContext'
 import { useT } from '../../i18n/LocaleProvider'
+import OcpVmIsoPanel from './OcpVmIsoPanel'
 
 type Vm = { name: string; namespace: string; phase?: string; printable_status?: string }
 
@@ -18,6 +21,9 @@ type Props = {
   clusterId: number
   vm: Vm
   onConsole?: () => void
+  /** Satıra sağ tıklama konumu (tarayıcı koordinatı); null = kapalı. */
+  contextPos?: { x: number; y: number } | null
+  onContextClose?: () => void
 }
 
 type MenuPos = { top: number; left: number; openUp: boolean }
@@ -33,9 +39,9 @@ async function api(path: string, init?: RequestInit) {
 }
 
 const MENU_W = 192
-const MENU_H = 220
+const MENU_H = 330
 
-export default function OcpVmAdminActions({ clusterId, vm }: Props) {
+export default function OcpVmAdminActions({ clusterId, vm, onConsole, contextPos, onContextClose }: Props) {
   const t = useT()
   const { user } = useAuth()
   const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
@@ -44,7 +50,7 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [menu, setMenu] = useState(false)
   const [menuPos, setMenuPos] = useState<MenuPos | null>(null)
-  const [panel, setPanel] = useState<'clone' | 'snapshot' | 'disk' | 'network' | 'pvc' | null>(null)
+  const [panel, setPanel] = useState<'clone' | 'snapshot' | 'disk' | 'network' | 'pvc' | 'iso' | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [target, setTarget] = useState(`${vm.name}-clone`)
@@ -67,7 +73,15 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
     setMenuPos({ top, left, openUp })
   }
 
+  const ctxOpen = Boolean(contextPos)
+  const closeAll = () => {
+    setMenu(false)
+    setMenuPos(null)
+    onContextClose?.()
+  }
+
   const toggleMenu = () => {
+    if (ctxOpen) onContextClose?.()
     setErr('')
     setMenu((v) => {
       const next = !v
@@ -78,25 +92,30 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
   }
 
   useEffect(() => {
-    if (!menu) return
-    placeMenu()
-    const onScroll = () => placeMenu()
-    const onResize = () => placeMenu()
+    if (!menu && !ctxOpen) return
+    if (!ctxOpen) placeMenu()
+    const onScroll = () => (ctxOpen ? closeAll() : placeMenu())
+    const onResize = () => (ctxOpen ? closeAll() : placeMenu())
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node
       if (moreRef.current?.contains(t) || menuRef.current?.contains(t)) return
-      setMenu(false)
-      setMenuPos(null)
+      closeAll()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeAll()
     }
     window.addEventListener('scroll', onScroll, true)
     window.addEventListener('resize', onResize)
     document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
     return () => {
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('resize', onResize)
       document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
     }
-  }, [menu])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menu, ctxOpen])
 
   const { data: storage } = useQuery({
     queryKey: ['openshift-storage', clusterId],
@@ -126,8 +145,7 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
       await fn()
       refresh()
       setPanel(null)
-      setMenu(false)
-      setMenuPos(null)
+      closeAll()
     } catch (e) {
       setErr(e instanceof Error ? e.message : t('ocp_action_fail'))
     } finally {
@@ -140,12 +158,33 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
 
   const pick = (p: typeof panel) => {
     setPanel(p)
-    setMenu(false)
-    setMenuPos(null)
+    closeAll()
+  }
+
+  const itemCls = 'w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2 disabled:opacity-30 disabled:hover:bg-transparent'
+  const power = (action: 'start' | 'stop' | 'restart') => {
+    if (action === 'stop' && !window.confirm(t('ocp_stop_confirm', { name: vm.name }))) return
+    if (action === 'restart' && !window.confirm(t('ocp_restart_vm_confirm', { name: vm.name }))) return
+    run(() => api(`${base}/power`, { method: 'POST', body: JSON.stringify({ action }) }))
   }
 
   const menuItems = (
     <>
+      <button type="button" disabled={busy || running} className={`${itemCls} text-emerald-300`} onClick={() => power('start')}>
+        <Play size={11} /> {t('start')}
+      </button>
+      <button type="button" disabled={busy || !running} className={`${itemCls} text-cyan-300`} onClick={() => power('restart')}>
+        <RotateCcw size={11} /> {t('restart')}
+      </button>
+      <button type="button" disabled={busy || !running} className={`${itemCls} text-amber-300`} onClick={() => power('stop')}>
+        <Square size={11} /> {t('stop')}
+      </button>
+      {onConsole && running && (
+        <button type="button" className={`${itemCls} text-violet-300`} onClick={() => { closeAll(); onConsole() }}>
+          <Monitor size={11} /> {t('ocp_console_novnc')}
+        </button>
+      )}
+      <div className="my-1 border-t border-white/[0.06]" />
       <button type="button" className="w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2" onClick={() => pick('clone')}>
         <Copy size={11} /> {t('ocp_clone')}
       </button>
@@ -157,6 +196,9 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
       </button>
       <button type="button" className="w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2" onClick={() => pick('network')}>
         <Network size={11} /> {t('ocp_net_multus')}
+      </button>
+      <button type="button" className="w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2" onClick={() => pick('iso')}>
+        <Disc3 size={11} /> {t('ocp_iso')}
       </button>
       <button type="button" className="w-full px-3 py-1.5 text-left text-slate-200 hover:bg-white/[0.05] inline-flex items-center gap-2" onClick={() => pick('pvc')}>
         <HardDrive size={11} /> {t('ocp_create_pvc')}
@@ -177,39 +219,6 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
   return (
     <div className="inline-flex items-center gap-1">
       <button
-        type="button"
-        title={t('start')}
-        disabled={busy || running}
-        onClick={() => run(() => api(`${base}/power`, { method: 'POST', body: JSON.stringify({ action: 'start' }) }))}
-        className="p-1 rounded text-emerald-400/90 hover:bg-emerald-500/10 disabled:opacity-30"
-      >
-        <Play size={12} />
-      </button>
-      <button
-        type="button"
-        title={t('stop')}
-        disabled={busy || !running}
-        onClick={() => {
-          if (!window.confirm(t('ocp_stop_confirm', { name: vm.name }))) return
-          run(() => api(`${base}/power`, { method: 'POST', body: JSON.stringify({ action: 'stop' }) }))
-        }}
-        className="p-1 rounded text-amber-300/90 hover:bg-amber-500/10 disabled:opacity-30"
-      >
-        <Square size={12} />
-      </button>
-      <button
-        type="button"
-        title={t('restart')}
-        disabled={busy || !running}
-        onClick={() => {
-          if (!window.confirm(t('ocp_restart_vm_confirm', { name: vm.name }))) return
-          run(() => api(`${base}/power`, { method: 'POST', body: JSON.stringify({ action: 'restart' }) }))
-        }}
-        className="p-1 rounded text-cyan-300/90 hover:bg-cyan-500/10 disabled:opacity-30"
-      >
-        <RotateCcw size={12} />
-      </button>
-      <button
         ref={moreRef}
         type="button"
         title={t('ocp_more')}
@@ -219,26 +228,43 @@ export default function OcpVmAdminActions({ clusterId, vm }: Props) {
         <MoreHorizontal size={12} />
       </button>
 
-      {menu && menuPos && createPortal(
+      {(ctxOpen || (menu && menuPos)) && createPortal(
         <div
           ref={menuRef}
+          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation() }}
           className="w-48 rounded-lg border border-white/[0.08] bg-cyber-card shadow-2xl py-1 text-[11px]"
-          style={{
+          style={ctxOpen && contextPos ? {
+            position: 'fixed',
+            zIndex: 80,
+            left: Math.max(8, Math.min(contextPos.x, window.innerWidth - MENU_W - 8)),
+            top: Math.max(8, Math.min(contextPos.y, window.innerHeight - MENU_H - 8)),
+          } : menuPos ? {
             position: 'fixed',
             zIndex: 80,
             left: menuPos.left,
             ...(menuPos.openUp
               ? { bottom: window.innerHeight - menuPos.top, top: 'auto' }
               : { top: menuPos.top }),
-          }}
+          } : undefined}
         >
           {menuItems}
         </div>,
         document.body,
       )}
 
-      {panel && createPortal(
-        <div className="fixed inset-0 bg-black/55 z-[90] flex items-center justify-center p-4" onClick={() => !busy && setPanel(null)}>
+      {panel === 'iso' && createPortal(
+        <OcpVmIsoPanel
+          clusterId={clusterId}
+          vm={vm}
+          running={running}
+          onClose={() => setPanel(null)}
+          onChanged={refresh}
+        />,
+        document.body,
+      )}
+
+      {panel && panel !== 'iso' && createPortal(
+        <div className="fixed inset-0 bg-black/55 z-[90] flex items-center justify-center p-4" onClick={() => !busy && setPanel(null)} onContextMenu={(e) => e.stopPropagation()}>
           <div className="bg-cyber-card border border-white/[0.08] rounded-xl w-full max-w-sm p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <div className="text-sm text-white font-medium">

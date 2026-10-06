@@ -1211,6 +1211,230 @@ def kubevirt_vm_set_network(
         kv.logout()
 
 
+class KvCdromBody(BaseModel):
+    source_namespace: Optional[str] = None
+    source_pvc: str
+    boot_first: bool = False
+    disk_name: Optional[str] = None
+
+
+@router.get("/clusters/{cluster_id}/kubevirt/iso-sources")
+def kubevirt_iso_sources(
+    cluster_id: int,
+    namespace: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    """CD-ROM olarak bağlanabilecek PVC'ler (erişilebilen namespace'ler dahil)."""
+    from app.services.openshift import kubevirt_media as kvmedia
+    from app.services.openshift import kubevirt_ops as kvops
+    cluster, kv = _kv_cluster_client(cluster_id, db)
+    try:
+        return kvmedia.list_iso_sources(kv, namespace)
+    except kvops.KubeVirtOpError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    finally:
+        kv.logout()
+
+
+@router.get("/clusters/{cluster_id}/kubevirt/vms/{namespace}/{name}/cdroms")
+def kubevirt_vm_cdroms(
+    cluster_id: int,
+    namespace: str,
+    name: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    from app.services.openshift import kubevirt_media as kvmedia
+    from app.services.openshift import kubevirt_ops as kvops
+    cluster, kv = _kv_cluster_client(cluster_id, db)
+    try:
+        return {"cdroms": kvmedia.list_vm_cdroms(kv, namespace, name)}
+    except kvops.KubeVirtOpError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    finally:
+        kv.logout()
+
+
+@router.post("/clusters/{cluster_id}/kubevirt/vms/{namespace}/{name}/cdrom")
+def kubevirt_vm_attach_cdrom(
+    cluster_id: int,
+    namespace: str,
+    name: str,
+    body: KvCdromBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    from app.services.openshift import kubevirt_media as kvmedia
+    from app.services.openshift import kubevirt_ops as kvops
+    cluster, kv = _kv_cluster_client(cluster_id, db)
+    try:
+        result = kvmedia.attach_cdrom(
+            kv, namespace, name,
+            source_namespace=(body.source_namespace or namespace),
+            source_pvc=body.source_pvc,
+            boot_first=body.boot_first,
+            disk_name=body.disk_name or "",
+            actor=admin.username,
+        )
+        record_audit(
+            db, category="openshift", action="kubevirt.cdrom.attach", status="success",
+            actor=admin,
+            summary=(
+                f"CD-ROM bağlandı: {body.source_namespace or namespace}/{body.source_pvc} "
+                f"→ {namespace}/{name} ({cluster.name})"
+            ),
+            target_type="kubevirt_vm", target_id=f"{namespace}/{name}",
+            ip_address=request.client.host if request.client else None,
+        )
+        return result
+    except kvops.KubeVirtOpError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    finally:
+        kv.logout()
+
+
+@router.delete("/clusters/{cluster_id}/kubevirt/vms/{namespace}/{name}/cdrom/{disk_name}")
+def kubevirt_vm_eject_cdrom(
+    cluster_id: int,
+    namespace: str,
+    name: str,
+    disk_name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    from app.services.openshift import kubevirt_media as kvmedia
+    from app.services.openshift import kubevirt_ops as kvops
+    cluster, kv = _kv_cluster_client(cluster_id, db)
+    try:
+        result = kvmedia.eject_cdrom(kv, namespace, name, disk_name, actor=admin.username)
+        record_audit(
+            db, category="openshift", action="kubevirt.cdrom.eject", status="success",
+            actor=admin,
+            summary=f"CD-ROM çıkarıldı: {disk_name} ← {namespace}/{name} ({cluster.name})",
+            target_type="kubevirt_vm", target_id=f"{namespace}/{name}",
+            ip_address=request.client.host if request.client else None,
+        )
+        return result
+    except kvops.KubeVirtOpError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    finally:
+        kv.logout()
+
+
+@router.post("/clusters/{cluster_id}/kubevirt/iso-upload")
+async def kubevirt_iso_upload(
+    cluster_id: int,
+    request: Request,
+    namespace: str,
+    name: str,
+    storage_class: Optional[str] = None,
+    size_gi: Optional[int] = None,
+    attach_vm: Optional[str] = None,
+    boot_first: bool = False,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    """
+    İstemci bilgisayardan ISO yükle: gövde ham ISO baytlarıdır (application/octet-stream).
+    Akış bellekte biriktirilmeden CDI upload proxy'ye aktarılır.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from app.services.openshift import kubevirt_media as kvmedia
+    from app.services.openshift import kubevirt_ops as kvops
+
+    cl = request.headers.get("content-length") or ""
+    if not cl.isdigit() or int(cl) <= 0:
+        raise HTTPException(status_code=411, detail="Content-Length gerekli (dosya boyutu)")
+    length = int(cl)
+    ns = (namespace or "").strip()
+    if not ns:
+        raise HTTPException(status_code=400, detail="namespace gerekli")
+    try:
+        pname = kvops._k8s_name(name, "PVC adı")
+        if attach_vm:
+            kvops._k8s_name(attach_vm, "VM adı")
+    except kvops.KubeVirtOpError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    need_gi = kvmedia.suggest_upload_size_gi(length)
+    size = int(size_gi) if size_gi else need_gi
+    if size * (1024 ** 3) < length:
+        raise HTTPException(status_code=400, detail=f"Boyut yetersiz: en az {need_gi} GiB gerekli")
+
+    cluster, kv = _kv_cluster_client(cluster_id, db)
+    actor = admin.username
+    ip = request.client.host if request.client else None
+    verify = bool(getattr(cluster, "verify_ssl", False))
+
+    def _prepare():
+        kvmedia.create_upload_datavolume(kv, ns, pname, size, storage_class)
+        try:
+            kvmedia.wait_dv_phase(kv, ns, pname, ("UploadReady",), timeout=180)
+            token = kvmedia.request_upload_token(kv, ns, pname)
+            proxy = kvmedia.discover_upload_proxy(kv)
+            return token, proxy
+        except Exception:
+            kvmedia.delete_datavolume(kv, ns, pname)
+            raise
+
+    def _finish():
+        kvmedia.wait_dv_phase(kv, ns, pname, ("Succeeded",), timeout=600)
+        if attach_vm:
+            return kvmedia.attach_cdrom(
+                kv, ns, attach_vm, ns, pname, boot_first=boot_first, actor=actor,
+            )
+        return None
+
+    async def _body():
+        async for chunk in request.stream():
+            if chunk:
+                yield chunk
+
+    try:
+        db.rollback()  # uzun yükleme boyunca DB bağlantısını havuza bırak
+        try:
+            token, proxy = await run_in_threadpool(_prepare)
+        except kvops.KubeVirtOpError as e:
+            raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+        try:
+            await kvmedia.stream_upload(proxy, token, _body(), length, verify=verify)
+        except kvops.KubeVirtOpError as e:
+            await run_in_threadpool(kvmedia.delete_datavolume, kv, ns, pname)
+            raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+        except Exception as e:  # noqa: BLE001  (bağlantı kopması, TLS, vb.)
+            logger.warning("ISO upload hatası %s/%s: %s", ns, pname, e)
+            await run_in_threadpool(kvmedia.delete_datavolume, kv, ns, pname)
+            raise HTTPException(status_code=502, detail=f"ISO yükleme kesildi: {e}") from e
+        try:
+            attached = await run_in_threadpool(_finish)
+        except kvops.KubeVirtOpError as e:
+            raise HTTPException(
+                status_code=e.status_code,
+                detail=f"ISO yüklendi ({ns}/{pname}) ancak sonraki adım başarısız: {e}",
+            ) from e
+        record_audit(
+            db, category="openshift", action="kubevirt.iso.upload", status="success",
+            actor=admin,
+            summary=(
+                f"ISO yüklendi: {ns}/{pname} ({length // (1024 * 1024)} MiB, {cluster.name})"
+                + (f" → {attach_vm}" if attach_vm else "")
+            ),
+            target_type="pvc", target_id=f"{ns}/{pname}", ip_address=ip,
+        )
+        return {
+            "ok": True,
+            "namespace": ns,
+            "pvc": pname,
+            "size_gi": size,
+            "bytes": length,
+            "attached": attached,
+        }
+    finally:
+        await run_in_threadpool(kv.logout)
+
+
 @router.websocket("/clusters/{cluster_id}/kubevirt/vms/{namespace}/{name}/console")
 async def kubevirt_vnc_console(
     websocket: WebSocket,

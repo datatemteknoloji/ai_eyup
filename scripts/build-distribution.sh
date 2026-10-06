@@ -99,6 +99,8 @@ rsync -a \
   --exclude '.venv/' \
   --exclude 'venv/' \
   --exclude '.env' \
+  --exclude '.env.bak*' \
+  --exclude '.env.local' \
   --exclude 'data/' \
   --exclude 'dist/' \
   --exclude 'ainew/' \

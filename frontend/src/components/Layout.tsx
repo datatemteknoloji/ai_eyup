@@ -239,12 +239,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const exadataAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('exadata', exadataOpsSummary, t))
 
   let menuItems: MenuItem[] = [
-    { type: 'link', path: '/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={18} />, adminOnly: true },
+    { type: 'link', path: '/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={18} /> },
     {
       type: 'group', key: 'executive', name: t('nav_executive'), icon: <Crown size={18} />,
       moduleIds: ['executive', 'ai_automation'],
       children: [
         { type: 'link', path: '/executive', name: t('nav_executive_summary'), icon: <LayoutDashboard size={15} />, moduleId: 'executive' },
+        { type: 'link', path: '/executive/reports', name: t('nav_executive_reports'), icon: <BarChart3 size={15} />, moduleId: 'executive' },
         { type: 'link', path: '/chat', name: t('nav_unified_chat'), icon: <Bot size={15} />, moduleIds: ['ai_automation', 'executive'] },
       ],
     },
@@ -350,7 +351,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/openshift/access', name: t('nav_ocp_access'), icon: <Users size={15} /> },
         {
           type: 'subgroup', key: 'openshift-insights', name: t('nav_insights_group'), icon: <Shield size={15} />,
-          moduleId: 'openshift',
+          moduleId: 'openshift', adminOnly: true,
           children: [
             { type: 'link', path: '/openshift/capacity', name: t('nav_ocp_capacity'), icon: <Gauge size={15} /> },
             { type: 'link', path: '/openshift/reclaim', name: t('nav_ocp_reclaim'), icon: <Recycle size={15} /> },
@@ -664,7 +665,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               if (item.type === 'link') {
                 // Kullanıcı Yönetimi ve Ayarlar sadece admin
-                if ((item.path === '/modules' || item.path === '/users' || item.path === '/settings' || item.path === '/audit' || item.path === '/dashboard') && user?.role !== 'admin') return null
+                if ((item.path === '/modules' || item.path === '/users' || item.path === '/settings' || item.path === '/audit') && user?.role !== 'admin') return null
                 {
                   const ids = item.moduleIds ?? (item.moduleId ? [item.moduleId] : undefined)
                   if (ids && !ids.some(id => hasModule(id))) return null

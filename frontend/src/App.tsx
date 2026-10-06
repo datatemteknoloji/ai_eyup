@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './auth/AuthContext'
 import { BrandingProvider } from './branding/BrandingContext'
 import { ThemeProvider } from './theme/ThemeProvider'
 import { LocaleProvider, useT } from './i18n/LocaleProvider'
+import { canAccessPath } from './config/routeAccess'
 import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import { RequirePlatformAiops } from './components/RequirePlatformAiops'
@@ -41,6 +42,7 @@ const Repositories = lazy(() => import('./pages/Repositories'))
 const SystemUpdate = lazy(() => import('./pages/SystemUpdate'))
 const TerminalPage = lazy(() => import('./pages/TerminalPage'))
 const ExecutiveDashboard = lazy(() => import('./pages/ExecutiveDashboard'))
+const ExecutiveReports = lazy(() => import('./pages/ExecutiveReports'))
 const ExadataDashboard = lazy(() => import('./pages/ExadataDashboard'))
 const OpenShiftDashboard = lazy(() => import('./pages/OpenShiftDashboard'))
 const OpenShiftExplorer = lazy(() => import('./pages/OpenShiftExplorer'))
@@ -191,6 +193,42 @@ const RouteErrorBoundary: React.FC<{ children: React.ReactNode }> = ({ children 
   )
 }
 
+/**
+ * Sayfa içi link / kısa yol koruması: yetkisi olmayan bir modülün sayfasına giden
+ * dahili bağlantıya tıklama engellenir (rota korumaları son savunma olarak kalır).
+ */
+const LinkGuard: React.FC = () => {
+  const { user, hasModule } = useAuth()
+  const t = useT()
+  const isAdmin = !!user && (user.role === 'admin' || !!user.is_admin)
+  React.useEffect(() => {
+    if (!user) return
+    const onClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0) return
+      const el = e.target as Element | null
+      const a = el && el.closest ? (el.closest('a[href]') as HTMLAnchorElement | null) : null
+      if (!a) return
+      const href = a.getAttribute('href') || ''
+      if (!href.startsWith('/') || href.startsWith('//')) return
+      const path = href.split(/[?#]/)[0]
+      if (canAccessPath(path, hasModule, isAdmin)) return
+      e.preventDefault()
+      e.stopPropagation()
+      const note = document.createElement('div')
+      note.textContent = t('access_denied_link')
+      note.setAttribute('role', 'alert')
+      note.style.cssText =
+        'position:fixed;right:16px;bottom:16px;z-index:99999;max-width:320px;padding:10px 14px;'
+        + 'border-radius:10px;background:#7f1d1d;color:#fff;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.4)'
+      document.body.appendChild(note)
+      window.setTimeout(() => note.remove(), 3500)
+    }
+    document.addEventListener('click', onClick, true)
+    return () => document.removeEventListener('click', onClick, true)
+  }, [user, hasModule, isAdmin, t])
+  return null
+}
+
 const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth()
   if (loading) {
@@ -238,8 +276,7 @@ const RequireAnyModule: React.FC<{ moduleIds: string[]; children: React.ReactNod
 }
 
 const HomeRedirect: React.FC = () => {
-  const { hasModule, loading, user } = useAuth()
-  const t = useT()
+  const { loading } = useAuth()
   if (loading) {
     return (
       <div className="min-h-[50vh] flex items-center justify-center">
@@ -247,25 +284,8 @@ const HomeRedirect: React.FC = () => {
       </div>
     )
   }
-  if (user?.role === 'admin') return <Navigate to="/dashboard" replace />
-  if (hasModule('executive')) return <Navigate to="/executive" replace />
-  if (hasModule('linux')) return <Navigate to="/linux/dashboard" replace />
-  if (hasModule('virtualization')) return <Navigate to="/hypervisors" replace />
-  if (hasModule('windows')) return <Navigate to="/windows/dashboard" replace />
-  if (hasModule('exadata')) return <Navigate to="/exadata" replace />
-  if (hasModule('openshift')) return <Navigate to="/openshift" replace />
-  if (hasModule('ai_automation')) return <Navigate to="/chat" replace />
-  if (hasModule('monitoring')) return <Navigate to="/monitoring" replace />
-  if (hasModule('level1')) return <Navigate to="/level1" replace />
-  if (hasModule('integrations')) return <Navigate to="/integrations" replace />
-  return (
-    <div className="min-h-[50vh] flex items-center justify-center text-center px-6">
-      <div className="max-w-sm">
-        <p className="text-slate-300 font-medium mb-1">{t('no_module_title')}</p>
-        <p className="text-sm text-slate-500">{t('no_module_hint')}</p>
-      </div>
-    </div>
-  )
+  // Ana dashboard herkese açık; içerik kullanıcının modüllerine göre süzülür.
+  return <Navigate to="/dashboard" replace />
 }
 
 function App() {
@@ -276,6 +296,7 @@ function App() {
         <AuthProvider>
           <ThemeProvider>
           <LocaleProvider>
+          <LinkGuard />
           <Suspense fallback={<PageFallback />}>
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -293,8 +314,9 @@ function App() {
                     <Suspense fallback={<PageFallback />}>
                     <Routes>
                       <Route path="/" element={<ErrorBoundary><HomeRedirect /></ErrorBoundary>} />
-                      <Route path="/dashboard" element={<RequireAdmin><ErrorBoundary><AdminDashboardPage /></ErrorBoundary></RequireAdmin>} />
+                      <Route path="/dashboard" element={<ErrorBoundary><AdminDashboardPage /></ErrorBoundary>} />
                       <Route path="/executive" element={<RequireModule moduleId="executive"><ErrorBoundary><ExecutiveDashboard /></ErrorBoundary></RequireModule>} />
+                      <Route path="/executive/reports" element={<RequireModule moduleId="executive"><ErrorBoundary><ExecutiveReports /></ErrorBoundary></RequireModule>} />
                       <Route
                         path="/monitoring"
                         element={
@@ -362,10 +384,10 @@ function App() {
                       <Route path="/openshift/vms" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftVmsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/monitoring" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftMonitoring /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/access" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftAccessPage /></ErrorBoundary></RequireModule>} />
-                      <Route path="/openshift/capacity" element={<RequireModule moduleId="openshift"><ErrorBoundary><OcpCapacityPage /></ErrorBoundary></RequireModule>} />
-                      <Route path="/openshift/reclaim" element={<RequireModule moduleId="openshift"><ErrorBoundary><OcpReclaimPage /></ErrorBoundary></RequireModule>} />
-                      <Route path="/openshift/health" element={<RequireModule moduleId="openshift"><ErrorBoundary><OcpHealthPage /></ErrorBoundary></RequireModule>} />
-                      <Route path="/openshift/changes" element={<RequireModule moduleId="openshift"><ErrorBoundary><OcpChangesPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/capacity" element={<RequireAdmin><RequireModule moduleId="openshift"><ErrorBoundary><OcpCapacityPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
+                      <Route path="/openshift/reclaim" element={<RequireAdmin><RequireModule moduleId="openshift"><ErrorBoundary><OcpReclaimPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
+                      <Route path="/openshift/health" element={<RequireAdmin><RequireModule moduleId="openshift"><ErrorBoundary><OcpHealthPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
+                      <Route path="/openshift/changes" element={<RequireAdmin><RequireModule moduleId="openshift"><ErrorBoundary><OcpChangesPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
                       <Route path="/openshift/chat" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/ops" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/events" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftEventsPage /></ErrorBoundary></RequirePlatformAiops>} />

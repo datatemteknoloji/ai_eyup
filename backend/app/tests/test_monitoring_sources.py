@@ -128,3 +128,77 @@ def test_jobs_and_extra_selectors():
     assert source_label_matchers(s) == 'job="telegraf",dc="lab"'
     assert apply_source_matchers("up", s) == 'up{job="telegraf",dc="lab"}'
     assert apply_source_matchers('up{instance="x"}', s) == 'up{instance="x",job="telegraf",dc="lab"}'
+
+
+# ── TLS doğrulama (verify_ssl) ──────────────────────────────────────────────
+
+def test_default_verify_ssl_by_binding():
+    from app.services.monitoring_sources import default_verify_ssl
+    assert default_verify_ssl("openshift") is False
+    assert default_verify_ssl("virtualization") is False
+    assert default_verify_ssl("none") is True
+    assert default_verify_ssl("windows") is True
+
+
+def test_prom_verify_honors_flag_and_legacy_bindings():
+    from app.services.monitoring_sources import prom_verify
+    ocp_strict = MonitoringSource(id="o", label="OCP Thanos", url="https://t", binding="openshift", verify_ssl=True)
+    ocp_lax = MonitoringSource(id="o", label="OCP Thanos", url="https://t", binding="openshift", verify_ssl=False)
+    other = MonitoringSource(id="x", label="Other Prom", url="https://t", binding="none", verify_ssl=True)
+    linux = MonitoringSource(id="l", label="Linux", url="https://t", binding="linux", verify_ssl=True)
+    assert prom_verify(ocp_strict) is True
+    assert prom_verify(ocp_lax) is False
+    assert prom_verify(other) is True
+    assert prom_verify(linux) is False  # UI anahtarı yok → eski lenient davranış
+    assert prom_verify(None) is False
+
+
+def test_legacy_openshift_source_without_explicit_marker_is_lenient():
+    from app.services.monitoring_sources import _from_item
+    legacy = {"id": "o", "label": "OCP Thanos", "url": "https://t", "binding": "openshift", "verify_ssl": True}
+    assert _from_item(legacy).verify_ssl is False
+    missing = {"id": "o", "label": "OCP Thanos", "url": "https://t", "binding": "openshift"}
+    assert _from_item(missing).verify_ssl is False
+    # Kullanıcı bilerek açtıysa (UI kaydı) aynen uygulanır
+    explicit = dict(legacy, verify_ssl_explicit=True)
+    assert _from_item(explicit).verify_ssl is True
+    # Diğer bağlamalar etkilenmez
+    other = {"id": "x", "label": "Other Prom", "url": "https://t", "binding": "none", "verify_ssl": True}
+    assert _from_item(other).verify_ssl is True
+
+
+def test_verify_ssl_roundtrip_storage_and_payload_default():
+    import json
+    from app.services.monitoring_sources import sources_to_storage, _from_item
+    srcs, _ = validate_sources_payload([
+        {"label": "OCP Thanos", "url": "https://t", "binding": "openshift"},
+        {"label": "OCP Strict", "url": "https://s", "binding": "openshift", "verify_ssl": True},
+    ])
+    assert [s.verify_ssl for s in srcs] == [False, True]
+    rows = json.loads(sources_to_storage(srcs))
+    assert all(r["verify_ssl_explicit"] for r in rows)
+    assert [_from_item(r).verify_ssl for r in rows] == [False, True]
+
+
+def test_ocp_prom_queries_use_source_verify(monkeypatch):
+    """Runtime sorguları kaynağın verify_ssl değerini httpx'e geçirmeli."""
+    from app.services.openshift import ocp_prom_monitoring as m
+    seen = []
+
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"status": "success", "data": []}
+
+    class _Client:
+        def __init__(self, *a, **kw): seen.append(kw.get("verify"))
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, *a, **kw): return _Resp()
+
+    monkeypatch.setattr(m.httpx, "Client", _Client)
+    for flag in (False, True):
+        src = MonitoringSource(id="o", label="OCP Thanos", url="https://t", binding="openshift", verify_ssl=flag)
+        m._query_prom(src, "up")
+        m._query_range(src, "up", 0, 1)
+        m._label_values(src, "namespace")
+    assert seen == [False] * 3 + [True] * 3

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, lazy, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
@@ -1005,6 +1005,46 @@ function DigestCard({ digest }: {
   )
 }
 
+// ── Erişebildiğim modüller (her kullanıcıya açık ana dashboard) ───────────
+const MODULE_LANDING: { id: string; key: TranslationKey; to: string; accent: string }[] = [
+  { id: 'executive', key: 'nav_executive', to: '/executive', accent: '#fb923c' },
+  { id: 'monitoring', key: 'nav_monitoring', to: '/monitoring', accent: '#34d399' },
+  { id: 'linux', key: 'nav_linux', to: '/linux/dashboard', accent: '#4ade80' },
+  { id: 'windows', key: 'nav_windows', to: '/windows/dashboard', accent: '#60a5fa' },
+  { id: 'virtualization', key: 'nav_virt', to: '/hypervisors', accent: '#818cf8' },
+  { id: 'exadata', key: 'nav_exadata', to: '/exadata', accent: '#f472b6' },
+  { id: 'openshift', key: 'nav_openshift', to: '/openshift/ops', accent: '#f87171' },
+  { id: 'ai_automation', key: 'nav_unified_chat', to: '/chat', accent: '#22d3ee' },
+  { id: 'level1', key: 'nav_level1', to: '/level1', accent: '#facc15' },
+  { id: 'integrations', key: 'nav_integrations', to: '/integrations', accent: '#a78bfa' },
+  { id: 'applications', key: 'nav_applications', to: '/applications', accent: '#38bdf8' },
+  { id: 'knowledge', key: 'nav_knowledge', to: '/knowledge', accent: '#c084fc' },
+  { id: 'custom_reports', key: 'nav_custom_reports', to: '/custom-reports', accent: '#fbbf24' },
+]
+
+const Level1DashboardPanel = lazy(() => import('../components/Level1DashboardPanel'))
+
+function MyModulesPanel() {
+  const t = useT()
+  const { hasModule } = useAuth()
+  const items = MODULE_LANDING.filter(m => hasModule(m.id))
+  if (items.length === 0) return null
+  return (
+    <div className="cyber-card p-5 animate-fade-in">
+      <SectionTitle title={t('dash_my_modules')} accent={NEON.cyan} sub={t('dash_my_modules_sub')} />
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2">
+        {items.map(m => (
+          <Link key={m.id} to={m.to}
+            className="group p-3 rounded-xl transition-all hover:-translate-y-0.5"
+            style={{ background: `rgba(${hexToRgb(m.accent)},0.06)`, border: `1px solid rgba(${hexToRgb(m.accent)},0.15)` }}>
+            <p className="text-sm font-semibold text-white">{t(m.key)}</p>
+          </Link>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Hızlı Erişim (gelişmiş) ────────────────────────────────────────────────
 function QuickActionsPanel({ scope = 'admin' }: { scope?: DashboardScope }) {
   const t = useT()
@@ -1290,7 +1330,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const t = useT()
   const { locale } = useLocale()
   const dateLoc = locale === 'en' ? 'en-GB' : 'tr-TR'
-  const { hasModule } = useAuth()
+  const { hasModule, user } = useAuth()
   const isAdminScope = scope === 'admin'
   const isLinuxScope = scope === 'linux'
   const isWindowsScope = scope === 'windows'
@@ -1311,8 +1351,9 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const anomaliesPath = isLinuxScope ? '/linux/events?tab=heatmap' : isWindowsScope ? '/windows/aiops/events?tab=heatmap' : '/virt/events?tab=heatmap'
   const heroTitle = isLinuxScope ? t('nav_linux') : isWindowsScope ? t('nav_windows') : t('dash_hero_infra')
 
-  const hasAnyModule = showLinux || showVirt || showAiops || showAiAutomation || showWindowsPanel
-    || hasModule('integrations') || hasModule('level1')
+  // Ana dashboard herkese açık: veri bölümleri modüle göre süzülür, "Modüllerim" her zaman görünür
+  const hasAnyModule = (user?.modules?.length ?? 0) > 0 || user?.role === 'admin'
+  const fleetEnabled = isAdminScope && hasModule('linux')
 
   const [selectedServer, setSelectedServer] = useState<DashboardServer | null>(null)
   const [now, setNow] = useState(() => new Date())
@@ -1345,7 +1386,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const { data: allSummary, isLoading: allServersLoading } = useQuery<ServerSummary>({
     queryKey: ['servers-summary', 'all'],
     queryFn: () => fetchServersSummary(),
-    enabled: isAdminScope,
+    enabled: fleetEnabled,
     staleTime: 30_000,
     refetchInterval: 60_000,
   })
@@ -1356,7 +1397,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       const p = await fetchServersPage<DashboardServer>({ page: 1, page_size: 8 })
       return p.items
     },
-    enabled: isAdminScope,
+    enabled: fleetEnabled,
     staleTime: 30_000,
     refetchInterval: 60_000,
   })
@@ -1498,7 +1539,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   const primaryLoading =
     (showLinux && !isWindowsScope && !isAdminScope && serversLoading && !linuxSummary)
     || (isWindowsScope && windowsLoading && !windowsSummary)
-    || (isAdminScope && allServersLoading && !allSummary)
+    || (fleetEnabled && allServersLoading && !allSummary)
 
   if (primaryLoading) {
     return (
@@ -1654,6 +1695,8 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
   return (
     <>
       <div className="space-y-5 animate-fade-in pb-4">
+        {isAdminScope && user?.role !== 'admin' && <MyModulesPanel />}
+
         {(showLinux || showAiops || isWindowsScope) && (
           <DashboardHero
             healthScore={healthScore}
@@ -1779,6 +1822,10 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
             )}
             {showVirt && <HypervisorCards hypervisors={hypervisors} />}
           </div>
+        )}
+
+        {isAdminScope && hasModule('level1') && (
+          <Suspense fallback={null}><Level1DashboardPanel /></Suspense>
         )}
       </div>
 

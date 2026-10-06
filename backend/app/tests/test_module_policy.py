@@ -56,14 +56,21 @@ def test_admin_bypass(path):
     (("windows",), "/api/v1/terminal/ws/1"),
     (("virtualization",), "/api/v1/openshift/clusters"),
     (("virtualization",), "/api/v1/windows/servers"),
-    (("openshift",), "/api/v1/hypervisors/"),
+    (("openshift",), "/api/v1/hypervisors/host-metrics"),
     (("openshift",), "/api/v1/exadata/racks"),
     (("exadata",), "/api/v1/openshift/nodes"),
-    (("monitoring",), "/api/v1/openshift/clusters"),
-    (("monitoring",), "/api/v1/hypervisors/"),
+    (("monitoring",), "/api/v1/openshift/nodes"),
+    (("monitoring",), "/api/v1/hypervisors/host-metrics"),
     (("applications",), "/api/v1/windows/servers"),
     (("ai_automation",), "/api/v1/openshift/clusters"),
     (("ai_automation",), "/api/v1/windows/servers"),
+    (("ai_automation",), "/api/v1/events/"),
+    (("ai_automation",), "/api/v1/ops/summary"),
+    (("integrations",), "/api/v1/windows/servers"),
+    (("integrations",), "/api/v1/events/"),
+    (("level1",), "/api/v1/rag/status"),
+    (("linux",), "/api/v1/rag/status"),
+    (("linux",), "/api/v1/tasks/"),
     ((), "/api/v1/servers/"),
     ((), "/api/v1/events/"),
     ((), "/api/v1/ops/summary"),
@@ -89,6 +96,7 @@ def test_missing_module_is_denied(modules, path):
     (("integrations",), "/api/v1/ucmdb/connection"),
     (("integrations",), "/api/v1/hypervisors/"),
     (("monitoring",), "/api/v1/monitoring/zabbix/sources"),
+    (("monitoring",), "/api/v1/settings/"),
     (("knowledge",), "/api/v1/knowledge/"),
     (("applications",), "/api/v1/applications/"),
     (("custom_reports",), "/api/v1/custom-reports/"),
@@ -102,12 +110,68 @@ def test_assigned_module_is_allowed(modules, path):
     assert _d(modules=modules, path=path).allowed
 
 
-def test_executive_is_read_only_on_platform_data():
-    assert _d(modules=("executive",), path="/api/v1/ops/executive-summary").allowed
-    assert _d(modules=("executive",), path="/api/v1/hypervisors/").allowed
-    assert not _d(modules=("executive",), path="/api/v1/hypervisors/sync-all-vms", method="POST").allowed
-    assert not _d(modules=("executive",), path="/api/v1/ansible/adhoc", method="POST").allowed
+def test_executive_sees_only_its_own_page_and_chat():
+    ex = ("executive",)
+    assert _d(modules=ex, path="/api/v1/ops/executive-summary").allowed
+    assert _d(modules=ex, path="/api/v1/unified-chat/sessions").allowed
+    assert _d(modules=ex, path="/api/v1/servers/summary").allowed          # sohbet sayfası envanter özeti
+    assert _d(modules=ex, path="/api/v1/windows/servers/summary").allowed  # Tüm Altyapı sohbeti
+    # Komuta merkezleri / platform sayfaları açılmaz
+    for p in ("/api/v1/ops/command-center", "/api/v1/ops/summary", "/api/v1/hypervisors/", "/api/v1/openshift/clusters",
+              "/api/v1/windows/servers", "/api/v1/exadata/racks", "/api/v1/events/", "/api/v1/incidents/",
+              "/api/v1/hypervisors/ops/summary", "/api/v1/openshift/ops/summary", "/api/v1/exadata/ops/summary",
+              "/api/v1/metrics/dashboard", "/api/v1/monitoring/zabbix/sources"):
+        assert not _d(modules=ex, path=p).allowed, p
+    # yazma yok
+    assert not _d(modules=ex, path="/api/v1/servers/1/credentials", method="POST").allowed
+    assert not _d(modules=ex, path="/api/v1/ansible/adhoc", method="POST").allowed
     assert not _d(modules=("linux",), path="/api/v1/ops/executive-summary").allowed
+
+
+def test_monitoring_module_gets_everything_on_its_hub_but_nothing_else():
+    mon = ("monitoring",)
+    hub = [
+        ("GET", "/api/v1/settings/"),
+        ("GET", "/api/v1/metrics/prometheus/query"),
+        ("GET", "/api/v1/metrics/prometheus/query_range"),
+        ("GET", "/api/v1/metrics/prometheus/labels/__name__"),
+        ("GET", "/api/v1/monitoring/metrics/servers"),
+        ("GET", "/api/v1/monitoring/zabbix/overview"),
+        ("GET", "/api/v1/monitoring/zabbix/hosts"),
+        ("GET", "/api/v1/monitoring/custom/sources"),
+        ("GET", "/api/v1/windows/monitoring/overview"),
+        ("GET", "/api/v1/windows/monitoring/series"),
+        ("GET", "/api/v1/windows/monitoring/metrics"),
+        ("GET", "/api/v1/openshift/monitoring/overview"),
+        ("GET", "/api/v1/openshift/monitoring/prom/views"),
+        ("GET", "/api/v1/openshift/monitoring/objects"),
+        ("GET", "/api/v1/openshift/clusters"),
+        ("GET", "/api/v1/hypervisors/monitoring/series"),
+        ("GET", "/api/v1/hypervisors/monitoring/prom/overview"),
+        ("GET", "/api/v1/hypervisors/"),
+    ]
+    for m, p in hub:
+        assert _d(modules=mon, method=m, path=p).allowed, (m, p)
+    for p in ("/api/v1/openshift/nodes", "/api/v1/openshift/workloads", "/api/v1/openshift/ops/summary",
+              "/api/v1/hypervisors/host-metrics", "/api/v1/hypervisors/ops/summary", "/api/v1/windows/servers",
+              "/api/v1/windows/servers/summary", "/api/v1/servers/", "/api/v1/events/", "/api/v1/ops/command-center",
+              "/api/v1/exadata/racks", "/api/v1/virt-insights/summary", "/api/v1/ocp-insights/summary"):
+        assert not _d(modules=mon, path=p).allowed, p
+    assert not _d(modules=mon, method="POST", path="/api/v1/windows/servers/1/run-ps").allowed
+    assert not _d(modules=mon, method="POST", path="/api/v1/hypervisors/sync-all-vms").allowed
+
+
+def test_platform_pages_cross_use_is_explicit():
+    # Windows sunucular sayfası hypervisor listesini, OpenShift MTV paneli VMware kaynaklarını okur
+    assert _d(modules=("windows",), path="/api/v1/hypervisors/").allowed
+    assert _d(modules=("openshift",), path="/api/v1/hypervisors/").allowed
+    assert not _d(modules=("windows",), path="/api/v1/hypervisors/host-metrics").allowed
+    assert not _d(modules=("windows",), path="/api/v1/hypervisors/1/sync-vms", method="POST").allowed
+    # Hypervisors sayfası VM detay / arama için snapshot uçlarını kullanır
+    assert _d(modules=("virtualization",), path="/api/v1/snapshots/server/5/vm-details").allowed
+    assert _d(modules=("virtualization",), method="POST", path="/api/v1/snapshots/server/5/search-vm").allowed
+    assert not _d(modules=("virtualization",), path="/api/v1/snapshots/").allowed
+    assert not _d(modules=("virtualization",), path="/api/v1/updates/plans").allowed
 
 
 # ── Platform parametresi ─────────────────────────────────────────────────────
@@ -244,3 +308,21 @@ def test_middleware_no_token_401():
 
     c = TestClient(app, raise_server_exceptions=False)
     assert c.get("/api/v1/openshift/clusters").status_code == 401
+
+
+def test_executive_report_only_for_executive():
+    p = "/api/v1/ops/executive-report"
+    assert _d(role="operator", modules=("executive",), path=p).allowed
+    assert not _d(role="operator", modules=("linux", "monitoring"), path=p).allowed
+    assert _d(role="admin", modules=(), path=p).allowed
+
+
+def test_openshift_planning_pages_are_admin_only():
+    for ep in ("capacity", "reclaim", "findings", "node-risk"):
+        p = f"/api/v1/ocp-insights/{ep}"
+        assert not _d(role="operator", modules=("openshift",), path=p).allowed, ep
+        assert _d(role="admin", modules=("openshift",), path=p).allowed, ep
+    assert not _d(role="operator", modules=("openshift",), path="/api/v1/ocp-insights/run", method="POST").allowed
+    # özet / değişiklik / olay zaman çizelgesi diğer OpenShift sayfalarınca kullanılır
+    for ep in ("summary", "changes", "incident-timeline/3"):
+        assert _d(role="operator", modules=("openshift",), path=f"/api/v1/ocp-insights/{ep}").allowed, ep

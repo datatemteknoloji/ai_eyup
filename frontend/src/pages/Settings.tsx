@@ -8,6 +8,7 @@ import { PlatformUpdateTab } from '../components/PlatformUpdateTab'
 import { PlatformStatusTab } from '../components/PlatformStatusTab'
 import SecuritySettings from './SecuritySettings'
 import { useT, useLocale } from '../i18n/LocaleProvider'
+import OcpTokenHelp from '../components/OcpTokenHelp'
 import { exportProductGuide } from '../utils/productGuideExport'
 
 interface Credential {
@@ -3260,6 +3261,10 @@ const Settings: React.FC = () => {
                                   ...x,
                                   binding: e.target.value,
                                   collector_type: e.target.value === 'none' ? x.collector_type : 'prometheus',
+                                  // OCP / Virtualization route'ları çoğunlukla self-signed: varsayılan TLS doğrulama kapalı
+                                  verify_ssl: (e.target.value === 'openshift' || e.target.value === 'virtualization')
+                                    ? false
+                                    : (x.binding === 'openshift' || x.binding === 'virtualization') ? true : x.verify_ssl,
                                 } : x))}
                                 className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
                               >
@@ -3327,6 +3332,7 @@ const Settings: React.FC = () => {
                               <div className="md:col-span-4">
                                 <label className="text-[10px] text-slate-500">
                                   {t('set_mon_token')}{s.token_set ? ' · set' : ''}
+                                  {s.binding === 'openshift' && <OcpTokenHelp />}
                                 </label>
                                 <input
                                   type="password"
@@ -3374,20 +3380,18 @@ const Settings: React.FC = () => {
                                 </div>
                               </>
                             )}
-                            {isOther && (
-                              <div className="md:col-span-2 flex items-center gap-2 pt-4">
-                                <input
-                                  id={`verify-ssl-${key}`}
-                                  type="checkbox"
-                                  checked={s.verify_ssl}
-                                  onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, verify_ssl: e.target.checked } : x))}
-                                  className="rounded border-slate-600"
-                                />
-                                <label htmlFor={`verify-ssl-${key}`} className="text-[10px] text-slate-400">
-                                  {t('set_mon_verify_ssl')}
-                                </label>
-                              </div>
-                            )}
+                            <div className="md:col-span-2 flex items-center gap-2 pt-4">
+                              <input
+                                id={`verify-ssl-${key}`}
+                                type="checkbox"
+                                checked={s.verify_ssl}
+                                onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, verify_ssl: e.target.checked } : x))}
+                                className="rounded border-slate-600"
+                              />
+                              <label htmlFor={`verify-ssl-${key}`} className="text-[10px] text-slate-400">
+                                {t('set_mon_verify_ssl')}
+                              </label>
+                            </div>
                           </div>
                           {isPromFamily && (
                             <div className="grid md:grid-cols-12 gap-2 items-end border-t border-white/[0.04] pt-2">

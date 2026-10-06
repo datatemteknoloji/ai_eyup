@@ -94,6 +94,7 @@ export default function OcpVmsPanel({
   const isAdmin = Boolean(user?.is_admin || user?.role === 'admin')
   const qc = useQueryClient()
   const [acting, setActing] = useState<string | null>(null)
+  const [ctx, setCtx] = useState<{ key: string; x: number; y: number } | null>(null)
   const [detailVm, setDetailVm] = useState<{ namespace: string; name: string } | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -391,6 +392,11 @@ export default function OcpVmsPanel({
                         key={key}
                         className="hover:bg-white/[0.03] cursor-pointer"
                         onClick={() => setDetailVm({ namespace: vm.namespace, name: vm.name })}
+                        onContextMenu={(e) => {
+                          if (!isAdmin) return
+                          e.preventDefault()
+                          setCtx({ key, x: e.clientX, y: e.clientY })
+                        }}
                       >
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2 min-w-0">
@@ -477,7 +483,13 @@ export default function OcpVmsPanel({
                                         </button>
                                       </>
                                     )}
-                                    <OcpVmAdminActions clusterId={clusterId} vm={vm} />
+                                    <OcpVmAdminActions
+                                      clusterId={clusterId}
+                                      vm={vm}
+                                      onConsole={() => openVmConsole(clusterId, vm.namespace, vm.name)}
+                                      contextPos={ctx?.key === key ? { x: ctx.x, y: ctx.y } : null}
+                                      onContextClose={() => setCtx((c) => (c?.key === key ? null : c))}
+                                    />
                                   </>
                                 )}
                               </>

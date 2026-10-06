@@ -36,7 +36,10 @@ function isCustomMod(mod: string): mod is `custom:${string}` {
 const MonitoringHub: React.FC = () => {
   const t = useT()
   const { hasModule } = useAuth()
-  const canOther = hasModule('executive') || hasModule('ai_automation') || hasModule('linux')
+  // Sayfa bazlı yetki: Monitoring modülü hub'daki TÜM sekmeleri (Linux/Windows/OpenShift/
+  // Sanallaştırma/Diğer) açar; ayrıca her platform modülü kendi sekmesini açar.
+  const canMon = hasModule('monitoring')
+  const canOther = canMon || hasModule('executive') || hasModule('ai_automation') || hasModule('linux')
     || hasModule('windows') || hasModule('openshift') || hasModule('virtualization')
 
   const { data: settings, isFetched: settingsFetched } = useQuery({
@@ -55,10 +58,10 @@ const MonitoringHub: React.FC = () => {
 
   const modules = useMemo(() => {
     const list: { id: HubModule; label: string; ok: boolean; hint?: string }[] = [
-      { id: 'linux', label: t('nav_linux'), ok: hasModule('linux') },
-      { id: 'windows', label: t('nav_windows'), ok: hasModule('windows') },
-      { id: 'openshift', label: t('nav_openshift'), ok: hasModule('openshift') },
-      { id: 'virtualization', label: t('nav_virt'), ok: hasModule('virtualization') },
+      { id: 'linux', label: t('nav_linux'), ok: canMon || hasModule('linux') },
+      { id: 'windows', label: t('nav_windows'), ok: canMon || hasModule('windows') },
+      { id: 'openshift', label: t('nav_openshift'), ok: canMon || hasModule('openshift') },
+      { id: 'virtualization', label: t('nav_virt'), ok: canMon || hasModule('virtualization') },
     ]
     if (canOther) {
       if (customSources.length === 0) {
@@ -79,7 +82,7 @@ const MonitoringHub: React.FC = () => {
       }
     }
     return list.filter((m) => m.ok)
-  }, [hasModule, t, canOther, customSources, settingsFetched])
+  }, [hasModule, canMon, t, canOther, customSources, settingsFetched])
 
   const [mod, setMod] = useState<HubModule>(() => {
     const saved = localStorage.getItem(LS_MOD) as HubModule | null

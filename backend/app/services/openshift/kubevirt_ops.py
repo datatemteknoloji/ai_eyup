@@ -5,6 +5,7 @@ Tüm yıkıcı / yaşam döngüsü çağrıları API katmanında admin ile korun
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime
@@ -50,6 +51,48 @@ def _raise_http(r, what: str) -> None:
         except Exception:
             msg = (r.text or "")[:240]
         raise KubeVirtOpError(f"{what} başarısız (HTTP {r.status_code}): {msg or r.reason}", r.status_code)
+
+
+def get_vm(client: KubeVirtClient, namespace: str, name: str) -> Dict[str, Any]:
+    r = client.session.get(
+        f"{client.api_url}{KV}/namespaces/{namespace}/virtualmachines/{name}",
+        timeout=client.timeout,
+    )
+    if r.status_code == 404:
+        raise KubeVirtOpError(f"VM bulunamadı: {namespace}/{name}", 404)
+    _raise_http(r, "VM okuma")
+    return r.json()
+
+
+def patch_vm_template(
+    client: KubeVirtClient,
+    namespace: str,
+    name: str,
+    mutate,
+    what: str,
+    skip_if=None,
+) -> Dict[str, Any]:
+    """
+    VirtualMachine bir CRD olduğundan strategic-merge-patch desteklenmez.
+    GET → mutate(vm) → merge-patch (spec.template; diziler bütün olarak yazılır),
+    resourceVersion ile eşzamanlı değişikliğe karşı korunur.
+    """
+    vm = get_vm(client, namespace, name)
+    mutate(vm)
+    if skip_if is not None and skip_if():
+        return vm
+    body = {
+        "metadata": {"resourceVersion": (vm.get("metadata") or {}).get("resourceVersion")},
+        "spec": {"template": (vm.get("spec") or {}).get("template") or {}},
+    }
+    pr = client.session.patch(
+        f"{client.api_url}{KV}/namespaces/{namespace}/virtualmachines/{name}",
+        data=json.dumps(body),
+        headers={**client.session.headers, "Content-Type": "application/merge-patch+json"},
+        timeout=client.timeout,
+    )
+    _raise_http(pr, what)
+    return pr.json() if pr.content else vm
 
 
 def power_action(client: KubeVirtClient, namespace: str, name: str, action: str, actor: str = "") -> Dict[str, Any]:
@@ -373,31 +416,17 @@ def add_disk_datavolume(
     )
     _raise_http(r, "DataVolume oluşturma")
 
-    # VM'e disk + volume ekle
-    patch = {
-        "spec": {
-            "template": {
-                "spec": {
-                    "domain": {
-                        "devices": {
-                            "disks": [{"name": dname, "disk": {"bus": "virtio"}}],
-                        }
-                    },
-                    "volumes": [{"name": dname, "dataVolume": {"name": dname}}],
-                }
-            }
-        }
-    }
-    pr = client.session.patch(
-        f"{client.api_url}{KV}/namespaces/{namespace}/virtualmachines/{vm_name}",
-        json=patch,
-        headers={
-            **client.session.headers,
-            "Content-Type": "application/strategic-merge-patch+json",
-        },
-        timeout=client.timeout,
-    )
-    _raise_http(pr, "VM disk ekleme")
+    # VM'e disk + volume ekle (GET → merge-patch)
+    def _add(vm: Dict[str, Any]) -> None:
+        spec = vm.setdefault("spec", {}).setdefault("template", {}).setdefault("spec", {})
+        disks = spec.setdefault("domain", {}).setdefault("devices", {}).setdefault("disks", [])
+        vols = spec.setdefault("volumes", [])
+        if not any(d.get("name") == dname for d in disks):
+            disks.append({"name": dname, "disk": {"bus": "virtio"}})
+        if not any(v.get("name") == dname for v in vols):
+            vols.append({"name": dname, "dataVolume": {"name": dname}})
+
+    patch_vm_template(client, namespace, vm_name, _add, "VM disk ekleme")
     logger.info("Disk eklendi %s/%s + %s — %s", namespace, vm_name, dname, actor)
     return {
         "ok": True,
@@ -421,40 +450,20 @@ def set_multus_network(
         raise KubeVirtOpError("NAD (network-attachment-definition) adı gerekli")
     # nad may be name or ns/name
     nad_ref = nad
-    patch = {
-        "spec": {
-            "template": {
-                "metadata": {
-                    "annotations": {
-                        "k8s.v1.cni.cncf.io/networks": nad_ref,
-                    }
-                },
-                "spec": {
-                    "domain": {
-                        "devices": {
-                            "interfaces": [
-                                {"name": "default", "masquerade": {}},
-                                {"name": iface, "bridge": {}},
-                            ]
-                        }
-                    },
-                    "networks": [
-                        {"name": "default", "pod": {}},
-                        {"name": iface, "multus": {"networkName": nad_ref}},
-                    ],
-                },
-            }
-        }
-    }
-    pr = client.session.patch(
-        f"{client.api_url}{KV}/namespaces/{namespace}/virtualmachines/{vm_name}",
-        json=patch,
-        headers={
-            **client.session.headers,
-            "Content-Type": "application/strategic-merge-patch+json",
-        },
-        timeout=client.timeout,
-    )
-    _raise_http(pr, "VM network atama")
+
+    def _set(vm: Dict[str, Any]) -> None:
+        tpl = vm.setdefault("spec", {}).setdefault("template", {})
+        spec = tpl.setdefault("spec", {})
+        ifaces = spec.setdefault("domain", {}).setdefault("devices", {}).setdefault("interfaces", [])
+        nets = spec.setdefault("networks", [])
+        if not ifaces and not nets:
+            ifaces.append({"name": "default", "masquerade": {}})
+            nets.append({"name": "default", "pod": {}})
+        if not any(i.get("name") == iface for i in ifaces):
+            ifaces.append({"name": iface, "bridge": {}})
+        if not any(n.get("name") == iface for n in nets):
+            nets.append({"name": iface, "multus": {"networkName": nad_ref}})
+
+    patch_vm_template(client, namespace, vm_name, _set, "VM network atama")
     logger.info("Network set %s/%s nad=%s — %s", namespace, vm_name, nad_ref, actor)
     return {"ok": True, "network": nad_ref, "interface": iface}

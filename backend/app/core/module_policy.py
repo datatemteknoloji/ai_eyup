@@ -1,20 +1,23 @@
 """
-Modül erişim politikası — API yol öneki → gerekli modül(ler).
+Modül erişim politikası — SAYFA BAZLI yetkilendirme.
 
-Amaç: bir kullanıcı yetkisi olmayan modülün hiçbir sayfasına / API'sine
-(link, kısa yol, dashboard, doğrudan URL, WebSocket) erişemesin.
+İlke:
+- Bir modüle yetki verildiyse, o modülün sayfalarının çağırdığı tüm API'ler çalışır
+  ("o sayfadaki her şeyi yapabilir").
+- Modül, başka bir modülün sayfasına/API'sine geçiş HAKKI vermez. Bir modülün sayfası
+  başka modülün verisini de kullanıyorsa bu açıkça ``GRANTS`` içinde (modül → sayfanın
+  kullandığı uç) tanımlanır; listede olmayan hiçbir uç açılmaz.
+- Admin / superadmin tümüne erişir.
 
-Kurallar:
-- Admin / superadmin tüm modüllere erişir.
-- Kural "any-of": listedeki modüllerden en az birine sahip olmak yeterli.
-- ``read_extra``: yalnız GET/HEAD için ek izinli modüller (örn. ``executive`` salt-okunur).
-- ``ANY``: kimliği doğrulanmış her kullanıcı (uç noktanın kendi rol kontrolü geçerli).
-- ``ADMIN``: yalnız admin.
-- En uzun önek eşleşmesi kazanır. Eşleşmeyen /api/v1 yolu → kapalı (yalnız admin);
-  bu sayede yeni eklenen router'lar sınıflandırılmadan kullanıcıya açılmaz.
-  ``test_module_policy`` her kayıtlı route'un kapsandığını doğrular.
-
-Ek olarak ``ROLE_RULES``: bazı yazma / komut çalıştırma uçları için minimum rol.
+Yapı:
+- ``RULES``: yol öneki → "sahip" modüller (any-of). En uzun önek kazanır.
+  ``ANY``: kimliği doğrulanmış herkes (uç noktanın kendi rol kontrolü geçerli).
+  ``ADMIN``: yalnız admin. Eşleşmeyen /api/v1 yolu: yalnız admin (fail-closed);
+  ``test_every_registered_route_is_classified`` yeni router'ın sınıflandırılmasını zorunlu kılar.
+- ``GRANTS``: modül → (yöntemler, uç regex'i). Sayfa-içi çapraz kullanım (örn. Monitoring
+  hub'ının Windows/OpenShift/sanallaştırma izleme uçları; sohbet sayfasının envanter özeti).
+- ``ROLE_RULES``: yazma / komut çalıştırma uçları için minimum rol.
+- ``platform=`` parametreli ortak uçlarda ilgili platform modülü ayrıca aranır.
 """
 from __future__ import annotations
 
@@ -46,50 +49,49 @@ ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3, "superadmin": 3}
 @dataclass(frozen=True)
 class Rule:
     prefix: str
-    modules: Tuple[str, ...] = ()           # any-of; boş + flag → özel
-    read_extra: Tuple[str, ...] = ()        # yalnız GET/HEAD için ek modüller
+    modules: Tuple[str, ...] = ()           # any-of (sahip modüller)
     mode: str = "modules"                   # modules | any | admin
 
 
-def _m(prefix: str, *modules: str, read_extra: Iterable[str] = ()) -> Rule:
-    return Rule(prefix, tuple(modules), tuple(read_extra))
+def _m(prefix: str, *modules: str) -> Rule:
+    return Rule(prefix, tuple(modules))
 
 
 _ANY = lambda p: Rule(p, mode="any")        # noqa: E731
 _ADMIN = lambda p: Rule(p, mode="admin")    # noqa: E731
 
 _P = PLATFORM_MODULES
-_ROUTES = "/api/v1"
 
 RULES: List[Rule] = [
     # ── Herkes (kimlik doğrulanmış) — uç noktaların kendi rol kontrolü geçerli ──
     _ANY("/auth"), _ANY("/public"), _ANY("/modules"), _ANY("/identity"), _ANY("/security"),
     _ANY("/audit"), _ANY("/platform"), _ANY("/platform-update"), _ANY("/settings"),
-    _ANY("/tasks"), _ANY("/rag"),
-    # Sohbet: oturum uçları herkese; platform kapsamı unified-chat içinde modüle göre süzülür
+    # Yalnız admin sayfalarının kullandığı uçlar (AuditLog, Ayarlar)
+    _ADMIN("/tasks"), _ADMIN("/rag"), _ADMIN("/mcp"),
+
+    # ── Sohbet sayfaları (Tüm Altyapı / platform sohbetleri / Agent) ──
     _m("/chat", *_P, "ai_automation", "executive"),
     _m("/chat-turns", *_P, "ai_automation", "executive"),
     _m("/unified-chat", *_P, "ai_automation", "executive"),
+    _m("/agent", "ai_automation"),
 
     # ── Sanallaştırma ──
     _m("/virt-insights", "virtualization"),
-    _m("/hypervisors", "virtualization", "integrations", read_extra=("executive",)),
+    _m("/hypervisors", "virtualization", "integrations"),
 
     # ── OpenShift ──
     _m("/ocp-insights", "openshift"),
-    _m("/openshift", "openshift", "integrations", read_extra=("executive",)),
+    _m("/openshift", "openshift", "integrations"),
 
     # ── Exadata ──
-    _m("/exadata", "exadata", "integrations", read_extra=("executive",)),
+    _m("/exadata", "exadata", "integrations"),
 
     # ── Windows ──
-    _m("/windows", "windows", read_extra=("executive",)),
+    _m("/windows", "windows"),
     _m("/windows-chat", "windows"),
 
     # ── Linux ──
-    _m("/servers", "linux", "windows", "virtualization", "exadata", "integrations",
-       "applications", "knowledge", "ai_automation", "monitoring", "custom_reports",
-       read_extra=("executive",)),
+    _m("/servers", "linux", "integrations", "knowledge"),
     _m("/packages", "linux"),
     _m("/repos", "linux"),
     _m("/updates", "linux"),
@@ -98,33 +100,30 @@ RULES: List[Rule] = [
     _m("/terminal", "linux"),
 
     # ── Paylaşılan AIOps veri uçları (platform parametresi ayrıca doğrulanır) ──
-    _m("/events", *_P, "ai_automation", "monitoring", read_extra=("executive",)),
-    _m("/incidents", *_P, "ai_automation", "monitoring", read_extra=("executive",)),
-    _m("/anomalies", *_P, "ai_automation", "monitoring", read_extra=("executive",)),
-    _m("/baseline", *_P, "ai_automation", "monitoring", read_extra=("executive",)),
-    _m("/rca", *_P, "ai_automation", "monitoring", read_extra=("executive",)),
-    _m("/alerts", *_P, "monitoring", read_extra=("executive",)),
-    _m("/compare", *_P, read_extra=("executive",)),
-    _m("/platform-reports", *_P, read_extra=("executive",)),
-    _m("/metrics", *_P, "monitoring", read_extra=("executive",)),
-    _m("/monitoring", *_P, "monitoring", "integrations", read_extra=("executive",)),
-    _m("/ops", *_P, read_extra=("executive",)),
+    _m("/events", *_P),
+    _m("/incidents", *_P),
+    _m("/anomalies", *_P),
+    _m("/baseline", *_P),
+    _m("/rca", *_P),
+    _m("/alerts", *_P),
+    _m("/compare", *_P),
+    _m("/platform-reports", *_P),
+    _m("/metrics", *_P, "monitoring"),
+    _m("/monitoring", *_P, "monitoring"),
+    _m("/ops", *_P),
     _m("/ops/executive-summary", "executive"),
-    _m("/ai", *_P, "ai_automation"),
-    _m("/collectors", *_P, "integrations", "ai_automation"),
-
-    # ── AI & Otomasyon ──
-    _m("/agent", "ai_automation"),
-    _ADMIN("/mcp"),
+    _m("/ops/executive-report", "executive"),
+    _m("/ai", *_P),
+    _m("/collectors", *_P),
 
     # ── Level 1 / Centrify ──
-    _m("/level1", "level1", "integrations"),
+    _m("/level1", "level1"),
     _m("/centrify-mgmt", "centrify", "level1", "integrations"),
-    _m("/centrify-chat", "centrify", "level1", "integrations"),
+    _m("/centrify-chat", "centrify", "level1"),
 
     # ── Entegrasyonlar ──
     _m("/ucmdb", "integrations"),
-    _m("/integrations", "integrations", "virtualization", "exadata", "openshift"),
+    _m("/integrations", "integrations"),
 
     # ── Ayrı atama gerektiren modüller ──
     _m("/knowledge", "knowledge"),
@@ -133,6 +132,47 @@ RULES: List[Rule] = [
 ]
 
 _RULES_BY_LEN = sorted(RULES, key=lambda r: len(r.prefix), reverse=True)
+
+
+@dataclass(frozen=True)
+class Grant:
+    """Bir modülün SAYFASININ başka bir alandan kullandığı uç."""
+    module: str
+    pattern: "re.Pattern[str]"
+    methods: Optional[FrozenSet[str]] = None  # None → tüm yöntemler
+    why: str = ""
+
+
+def _g(module: str, regex: str, methods: Optional[Iterable[str]] = None, why: str = "") -> Grant:
+    return Grant(module, re.compile(regex), frozenset(methods) if methods else None, why)
+
+
+_GET = ("GET", "HEAD")
+
+# Platform sohbet / "Tüm Altyapı" sayfaları envanter özeti + pin-fact için sunucu listesini okur
+_CHAT_PAGE_MODULES = ("windows", "virtualization", "exadata", "openshift", "ai_automation", "executive")
+
+GRANTS: List[Grant] = [
+    # ── Monitoring hub: Linux / Windows / OpenShift / Sanallaştırma / Zabbix / Diğer sekmeleri ──
+    _g("monitoring", r"^/windows/monitoring(/.*)?$", why="Monitoring hub › Windows"),
+    _g("monitoring", r"^/openshift/monitoring(/.*)?$", why="Monitoring hub › OpenShift"),
+    _g("monitoring", r"^/openshift/clusters$", _GET, "Monitoring hub › OpenShift küme seçici"),
+    _g("monitoring", r"^/hypervisors/monitoring(/.*)?$", why="Monitoring hub › Sanallaştırma"),
+    _g("monitoring", r"^/hypervisors/?$", _GET, "Monitoring hub › Sanallaştırma kaynak listesi"),
+
+    # ── Windows sunucu sayfası hypervisor listesini okur; OpenShift MTV paneli VMware kaynaklarını okur ──
+    _g("windows", r"^/hypervisors/?$", _GET, "Windows sunucular › VM/host bilgisi"),
+    _g("openshift", r"^/hypervisors/?$", _GET, "OpenShift MTV paneli › VMware kaynakları"),
+
+    # ── Sanallaştırma sayfası VM detay/arama için snapshot ve sunucu uçlarını kullanır ──
+    _g("virtualization", r"^/snapshots/server/.*$", why="Hypervisors › VM detay / arama"),
+
+    # ── Sohbet sayfaları: envanter özeti (sunucu / Windows özeti) ve pin-fact sunucu listesi ──
+    *[_g(m, r"^/servers(/.*)?$", _GET, "Sohbet sayfası › envanter özeti / pin-fact")
+      for m in _CHAT_PAGE_MODULES],
+    *[_g(m, r"^/windows/servers/summary$", _GET, "Tüm Altyapı sohbeti › Windows özeti")
+      for m in ("ai_automation", "executive")],
+]
 
 # (yöntemler | None=hepsi, yol regex, minimum rol)
 ROLE_RULES: List[Tuple[Optional[FrozenSet[str]], "re.Pattern[str]", str]] = [
@@ -145,13 +185,13 @@ ROLE_RULES: List[Tuple[Optional[FrozenSet[str]], "re.Pattern[str]", str]] = [
     (frozenset({"POST", "PUT", "DELETE"}), re.compile(r"^/settings/credentials(/.*)?$"), "admin"),
     (frozenset({"POST"}), re.compile(r"^/servers/[^/]+/credentials$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/events/bulk-delete$"), "operator"),
-    (frozenset({"POST", "DELETE"}), re.compile(r"^/rag/runbook/(ingest|ingest-pdf|documents)$"), "operator"),
-    (frozenset({"DELETE"}), re.compile(r"^/rag/runbook/documents$"), "admin"),
     (frozenset({"POST", "PUT", "DELETE"}), re.compile(r"^/centrify-mgmt/.*$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/(hypervisors|exadata|openshift|ucmdb)/.*sync.*$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/(repos)/[^/]+/(sync|cancel-sync|sync-rhsm|sync-metadata)$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/monitoring/prometheus/sync.*$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/anomalies/run-cycle$"), "operator"),
+    # OpenShift › Planlama ve Denetim sayfaları yalnız admin (özet/değişiklik/olay zaman çizelgesi diğer sayfalarca kullanılır)
+    (None, re.compile(r"^/ocp-insights/(capacity|reclaim|findings|node-risk|run|baseline)(/.*)?$"), "admin"),
 ]
 
 _PREFIX = "/api/v1"
@@ -168,7 +208,21 @@ def find_rule(path: str) -> Optional[Rule]:
     for r in _RULES_BY_LEN:
         if p == r.prefix or p.startswith(r.prefix + "/"):
             return r
-    # nlq router öneksiz tanımlı: /ai/..., /collectors/...
+    return None
+
+
+def granted_by(have: Iterable[str], method: str, path: str) -> Optional[Grant]:
+    """Kullanıcının modüllerinden biri, bu ucu sayfa-içi kullanım olarak açıyor mu?"""
+    p = _strip(path)
+    have = set(have)
+    m = method.upper()
+    for g in GRANTS:
+        if g.module not in have:
+            continue
+        if g.methods is not None and m not in g.methods:
+            continue
+        if g.pattern.match(p):
+            return g
     return None
 
 
@@ -222,20 +276,21 @@ def decide(
             False, 403, "Bu alan için yetkiniz yok (sınıflandırılmamış uç nokta)"
         )
 
+    granted = False
     if rule.mode == "admin" and not is_admin:
         return Decision(False, 403, "Bu işlem için en az 'admin' yetkisi gerekli")
 
     if rule.mode == "modules" and not is_admin:
-        allowed = set(rule.modules)
-        if method in ("GET", "HEAD"):
-            allowed |= set(rule.read_extra)
-        if not (allowed & have):
-            names = ", ".join(rule.modules)
-            return Decision(False, 403, f"Bu alan için modül yetkisi gerekli: {names}")
+        if not (set(rule.modules) & have):
+            if granted_by(have, method, path) is not None:
+                granted = True
+            else:
+                names = ", ".join(rule.modules)
+                return Decision(False, 403, f"Bu alan için modül yetkisi gerekli: {names}")
 
     # Platform parametresi (ortak AIOps uçları) — yalnız ilgili modüle sahipse
     plat = platform_from(path, query)
-    if plat and not is_admin:
+    if plat and not is_admin and not granted:
         need = PLATFORM_PARAM_TO_MODULE.get(plat)
         if need and need not in have:
             return Decision(False, 403, f"Bu alan için '{need}' modül yetkisi gerekli")

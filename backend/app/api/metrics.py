@@ -73,6 +73,11 @@ def _resolve_prom_target(
     return prom_base_url(src), prom_headers(src), src
 
 
+def _prom_verify(src) -> bool:
+    from app.services.monitoring_sources import prom_verify
+    return prom_verify(src)
+
+
 @router.get("/prometheus/query")
 async def prometheus_query(
     query: str = Query(...),
@@ -82,7 +87,7 @@ async def prometheus_query(
     """PromQL anlık sorgu — /api/v1/query proxy."""
     base, headers, _src = _resolve_prom_target(source_id, module)
     try:
-        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=_prom_verify(_src)) as client:
             resp = await client.get(
                 f"{base}/api/v1/query",
                 params={"query": query},
@@ -106,7 +111,7 @@ async def prometheus_query_range(
     """PromQL zaman aralığı sorgusu — /api/v1/query_range proxy."""
     base, headers, _src = _resolve_prom_target(source_id, module)
     try:
-        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=_prom_verify(_src)) as client:
             resp = await client.get(
                 f"{base}/api/v1/query_range",
                 params={"query": query, "start": start, "end": end, "step": step},
@@ -127,7 +132,7 @@ async def prometheus_label_values(
     """Bir label'ın alabileceği değerler — /api/v1/label/{name}/values proxy."""
     base, headers, _src = _resolve_prom_target(source_id, module)
     try:
-        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=_prom_verify(_src)) as client:
             resp = await client.get(
                 f"{base}/api/v1/label/{label_name}/values",
                 headers=headers,

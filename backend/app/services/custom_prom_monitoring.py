@@ -17,6 +17,7 @@ from app.services.monitoring_sources import (
     list_custom,
     prom_base_url,
     prom_headers,
+    prom_verify,
     is_prom_compatible,
     source_label_matchers,
     apply_source_matchers,
@@ -85,7 +86,7 @@ def search_metrics(
     headers = prom_headers(src)
     matchers = source_label_matchers(src)
     try:
-        with httpx.Client(timeout=15.0, verify=bool(src.verify_ssl)) as client:
+        with httpx.Client(timeout=15.0, verify=prom_verify(src)) as client:
             if matchers:
                 # Job/extra scoped metric names
                 resp = client.get(
@@ -127,7 +128,7 @@ def label_values(
     base = prom_base_url(src)
     headers = prom_headers(src)
     try:
-        with httpx.Client(timeout=12.0, verify=False) as client:
+        with httpx.Client(timeout=12.0, verify=prom_verify(src)) as client:
             resp = client.get(f"{base}/api/v1/label/{label_name}/values", headers=headers)
             resp.raise_for_status()
             return {"ok": True, "values": resp.json().get("data") or [], "source": src.public_dict()}
@@ -156,7 +157,7 @@ def series(
     base = prom_base_url(src)
     headers = prom_headers(src)
     try:
-        with httpx.Client(timeout=20.0, verify=bool(src.verify_ssl)) as client:
+        with httpx.Client(timeout=20.0, verify=prom_verify(src)) as client:
             resp = client.get(
                 f"{base}/api/v1/query_range",
                 params={"query": query, "start": start, "end": end, "step": step},
@@ -213,7 +214,7 @@ def instant_query(
     base = prom_base_url(src)
     headers = prom_headers(src)
     try:
-        with httpx.Client(timeout=12.0, verify=bool(src.verify_ssl)) as client:
+        with httpx.Client(timeout=12.0, verify=prom_verify(src)) as client:
             resp = client.get(f"{base}/api/v1/query", params={"query": q}, headers=headers)
             resp.raise_for_status()
             data = resp.json()

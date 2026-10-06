@@ -9,9 +9,39 @@ Format [Keep a Changelog](https://keepachangelog.com/) yaklaşımına yakındır
 Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 `scripts/release.sh` kullanın (bkz. o script'in başlığı).
 
-## [Unreleased]
-
 ## [1.0.9.40] - 2026-10-06
+
+### Ana dashboard herkese açık, Yönetici raporu, OpenShift yetki düzeltmeleri
+- **Dashboard** (`/dashboard`; admin'de "Modüllerim" paneli gösterilmez) artık her kimliği doğrulanmış kullanıcıya açık ve açılış sayfası; içerik kullanıcının modüllerine göre süzülür, "Modüllerim" paneli erişilebilir alanlara kısayol verir. Linux envanteri yalnız `linux` modülü olan kullanıcıda sorgulanır.
+- **Yönetici › Raporlar** (`/executive/reports`, `GET /ops/executive-report`): Linux, Windows, Sanallaştırma, OpenShift ve Exadata için tek sayfalık deterministik rapor (genel durum, ortam tablosu, öne çıkan bulgular, açık olaylar, öneriler); Markdown indirme ve yazdır/PDF. Yalnız `executive` modülü / admin.
+- **OpenShift › Planlama ve Denetim** (Kapasite, Geri Kazanım, Sağlık, Değişiklikler) yalnız admin: menü, rota ve ilgili `/ocp-insights/*` uçları.
+- **Level 1 dashboard bölümü** (ana dashboard'ın en altında, `level1` modülü olanlara; veri `GET /level1/dashboard`): uygulamaya bağlı yalnız Level 1 kullanıcıları (çevrimiçi/son 24 saat; diğer modül kullanıcıları listelenmez), son işlem yapılan sunucular, son işlemler, KPI'lar (24s işlem, başarı oranı, çalışan/hatalı iş, hazır sunucu), 7 günlük eğilim, en çok kullanılan kullanıcı/işlem türü, dikkat gerektirenler (hatalı işler, ulaşılamayan sunucular). Dropt'a `GET /api/dashboard` eklendi (dropt-api imajı yeniden derlenmeli).
+- Level 1: dropt bridge oturumu, dropt DB kullanıcı sıra (sequence) geriliği nedeniyle ilk girişte 500 verebiliyordu; sıra düzeldi (kod değişikliği gerekmedi).
+
+### Düzeltme — Ayarlar › Monitoring: OCP Thanos "self-signed certificate" bağlantı hatası
+- OpenShift/Virtualization Thanos kaynağında **Bağlantı testi** `CERTIFICATE_VERIFY_FAILED` veriyordu: test `verify_ssl` (varsayılan True) değerini uyguluyor, çalışma zamanı sorguları ise değeri yok sayıp sabit `verify=False` kullanıyordu; üstelik "SSL doğrula" anahtarı yalnız "Other" kaynaklarda görünüyordu (OCP için kapatılamıyordu).
+- Artık anahtar **tüm bağlamalarda** görünür ve test + OCP/Virtualization/Other sorguları + Prometheus proxy aynı kuralı (`prom_verify`) kullanır. OCP/Virtualization için varsayılan TLS doğrulaması kapalı (self-signed route); kullanıcı anahtarı açıp kaydedince gerçekten uygulanır. Eski kayıtlar veri değişikliği olmadan eski davranışta kalır.
+- `monitoring-sources/test`: yalnız `source_id` gönderildiğinde `verify_ssl` artık dikkate alınır; sertifika hatasında "SSL doğrula'yı kapatın" ipucu eklendi.
+- OpenShift Thanos kaynağında saklı `sha256~…` OAuth token'ı (~24 saat) dolunca sorgular ve test `HTTP 401` veriyordu. Artık geçersiz token, OpenShift modülündeki kayıtlı küme girişiyle otomatik yenilenir (`services/openshift/ocp_token.py`; bellekte tutulur, DB'ye yazılmaz; yoklama 5 dk önbellekli, başarısızlıkta saklı token kullanılır). Formda elle girilen token olduğu gibi sınanır.
+- Ayarlar › Monitoring › OpenShift kaynağında Bearer token alanının yanına **(i) bilgi balonu**: Thanos URL'sini, kalıcı salt-okur ServiceAccount token'ını (`cluster-monitoring-view`), süresiz secret yöntemini ve geçici `oc whoami -t` token'ını `oc` komutlarıyla açıklar (TR/EN).
+- Paketleme: `scripts/build-distribution.sh` artık `.env.bak*` ve `.env.local` dosyalarını pakete **koymaz** (önceki paketlere eski rotasyon yedekleri `.env.bak-rotate-*` sızıyordu).
+
+### OpenShift Virtualization — ISO / CD-ROM ve sağ tık menüsü
+- VM ⋯ menüsüne **ISO / CD-ROM**: mevcut PVC'yi (aynı namespace → doğrudan, erişilebilen başka namespace → CDI DataVolume ile klon) CD-ROM olarak bağlama, takılı CD-ROM'u çıkarma, "ilk önce bu CD-ROM'dan başlat" seçeneği.
+- **İstemci bilgisayardan ISO yükleme**: tarayıcı → ainew → CDI upload proxy akışı (bellekte biriktirmez, ilerleme çubuğu); yüklenince isteğe bağlı VM'e bağlama. nginx'e `iso-upload` için sınırsız gövde / tamponsuz konum eklendi.
+- VM satırında **sağ tık menüsü** (güç işlemleri + konsol + ⋯ menüsündeki tüm işlemler); satır içi yinelenen güç düğmeleri kaldırıldı.
+- Düzeltme: disk ekleme ve Multus ağ atama strategic-merge-patch (CRD'de desteklenmez) yerine GET → merge-patch ile çalışır.
+- Yeni uçlar (admin): `GET .../kubevirt/iso-sources`, `GET|POST .../vms/{ns}/{vm}/cdrom(s)`, `DELETE .../cdrom/{disk}`, `POST .../kubevirt/iso-upload`.
+
+### Güvenlik — sayfa bazlı yetkilendirme (RBAC v2)
+- İlke: bir sayfaya yetkisi olan kullanıcı o sayfadaki her şeyi yapar; ancak sayfa içindeki link/buton yetkisi olmayan modülün sayfasına götüremez.
+- `core/module_policy.py`: yol öneki → sahip modül (`RULES`) + sayfa-içi çapraz kullanımı açıkça tanımlayan `GRANTS` (modül → sayfanın kullandığı uç). Listede olmayan hiçbir uç açılmaz.
+- **Monitoring** modülü hub'ın tüm sekmelerini (Linux, Windows, OpenShift, Sanallaştırma, Zabbix/Diğer) ve yalnız onların çağırdığı uçları açar; platform komuta merkezleri / envanter / olay uçları kapalı.
+- **Yönetici** (`executive`) genel okuma yetkisi kaldırıldı: yalnız `/ops/executive-summary` + Tüm Altyapı sohbeti (envanter özeti dahil). Komuta merkezi, platform envanteri ve olay uçları 403.
+- Sayfa-içi çapraz kullanım (GRANTS): Windows sunucular ve OpenShift MTV paneli `GET /hypervisors/`; Hypervisors sayfası `/snapshots/server/*`; sohbet sayfaları `GET /servers/*`.
+- Yalnız admin sayfalarının kullandığı `/rag`, `/tasks`, `/mcp` uçları admin'e alındı; `/level1`, `/integrations` yalnız kendi modülüne.
+- Frontend: `config/routeAccess.ts` rota-modül tablosu + `LinkGuard` (yetkisiz modüle giden dahili bağlantıya tıklama engellenir, uyarı gösterilir); Monitoring hub sekmeleri `monitoring` modülüyle açılır.
+
 
 ### Güvenlik — modül izolasyonu (RBAC)
 - Yetkisi olmayan modülün **hiçbir** API/sayfasına link, kısa yol, dashboard veya doğrudan URL ile erişilemez. Global middleware (`core/module_policy.py`) her `/api/v1` isteğini yol önekine göre modüle eşler; yetki yoksa 403. Yeni router sınıflandırılmadan kullanıcıya açılmaz (yalnız admin; test her route'un kapsandığını doğrular).
