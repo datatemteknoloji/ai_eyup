@@ -11,6 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.40] - 2026-10-06
+
 ### Güvenlik — modül izolasyonu (RBAC)
 - Yetkisi olmayan modülün **hiçbir** API/sayfasına link, kısa yol, dashboard veya doğrudan URL ile erişilemez. Global middleware (`core/module_policy.py`) her `/api/v1` isteğini yol önekine göre modüle eşler; yetki yoksa 403. Yeni router sınıflandırılmadan kullanıcıya açılmaz (yalnız admin; test her route'un kapsandığını doğrular).
 - Daha önce yalnız token geçerliliği kontrol ediliyordu: modülü olmayan kullanıcı envanter, olay, ayar, Windows `run-ps`, Ansible ad-hoc, MCP `call-tool`, SSH terminal ve OpenShift pod exec / VM console uçlarına ulaşabiliyordu.
