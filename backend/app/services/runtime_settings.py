@@ -233,6 +233,18 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "ESXi host metrik toplama.",
         "env": "ESX_METRIC_INTERVAL_SEC",
     },
+    "virt_insights_interval_sec": {
+        "default": 3600, "type": "int", "min": 600, "max": 86400,
+        "group": "background", "label": "Sanallaştırma karar katmanı aralığı (sn)",
+        "help": "Kapasite / sağlık / geri kazanım / sapma kontrolleri (vCenter, OLVM Manager, kube API — salt-okunur).",
+        "env": "VIRT_INSIGHTS_INTERVAL_SEC",
+    },
+    "virt_insights_file_scan_hours": {
+        "default": 24, "type": "int", "min": 1, "max": 168,
+        "group": "background", "label": "Datastore dosya taraması aralığı (saat)",
+        "help": "Sahipsiz VMDK / ISO / OLVM disk / OCP DataVolume taraması. Büyük datastore'larda ağırdır.",
+        "env": "VIRT_INSIGHTS_FILE_SCAN_HOURS",
+    },
     "ocp_monitoring_interval_sec": {
         "default": 60, "type": "int", "min": 30, "max": 900,
         "group": "background", "label": "OpenShift monitoring örnek aralığı (sn)",

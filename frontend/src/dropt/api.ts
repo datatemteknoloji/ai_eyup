@@ -1096,6 +1096,36 @@ export async function createJob(
   return res.json();
 }
 
+export async function recordCompletedJob(
+  token: string,
+  body: {
+    talep_id: string;
+    title?: string;
+    summary_tr?: string;
+    payload?: Record<string, unknown>;
+    module?: string;
+    action?: string;
+  },
+): Promise<JobPublic> {
+  const res = await fetch(apiUrl("/api/jobs/record-completed"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      module: body.module ?? "centrify",
+      action: body.action ?? "apply",
+      talep_id: body.talep_id,
+      title: body.title ?? "Centrify",
+      summary_tr: body.summary_tr ?? "",
+      payload: body.payload ?? {},
+    }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
 export async function listJobs(
   token: string,
   params: { q?: string; status?: JobStatus | ""; page?: number; page_size?: number } = {},

@@ -13,12 +13,9 @@ export function Level1AuditContent() {
 /** L1 Denetim — Dropt audit (tek store; nested MemoryRouter yok). Admin only. */
 export default function Level1Audit() {
   return (
-    <Level1Shell
-      title="Denetim"
-      subtitle="Level 1 / Dropt operasyon kayıtları. Genel Audit Log içinde de “Level 1 (Dropt)” sekmesinden görüntülenir."
-    >
-      <div className="level1-has-shell-title flex min-h-0 flex-1 flex-col rounded-xl border border-white/[0.06] bg-cyber-card overflow-hidden">
-        <div className="flex-1 min-h-0 overflow-auto p-5">
+    <Level1Shell>
+      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-white/[0.06] bg-cyber-card overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-auto px-4 py-2">
           <Level1AuditContent />
         </div>
       </div>

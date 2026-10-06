@@ -31,6 +31,12 @@ Everything about **OpenShift Container Platform** and **oVirt / OLVM** (includin
 | Monitoring | `/openshift/monitoring` | API: Node/Pod/VM + `metrics.k8s.io` → Timescale. Prometheus: DCGM + kubevirt (Settings binding). Hub `/monitoring` |
 | Events / incidents | `/openshift/events`, `/incidents` | Cluster ops |
 | Assistant | `/openshift/chat` | Pods, nodes, PVC, CrashLoop |
+| Planning & Audit (subgroup) | — | The 4 screens below are grouped in this sidebar subgroup (same name under Virtualization) |
+| Capacity | `/openshift/capacity` | Worker allocatable vs requests, request %, N+1 (largest worker fails); **scenario**: do selected drained nodes / new pods still fit (from the last scan summary) |
+| Reclaim | `/openshift/reclaim` | Unbound / unused PVCs, pods requesting far above usage (VM/DataVolume PVCs excluded) |
+| Incidents (timeline) | `/openshift/incidents` | Incident detail shows events + findings + pod status / K8s events / log error lines and root-cause candidates (OOMKilled, image pull, scheduling, volume, probe, CrashLoop, node, operator) |
+| Health | `/openshift/health` | ClusterOperators, MachineConfigPools, Compliance Operator results, version / updates; exceptions (admin); **node risk card** (counts of NotReady / pressure / reboot / connectivity events in recent days, no prediction) |
+| Changes | `/openshift/changes` | History + diff of nodes, MachineConfigPools (rendered config + source MachineConfigs), operator versions, cluster config (proxy, OAuth, APIServer, Scheduler, Ingress); mark baseline (operator) and baseline-deviation findings |
 
 Connect at Integrations → OpenShift (`/integrations/openshift`). Put internal API names in the **host** `/etc/hosts`.
 

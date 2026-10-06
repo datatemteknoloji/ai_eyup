@@ -360,8 +360,8 @@ function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, rege
   ] as const
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
           <div>
@@ -1203,6 +1203,88 @@ function SecurityView({ d }: { d: any }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function CapacityPlanView({ d }: { d: any }) {
+  const t = useT()
+  const sm = d.summary || {}
+  const tone = (s?: string) => s === 'fail' ? 'text-red-400' : s === 'warn' ? 'text-amber-400' : s === 'ok' ? 'text-emerald-400' : 'text-slate-400'
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          [t('vi_cap_clusters'), sm.clusters ?? 0, 'text-white'],
+          [t('vi_cap_n1_broken'), sm.n1_fail ?? 0, sm.n1_fail ? 'text-red-400' : 'text-emerald-400'],
+          [t('vi_cap_hosts_needed'), sm.hosts_needed ?? 0, sm.hosts_needed ? 'text-amber-400' : 'text-white'],
+          [t('vi_cap_ds_hot'), sm.datastores_over ?? 0, sm.datastores_over ? 'text-amber-400' : 'text-white'],
+        ].map(([l, v, c]) => (
+          <div key={String(l)} className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-3">
+            <div className="text-[11px] uppercase tracking-wider text-slate-400">{l}</div>
+            <div className={`text-2xl font-bold font-mono ${c}`}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 border-b border-white/[0.06]">
+            <th className="px-3 py-2">Cluster</th><th className="px-3 py-2">Host</th><th className="px-3 py-2">{t('vi_cap_eff_mem')}</th>
+            <th className="px-3 py-2">N+1</th><th className="px-3 py-2">{t('vi_cap_runway_mem')}</th><th className="px-3 py-2">{t('vi_cap_actions')}</th>
+          </tr></thead>
+          <tbody>
+            {(d.clusters || []).map((c: any) => {
+              const days = c.forecast?.memory?.days
+              return (
+                <tr key={`${c.hypervisor_id}:${c.cluster}`} className="border-b border-white/[0.04] align-top">
+                  <td className="px-3 py-2 text-white">{c.cluster}<div className="text-[11px] text-slate-500">{c.hypervisor} · {c.platform}</div></td>
+                  <td className="px-3 py-2 font-mono text-slate-300">{c.hosts_usable}/{c.hosts_total}</td>
+                  <td className="px-3 py-2 font-mono text-slate-300">%{c.memory?.effective_used_pct ?? '—'}</td>
+                  <td className={`px-3 py-2 font-mono ${tone(c.n_plus_one?.status)}`}>{c.n_plus_one?.status}{c.n_plus_one?.mem_after_pct != null ? ` (%${c.n_plus_one.mem_after_pct})` : ''}</td>
+                  <td className="px-3 py-2 font-mono text-slate-300">{days?.typical != null ? (days.typical === 0 ? t('vi_cap_exceeded') : `~${days.typical}`) : '—'}</td>
+                  <td className="px-3 py-2 text-xs text-slate-400">{(c.actions || []).map((a: any) => <div key={a.step}>{a.step}. {a.title}{a.hosts_needed ? ` (+${a.hosts_needed} host)` : ''}</div>)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {d.methodology && <p className="text-[11px] text-slate-500">{d.methodology}</p>}
+      <Link to="/virt/capacity" className="text-xs text-blue-400 hover:underline">{t('nav_virt_capacity')} →</Link>
+    </div>
+  )
+}
+
+function AuditEvidenceView({ d }: { d: any }) {
+  const t = useT()
+  return (
+    <div className="space-y-5">
+      <p className="text-xs text-slate-400">{d.disclaimer}</p>
+      <table className="w-full text-sm">
+        <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 border-b border-white/[0.06]">
+          <th className="px-3 py-2">{t('vi_cmp_control')}</th><th className="px-3 py-2">{t('vi_res_pass')}</th><th className="px-3 py-2">{t('vi_res_fail')}</th>
+          <th className="px-3 py-2">{t('vi_res_nm')}</th><th className="px-3 py-2">{t('vi_excepted')}</th><th className="px-3 py-2">{t('vi_cmp_score')}</th>
+        </tr></thead>
+        <tbody>
+          {(d.controls || []).map((c: any) => (
+            <tr key={c.control} className="border-b border-white/[0.04]">
+              <td className="px-3 py-2 text-white">{c.title}</td>
+              <td className="px-3 py-2 font-mono text-emerald-400">{c.counts?.pass}</td>
+              <td className="px-3 py-2 font-mono text-red-400">{c.counts?.fail}</td>
+              <td className="px-3 py-2 font-mono text-slate-400">{c.counts?.not_measurable}</td>
+              <td className="px-3 py-2 font-mono text-slate-400">{c.counts?.excepted}</td>
+              <td className="px-3 py-2 font-mono text-blue-300">{c.score_pct != null ? `%${c.score_pct}` : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {(d.manual_review || []).length > 0 && (
+        <div className="text-xs space-y-1.5">
+          <div className="text-slate-300 font-medium">{t('vi_cmp_manual')}</div>
+          {d.manual_review.map((m: any, i: number) => <div key={i} className="text-slate-400">{m.title} <span className="text-slate-500">({m.control}) — {m.note}</span></div>)}
+        </div>
+      )}
+      <Link to="/virt/health?tab=compliance" className="text-xs text-blue-400 hover:underline">{t('nav_virt_health')} →</Link>
     </div>
   )
 }
@@ -2508,6 +2590,8 @@ function ReportSummaryView({ type, data }: { type: string; data: Record<string, 
   if (type === 'node_health') return <NodeHealthView d={d} />
   if (type === 'security') return <SecurityAuditView d={d} />
   if (type === 'monitoring_coverage') return <MonitoringCoverageView d={d} />
+  if (type === 'capacity_plan') return <CapacityPlanView d={d} />
+  if (type === 'audit_evidence') return <AuditEvidenceView d={d} />
   return (
     <div className="flex flex-col items-center justify-center py-12 text-center">
       <BarChart3 size={40} className="text-slate-600 mb-3" />

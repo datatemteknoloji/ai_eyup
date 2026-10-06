@@ -373,6 +373,11 @@ class WinRMCentrifyAdapter:
         """Role assignment oluştur."""
         return OpResult(success=True, message="Role assignment oluşturuldu (stub)")
 
+    def update_role_assignment(self, zone_dn: str, assignment_id: str,
+                               start_time: str | None = None, end_time: str | None = None) -> OpResult:
+        """Role assignment süre güncelle."""
+        return OpResult(success=True, message="Role assignment güncellendi (stub)")
+
     def delete_role_assignment(self, zone_dn: str, assignment_id: str) -> OpResult:
         """Role assignment sil."""
         return OpResult(success=True, message="Role assignment silindi (stub)")

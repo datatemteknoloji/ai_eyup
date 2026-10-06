@@ -97,6 +97,20 @@ try:
 except Exception as e:
     logger.error(f"Could not load hypervisors router: {e}", exc_info=True)
 
+# Sanallaştırma karar katmanı (kapasite / geri kazanım / sağlık / sapma)
+try:
+    from app.api import virt_insights
+    api_router.include_router(virt_insights.router, prefix="/virt-insights", tags=["virt-insights"])
+except Exception as e:
+    logger.error(f"Could not load virt_insights router: {e}", exc_info=True)
+
+# OpenShift platform karar katmanı (aynı bulgu motoru)
+try:
+    from app.api import ocp_insights
+    api_router.include_router(ocp_insights.router, prefix="/ocp-insights", tags=["ocp-insights"])
+except Exception as e:
+    logger.error(f"Could not load ocp_insights router: {e}", exc_info=True)
+
 # Settings (Global Credentials)
 try:
     from app.api import settings

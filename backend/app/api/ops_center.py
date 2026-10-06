@@ -41,6 +41,12 @@ from app.services.platform_scope import (
     get_exadata_server_ids,
 )
 from app.services.event_filters import apply_actionable_event_filters, apply_hide_routine_virt
+from app.services.event_grouping import (
+    group_events,
+    group_severity_counts,
+    unique_events,
+    unique_incidents,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -143,7 +149,8 @@ def _build_server_card(
 
     # Metrik özetleri
     metrics: List[Dict[str, Any]] = []
-    for ev in sorted(events, key=lambda e: -SEV_RANK.get(e.severity, 0))[:8]:
+    grouped_metrics = unique_events(events)
+    for ev in sorted(grouped_metrics, key=lambda e: -SEV_RANK.get(e.severity, 0))[:8]:
         raw = ev.raw_data or {}
         m = raw.get("metric") or ev.event_type
         val = raw.get("current_value")
@@ -173,7 +180,8 @@ def _build_server_card(
     return {
         "server": server_info,
         "max_severity": max_sev,
-        "event_count": len(events),
+        "event_count": len(grouped_metrics),
+        "occurrence_total": sum((e.occurrence_count or 1) for e in events),
         "event_ids": all_event_ids,
         "metrics": metrics,
         "last_seen": last_ev.last_seen.isoformat() if last_ev.last_seen else None,
@@ -371,10 +379,11 @@ async def command_center(
     critical_servers.sort(key=sort_key)
     warning_servers.sort(key=sort_key)
 
-    health = _calc_health_score(events, total_servers)
+    health = _calc_health_score(unique_events(events), total_servers)
 
-    event_critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
-    event_warning = sum(1 for e in events if e.severity == "warning")
+    event_unique = unique_events(events)
+    event_critical = sum(1 for e in event_unique if e.severity in ("critical", "emergency"))
+    event_warning = sum(1 for e in event_unique if e.severity == "warning")
 
     return {
         "health": health,
@@ -526,18 +535,18 @@ async def ops_summary(
             return hit[1]
 
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
-    events = _active_events(db, since, platform=platform)
+    events = unique_events(_active_events(db, since, platform=platform))
     critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
     warning = sum(1 for e in events if e.severity == "warning")
     from app.services.platform_scope import filter_incidents_for_platform
-    # Yalnızca açık incident'lar — .all() + Python filtre yerine önce status filtresi
     open_incidents_q = (
         db.query(Incident)
         .filter(Incident.status.in_(["open", "investigating"]))
-        .limit(500)
         .all()
     )
-    open_incidents = len(filter_incidents_for_platform(open_incidents_q, platform, db))
+    open_incidents = len(unique_incidents(
+        filter_incidents_for_platform(open_incidents_q, platform, db)
+    ))
     total = critical + warning
     result = {
         "critical": critical,
@@ -604,7 +613,7 @@ async def health_score(db: Session = Depends(get_db)):
     """Anlık altyapı sağlık skoru."""
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     smap = _server_map(db)
-    events = _active_events(db, since)
+    events = unique_events(_active_events(db, since))
     return _calc_health_score(events, len(smap))
 
 
@@ -625,15 +634,15 @@ def _grade_for_score(score: int) -> Dict[str, str]:
 @router.get("/executive-summary")
 async def executive_summary(db: Session = Depends(get_db)):
     """
-    Yönetici Ekranı özeti — Linux, Windows ve Sanallaştırma ortamlarını
-    tek yanıtta birleştirir: genel sağlık skoru, platform bazlı envanter/
-    kritik-uyarı sayıları ve en kritik 10 olay (platform etiketiyle).
+    Yönetici özeti — Linux, Windows, Sanallaştırma (vCenter / OpenShift Virt)
+    ve OpenShift cluster KPI'ları aynı kalem listesinden üretilir.
     """
     from sqlalchemy import func as sa_func
     from app.models.hypervisor import Hypervisor
+    from app.models.openshift import OpenShiftCluster
     from app.services.virt_ops_center import virt_ops_summary
     from app.services.platform_scope import (
-        get_linux_module_server_ids, get_windows_server_ids, vm_filter_condition, infer_event_platform,
+        get_linux_module_server_ids, get_windows_server_ids, vm_filter_condition,
     )
 
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
@@ -644,17 +653,10 @@ async def executive_summary(db: Session = Depends(get_db)):
     linux_events = _active_events(db, since, platform="linux")
     windows_events = _active_events(db, since, platform="windows")
     virt_events = _active_events(db, since, platform="virt")
+    ocp_events = _active_events(db, since, platform="openshift")
 
-    linux_health = _calc_health_score(linux_events, len(linux_ids))
-    windows_health = _calc_health_score(windows_events, len(windows_ids))
-
-    def _sev_counts(events: List[SystemEvent]) -> tuple:
-        crit = sum(1 for e in events if e.severity in ("critical", "emergency"))
-        warn = sum(1 for e in events if e.severity == "warning")
-        return crit, warn
-
-    linux_crit, linux_warn = _sev_counts(linux_events)
-    windows_crit, windows_warn = _sev_counts(windows_events)
+    linux_health = _calc_health_score(unique_events(linux_events), len(linux_ids))
+    windows_health = _calc_health_score(unique_events(windows_events), len(windows_ids))
 
     linux_ai_ready = (
         db.query(Server).filter(Server.id.in_(linux_ids), Server.ai_ready == True).count()  # noqa: E712
@@ -677,51 +679,217 @@ async def executive_summary(db: Session = Depends(get_db)):
         virt_summary = virt_ops_summary(db)
     except Exception:
         logger.exception("Yönetici özeti: virt_ops_summary alınamadı")
-        virt_summary = {"critical": 0, "warning": 0, "health_score": 100, "action_needed": False}
+        virt_summary = {
+            "critical": 0, "warning": 0, "health_score": 100, "action_needed": False,
+            "items": [], "by_family": {}, "families_present": [],
+        }
 
     hypervisor_count = db.query(Hypervisor).count()
     vm_q = db.query(Server).filter(vm_filter_condition())
     vm_count = vm_q.count()
     vm_running_count = vm_q.filter(sa_func.lower(Server.vm_power_state).in_(["poweredon", "up", "running"])).count()
 
-    open_incidents = db.query(Incident).filter(Incident.status.in_(["open", "investigating"])).count()
+    ocp_clusters = db.query(OpenShiftCluster).all()
+    ocp_cluster_count = len(ocp_clusters)
+    ocp_unhealthy = sum(1 for c in ocp_clusters if (c.status or "").upper() == "ERROR")
+    ocp_health = _calc_health_score(unique_events(ocp_events), max(ocp_cluster_count, 1))
+
+    smap = _server_map(db)
+    linux_groups = group_events(linux_events, smap)
+    windows_groups = group_events(windows_events, smap)
+    ocp_groups = group_events(ocp_events, smap)
+    virt_event_groups = [
+        g for g in group_events(virt_events, smap)
+        if (g.get("event_type") or "") != "virt_resource"
+    ]
+
+    linux_crit, linux_warn = group_severity_counts(linux_groups)
+    windows_crit, windows_warn = group_severity_counts(windows_groups)
+    ocp_crit, ocp_warn = group_severity_counts(ocp_groups)
+    ocp_warn += ocp_unhealthy
+    virt_host_crit = int(virt_summary.get("critical") or 0)
+    virt_ev_by_family: Dict[str, Dict[str, int]] = {
+        "vcenter": {"critical": 0, "warning": 0},
+        "openshift_virt": {"critical": 0, "warning": 0},
+        "ovirt": {"critical": 0, "warning": 0},
+    }
+    for g in virt_event_groups:
+        blob = f"{g.get('source') or ''} {g.get('event_type') or ''}".lower()
+        if "ovirt" in blob:
+            fam = "ovirt"
+        elif "openshift" in blob:
+            fam = "openshift_virt"
+        else:
+            fam = "vcenter"
+        if g.get("severity") in ("critical", "emergency"):
+            virt_ev_by_family[fam]["critical"] += 1
+        elif g.get("severity") == "warning":
+            virt_ev_by_family[fam]["warning"] += 1
+    virt_host_warn = int(virt_summary.get("warning") or 0)
+    virt_ev_crit, virt_ev_warn = group_severity_counts(virt_event_groups)
+    virt_crit = virt_host_crit + virt_ev_crit
+    virt_warn = virt_host_warn + virt_ev_warn
+
+    _HREF = {
+        "linux": "/linux/ops",
+        "windows": "/windows/aiops/ops",
+        "virtualization": "/virt/ops",
+        "virt": "/virt/ops",
+        "openshift": "/openshift/ops",
+    }
+
+    def _from_group(g: Dict[str, Any], platform: str) -> Dict[str, Any]:
+        return {
+            "id": f"evt-{g.get('event_id')}",
+            "event_id": g.get("event_id"),
+            "event_ids": g.get("event_ids") or [],
+            "platform": platform,
+            "family": None,
+            "server_name": g.get("server_name") or "—",
+            "severity": g.get("severity"),
+            "title": g.get("title"),
+            "last_seen": g.get("last_seen"),
+            "first_seen": g.get("first_seen"),
+            "occurrence_count": g.get("occurrence_count") or 1,
+            "href": _HREF.get(platform, "/executive"),
+            "event_type": g.get("event_type"),
+        }
+
+    critical_items: List[Dict[str, Any]] = []
+    warning_items: List[Dict[str, Any]] = []
+    for plat, groups in (
+        ("linux", linux_groups),
+        ("windows", windows_groups),
+        ("openshift", ocp_groups),
+        ("virtualization", virt_event_groups),
+    ):
+        for g in groups:
+            row = _from_group(g, plat)
+            if row["severity"] in ("critical", "emergency"):
+                critical_items.append(row)
+            elif row["severity"] == "warning":
+                warning_items.append(row)
+
+    for it in virt_summary.get("items") or []:
+        if it.get("severity") in ("critical", "emergency"):
+            critical_items.append(it)
+        elif it.get("severity") == "warning":
+            warning_items.append(it)
+
+    def _item_sort(row: Dict[str, Any]) -> tuple:
+        return (-SEV_RANK.get(row.get("severity") or "", 0), row.get("last_seen") or "")
+
+    critical_items.sort(key=_item_sort, reverse=False)
+    critical_items.sort(key=lambda r: r.get("last_seen") or "", reverse=True)
+    critical_items.sort(key=lambda r: -SEV_RANK.get(r.get("severity") or "", 0))
+    warning_items.sort(key=lambda r: r.get("last_seen") or "", reverse=True)
+
+    top_alerts = (critical_items + warning_items)[:15]
+
+    open_inc_q = db.query(Incident).filter(Incident.status.in_(["open", "investigating"]))
+    open_inc_all = unique_incidents(open_inc_q.all())
+    open_incidents = len(open_inc_all)
+    open_inc_rows = sorted(
+        open_inc_all,
+        key=lambda inc: inc.updated_at or inc.created_at or datetime.min,
+        reverse=True,
+    )[:40]
+
+    def _inc_platform(inc: Incident) -> str:
+        src = (inc.source or "").lower()
+        if "virt" in src or "vcenter" in src or "ovirt" in src:
+            return "virtualization"
+        if "windows" in src:
+            return "windows"
+        if "openshift" in src:
+            return "openshift"
+        if "exadata" in src:
+            return "exadata"
+        return "linux"
+
+    _INC_HREF = {
+        "linux": "/linux/incidents",
+        "windows": "/windows/aiops/incidents",
+        "virtualization": "/virt/incidents",
+        "openshift": "/openshift/incidents",
+        "exadata": "/exadata/incidents",
+    }
+    open_incident_items: List[Dict[str, Any]] = []
+    for inc in open_inc_rows:
+        plat = _inc_platform(inc)
+        names = []
+        for sid in (inc.affected_servers or [])[:4]:
+            info = smap.get(sid)
+            if info:
+                names.append(info["name"])
+        ts = inc.updated_at or inc.created_at
+        open_incident_items.append({
+            "id": inc.id,
+            "title": inc.title,
+            "severity": inc.severity or "warning",
+            "status": inc.status,
+            "platform": plat,
+            "server_name": ", ".join(names) or "—",
+            "last_seen": ts.isoformat() if ts else None,
+            "href": _INC_HREF.get(plat, "/linux/incidents"),
+        })
 
     total_servers = len(linux_ids) + len(windows_ids)
-    total_critical = linux_crit + windows_crit + virt_summary.get("critical", 0)
-    total_warning = linux_warn + windows_warn + virt_summary.get("warning", 0)
+    total_critical = len(critical_items)
+    total_warning = len(warning_items)
 
+    virt_score = int(virt_summary.get("health_score") or 100)
     weights = [
         (linux_health["score"], max(len(linux_ids), 1)),
         (windows_health["score"], max(len(windows_ids), 1)),
-        (virt_summary.get("health_score", 100), max(hypervisor_count, 1)),
+        (virt_score, max(hypervisor_count, 1)),
     ]
+    if ocp_cluster_count:
+        weights.append((ocp_health["score"], max(ocp_cluster_count, 1)))
     total_weight = sum(w for _, w in weights)
     overall_score = round(sum(s * w for s, w in weights) / total_weight) if total_weight else 100
 
-    smap = _server_map(db)
-    all_active = linux_events + windows_events + virt_events
-    top_events = sorted(
-        all_active,
-        key=lambda e: (-SEV_RANK.get(e.severity, 0), -(e.last_seen.timestamp() if e.last_seen else 0)),
-    )[:10]
-
-    top_alerts = []
-    for ev in top_events:
-        platform = infer_event_platform(ev, linux_ids, windows_ids)
-        server_info = smap.get(ev.server_id) if ev.server_id else None
-        raw = ev.raw_data or {}
-        server_name = (
-            server_info["name"] if server_info
-            else (raw.get("host_name") or raw.get("platform_label") or "—")
-        )
-        top_alerts.append({
-            "event_id": ev.id,
-            "platform": "virtualization" if platform == "virt" else platform,
-            "server_name": server_name,
-            "severity": ev.severity,
-            "title": ev.title,
-            "last_seen": ev.last_seen.isoformat() if ev.last_seen else None,
+    by_family = virt_summary.get("by_family") or {}
+    families_present = virt_summary.get("families_present") or []
+    comparison = [
+        {"key": "linux", "label": "Linux", "critical": linux_crit, "warning": linux_warn},
+        {"key": "windows", "label": "Windows", "critical": windows_crit, "warning": windows_warn},
+    ]
+    if hypervisor_count or families_present or any(
+        virt_ev_by_family[f]["critical"] or virt_ev_by_family[f]["warning"]
+        for f in virt_ev_by_family
+    ):
+        for key, label in (
+            ("vcenter", "vCenter"),
+            ("openshift_virt", "OpenShift Virtualization"),
+        ):
+            fam = by_family.get(key) or {}
+            comparison.append({
+                "key": key, "label": label,
+                "critical": int(fam.get("critical") or 0) + virt_ev_by_family[key]["critical"],
+                "warning": int(fam.get("warning") or 0) + virt_ev_by_family[key]["warning"],
+            })
+    if "ovirt" in families_present:
+        fam = by_family.get("ovirt") or {}
+        comparison.append({
+            "key": "ovirt", "label": "OLVM",
+            "critical": int(fam.get("critical") or 0) + virt_ev_by_family["ovirt"]["critical"],
+            "warning": int(fam.get("warning") or 0) + virt_ev_by_family["ovirt"]["warning"],
         })
+    if ocp_cluster_count or ocp_crit or ocp_warn:
+        comparison.append({
+            "key": "openshift", "label": "OpenShift",
+            "critical": ocp_crit,
+            "warning": ocp_warn,
+        })
+
+    virt_include_labels = []
+    if "vcenter" in families_present:
+        virt_include_labels.append("vCenter")
+    if "openshift_virt" in families_present:
+        virt_include_labels.append("OpenShift Virtualization")
+    if "ovirt" in families_present:
+        virt_include_labels.append("OLVM")
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
@@ -756,11 +924,24 @@ async def executive_summary(db: Session = Depends(get_db)):
                 "hypervisor_count": hypervisor_count,
                 "vm_count": vm_count,
                 "vm_running_count": vm_running_count,
-                "critical": virt_summary.get("critical", 0),
-                "warning": virt_summary.get("warning", 0),
-                "health_score": virt_summary.get("health_score", 100),
-                **_grade_for_score(virt_summary.get("health_score", 100)),
+                "critical": virt_crit,
+                "warning": virt_warn,
+                "health_score": virt_score,
+                "includes": virt_include_labels,
+                **_grade_for_score(virt_score),
+            },
+            "openshift": {
+                "cluster_count": ocp_cluster_count,
+                "unhealthy_clusters": ocp_unhealthy,
+                "critical": ocp_crit,
+                "warning": ocp_warn,
+                "health_score": ocp_health["score"] if ocp_cluster_count else 100,
+                **_grade_for_score(ocp_health["score"] if ocp_cluster_count else 100),
             },
         },
+        "comparison": comparison,
+        "critical_items": critical_items,
+        "warning_items": warning_items,
+        "open_incident_items": open_incident_items,
         "top_alerts": top_alerts,
     }

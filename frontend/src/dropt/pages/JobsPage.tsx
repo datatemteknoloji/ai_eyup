@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { FileDown, RefreshCw, Search } from "lucide-react";
 import { Link } from "react-router-dom";
 import { JobPublic, JobStatus, listJobs } from "@dropt/api";
@@ -36,9 +37,23 @@ function jobEventAt(j: JobPublic): string {
   return j.finished_at || j.applied_at || j.previewed_at || j.created_at;
 }
 
+function payloadHosts(j: JobPublic): string[] {
+  const p = j.payload || {};
+  for (const key of ["hostnames", "targets", "computers"] as const) {
+    const raw = p[key];
+    if (Array.isArray(raw)) {
+      const out = raw.map((x) => String(x || "").trim()).filter(Boolean);
+      if (out.length) return out;
+    }
+  }
+  return [];
+}
+
 function serversLabel(j: JobPublic): string {
   const hosts = (j.hostnames || []).filter(Boolean);
   if (hosts.length) return hosts.join(", ");
+  const fromPayload = payloadHosts(j);
+  if (fromPayload.length) return fromPayload.join(", ");
   const ids = j.server_ids || [];
   return ids.length ? ids.map((id) => `#${id}`).join(", ") : "—";
 }
@@ -101,6 +116,13 @@ export function JobsPage() {
 
   const { sorted, sortKey, sortDir, toggle } = useClientSort<JobRow>(rows, "event_at", "desc");
 
+  const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(() =>
+    typeof document !== "undefined" ? document.getElementById("level1-jobs-actions-slot") : null,
+  );
+  useEffect(() => {
+    setActionsSlot(document.getElementById("level1-jobs-actions-slot"));
+  }, []);
+
   async function onExportPdf() {
     if (exporting) return;
     setExporting(true);
@@ -123,23 +145,29 @@ export function JobsPage() {
     }
   }
 
+  const toolbar = (
+    <div className="flex gap-1">
+      <IconButton
+        icon={FileDown}
+        label={exporting ? t("jobs_export_pdf_busy") : t("jobs_export_pdf")}
+        disabled={exporting || loading}
+        onClick={() => void onExportPdf()}
+      />
+      <IconButton icon={RefreshCw} label={t("refresh")} onClick={() => void load()} />
+    </div>
+  );
+
   return (
-    <div className="px-6 py-6">
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold">{t("jobs_title")}</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("jobs_subtitle")}</p>
+    <div className={actionsSlot ? "px-6 pb-6 pt-1" : "px-6 py-6"}>
+      {actionsSlot ? createPortal(toolbar, actionsSlot) : (
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold">{t("jobs_title")}</h2>
+            <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("jobs_subtitle")}</p>
+          </div>
+          {toolbar}
         </div>
-        <div className="flex gap-1">
-          <IconButton
-            icon={FileDown}
-            label={exporting ? t("jobs_export_pdf_busy") : t("jobs_export_pdf")}
-            disabled={exporting || loading}
-            onClick={() => void onExportPdf()}
-          />
-          <IconButton icon={RefreshCw} label={t("refresh")} onClick={() => void load()} />
-        </div>
-      </div>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-3">
         <div className="relative min-w-[220px] flex-1">
@@ -280,7 +308,19 @@ export function JobsPage() {
                     </Link>
                   </td>
                   <td className="px-3 py-2.5 font-mono text-xs">{j.talep_id}</td>
-                  <td className="px-3 py-2.5">{j.title}</td>
+                  <td className="max-w-[22rem] px-3 py-2.5">
+                    <div className="truncate font-medium" title={j.title}>
+                      {j.title}
+                    </div>
+                    {j.summary_tr && j.summary_tr !== j.title ? (
+                      <div
+                        className="mt-0.5 truncate text-[11px] text-[var(--color-muted-foreground)]"
+                        title={j.summary_tr}
+                      >
+                        {j.summary_tr}
+                      </div>
+                    ) : null}
+                  </td>
                   <td
                     className="max-w-[14rem] truncate px-3 py-2.5 font-mono text-xs text-[var(--color-muted-foreground)]"
                     title={j.servers_label}

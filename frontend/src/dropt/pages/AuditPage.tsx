@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { createPortal } from "react-dom";
+import { FileDown, Search } from "lucide-react";
 import { AuditPublic, listAudit } from "@dropt/api";
+import { IconButton } from "@dropt/components/IconButton";
 import { PaginationBar } from "@dropt/components/PaginationBar";
 import { Badge } from "@dropt/components/ui/badge";
 import { Button } from "@dropt/components/ui/button";
 import { Input } from "@dropt/components/ui/input";
 import { SortHeader, useClientSort } from "@dropt/hooks/useClientSort";
 import { useT } from "@dropt/i18n/I18nProvider";
+import { fetchAllAudit, openAuditPdfPrint } from "@dropt/lib/exportAuditPdf";
 import { getToken } from "@dropt/session";
 
 const PAGE_SIZE = 50;
@@ -23,6 +26,7 @@ export function AuditPage() {
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE) || 1);
 
@@ -60,12 +64,56 @@ export function AuditPage() {
 
   const { sorted, sortKey, sortDir, toggle } = useClientSort<AuditRow>(rows, "created_at", "desc");
 
-  return (
-    <div className="px-6 py-6">
-      <h2 className="text-xl font-semibold">{t("audit_title")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("audit_subtitle")}</p>
+  const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(() =>
+    typeof document !== "undefined" ? document.getElementById("level1-audit-actions-slot") : null,
+  );
+  useEffect(() => {
+    setActionsSlot(document.getElementById("level1-audit-actions-slot"));
+  }, []);
 
-      <div className="my-4 flex flex-wrap gap-3">
+  async function onExportPdf() {
+    if (exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const all = await fetchAllAudit(token, { q });
+      const parts: string[] = [];
+      parts.push(q ? t("audit_export_pdf_q", { q }) : t("audit_export_pdf_all"));
+      openAuditPdfPrint(all, {
+        title: t("audit_export_pdf_title"),
+        filterSummary: parts.join(" · "),
+        generatedLabel: `${t("audit_export_pdf_generated")}: ${new Date().toLocaleString("tr-TR")}`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      setError(msg === "popup_blocked" ? t("audit_export_pdf_popup") : t("audit_export_pdf_failed"));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const toolbar = (
+    <IconButton
+      icon={FileDown}
+      label={exporting ? t("audit_export_pdf_busy") : t("audit_export_pdf")}
+      disabled={exporting || loading}
+      onClick={() => void onExportPdf()}
+    />
+  );
+
+  return (
+    <div className={actionsSlot ? "px-6 pb-6 pt-1" : "px-6 py-6"}>
+      {actionsSlot ? createPortal(toolbar, actionsSlot) : (
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold">{t("audit_title")}</h2>
+            <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("audit_subtitle")}</p>
+          </div>
+          {toolbar}
+        </div>
+      )}
+
+      <div className="mb-4 flex flex-wrap gap-3">
         <div className="relative min-w-[240px] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
           <Input

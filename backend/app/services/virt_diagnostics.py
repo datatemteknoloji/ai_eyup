@@ -340,3 +340,68 @@ def classify_bottleneck(
         ),
         "scope": {"vm_name": vm_name, "host_name": host_name, "host_only": host_only},
     }
+
+
+def _windowed(sql: str) -> str:
+    return sql.replace(
+        "WHERE timestamp >= now() - (:hours * interval '1 hour')",
+        "WHERE timestamp BETWEEN :start AND :end",
+    )
+
+
+def correlate_window(
+    db: Session,
+    *,
+    start,
+    end,
+    vm_names: Optional[List[str]] = None,
+    host_names: Optional[List[str]] = None,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    """`classify_bottleneck` ile aynı kurallar, ama mutlak zaman penceresinde.
+
+    Olay (incident) analizinde "son 24 saat" değil, olay anının etrafı
+    (ör. -2 saat / +1 saat) önemlidir; aynı VM+host p95 karşılaştırması o
+    pencerede yapılır.
+    """
+    top = max(1, min(int(limit or 20), 50))
+    vm_rows: List[Dict[str, Any]] = []
+    try:
+        for name in (vm_names or [None])[:top]:
+            like = f"%{name.strip()}%" if name else "%"
+            for r in db.execute(text(_windowed(_VM_SQL)),
+                                {"start": start, "end": end, "vm": like, "limit": top}):
+                vm_rows.append(dict(r._mapping))
+    except Exception as e:
+        logger.error("correlate_window VM sorgusu: %s", e, exc_info=True)
+        return {"ok": False, "error": f"VM zaman serisi okunamadı: {e}"}
+    if host_names and not vm_names:
+        wanted = {h.strip().lower() for h in host_names if h}
+        vm_rows = [r for r in vm_rows if str(r.get("host_name") or "").strip().lower() in wanted]
+    seen = set()
+    uniq = []
+    for r in vm_rows:
+        k = (r.get("hypervisor_id"), r.get("vm_name"))
+        if k not in seen:
+            seen.add(k)
+            uniq.append(r)
+    hosts: Dict[str, Dict[str, Any]] = {}
+    for hn in {str(r.get("host_name") or "").strip() for r in uniq} | set(host_names or []):
+        if not hn:
+            continue
+        try:
+            rows = [dict(r._mapping) for r in db.execute(text(_windowed(_HOST_SQL)),
+                                                          {"start": start, "end": end, "host": hn})]
+        except Exception as e:
+            logger.warning("correlate_window host sorgusu (%s): %s", hn, e)
+            rows = []
+        for row in rows:
+            key = f"{row.get('hypervisor_id')}|{str(row.get('host_name') or '').strip().lower()}"
+            hosts[key] = {k: (_f(v) if k not in ("host_name", "cluster_name") else v) for k, v in row.items()}
+    items = []
+    for raw in uniq[:top]:
+        vm = {k: (_f(v) if k not in ("vm_name", "host_name", "cluster_name", "datastore") else v)
+              for k, v in raw.items()}
+        host = hosts.get(f"{raw.get('hypervisor_id')}|{str(raw.get('host_name') or '').strip().lower()}")
+        items.append(_classify_row(vm, host))
+    return {"ok": True, "items": items, "hosts": list(hosts.values()), "thresholds": dict(TH)}

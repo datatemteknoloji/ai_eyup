@@ -475,31 +475,77 @@ def _suggest_host_actions(issues: List[Dict[str, Any]], platform: str) -> List[s
     return actions[:4]
 
 
-def virt_ops_summary(db: Session) -> Dict[str, Any]:
-    """Navbar badge için hafif özet — full command center üretmez.
+_FAMILY_BY_TYPE = {
+    "vmware": "vcenter",
+    "openshift_virt": "openshift_virt",
+    "kvm": "ovirt",
+}
 
-    Eski yol `build_virt_command_center` çağırıyordu (kartlar, resource_logs,
-    platform listeleri); her 30 sn'de Layout'tan çağrıldığında ana sayfayı
-    yavaşlatıyordu. Burada yalnızca kritik/uyarı host sayıları hesaplanır.
+
+def virt_ops_summary(db: Session) -> Dict[str, Any]:
+    """Navbar badge + yönetici özeti — host eşiği kartları, aile kırılımı, sağlık.
+
+    Eski yol `build_virt_command_center` çağırıyordu; her 30 sn'de Layout yavaşlıyordu.
     """
     hypervisors = db.query(Hypervisor).all()
     crit_count = warn_count = 0
+    host_count = 0
+    items: List[Dict[str, Any]] = []
+    by_family: Dict[str, Dict[str, int]] = {
+        "vcenter": {"critical": 0, "warning": 0, "hypervisor_count": 0},
+        "openshift_virt": {"critical": 0, "warning": 0, "hypervisor_count": 0},
+        "ovirt": {"critical": 0, "warning": 0, "hypervisor_count": 0},
+        "other": {"critical": 0, "warning": 0, "hypervisor_count": 0},
+    }
+    families_present: List[str] = []
+
     for hv in hypervisors:
         htype = hv.hypervisor_type.value if hv.hypervisor_type else "unknown"
+        family = _FAMILY_BY_TYPE.get(htype, "other")
+        by_family[family]["hypervisor_count"] += 1
+        if family not in families_present:
+            families_present.append(family)
         platform = PLATFORM_LABELS.get(htype, htype.upper())
         hosts = _latest_host_metrics(db, hv.id)
+        host_count += len(hosts)
         for host in hosts:
             issues = _host_issues(host, hv.name, platform)
             if not issues:
                 continue
             max_sev = max(SEV_RANK.get(i["severity"], 0) for i in issues)
-            if max_sev >= 3:
+            primary = max(issues, key=lambda i: SEV_RANK.get(i["severity"], 0))
+            bucket = "critical" if max_sev >= 3 else "warning"
+            if bucket == "critical":
                 crit_count += 1
             else:
                 warn_count += 1
+            by_family[family][bucket] += 1
+            items.append({
+                "id": f"virt-host-{hv.id}-{host.host_name}",
+                "event_id": None,
+                "event_ids": [],
+                "platform": "virtualization",
+                "family": family,
+                "server_name": host.host_name,
+                "severity": "critical" if max_sev >= 3 else "warning",
+                "title": primary.get("title") or "",
+                "last_seen": primary.get("timestamp") or (host.timestamp.isoformat() if host.timestamp else None),
+                "occurrence_count": 1,
+                "href": "/virt/ops",
+                "event_type": "virt_resource",
+            })
+
+    health = _health_score(crit_count, warn_count, host_count, len(hypervisors))
     return {
         "critical": crit_count,
         "warning": warn_count,
         "total": crit_count + warn_count,
         "action_needed": crit_count > 0 or warn_count > 0,
+        "health_score": health["score"],
+        "health": health,
+        "by_family": by_family,
+        "families_present": families_present,
+        "items": items,
+        "host_count": host_count,
+        "hypervisor_count": len(hypervisors),
     }

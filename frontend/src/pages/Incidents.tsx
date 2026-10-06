@@ -7,6 +7,7 @@ import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge, StatusBadge,
   SearchInput, Select, ActionMenu, Section, EmptyState, sevColor, Pagination,
 } from '../components/aiops/ui'
+import IncidentTimeline from '../components/insights/IncidentTimeline'
 import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
 import { exportMarkdownToPrintWindow, exportMultipleRcaToPrintWindow } from '../utils/pdfExport'
@@ -16,7 +17,8 @@ import { useT, useLocale } from '../i18n/LocaleProvider'
 interface Server { id: number; name: string; ip: string; status?: string }
 interface RelatedEvent {
   id: number; title: string; severity: string; event_type: string
-  source: string | null; resolved: boolean; is_acknowledged: boolean; created_at: string | null
+  source: string | null; resolved: boolean; is_acknowledged: boolean
+  created_at: string | null; last_seen?: string | null; occurrence_count?: number
 }
 interface Incident {
   id: number; title: string; description: string | null; severity: string; status: string
@@ -464,6 +466,9 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                   </div>
                 </div>
 
+                {platform === 'virt' && <IncidentTimeline key={selectedIncident.id} incidentId={selectedIncident.id} />}
+                {platform === 'openshift' && <IncidentTimeline key={selectedIncident.id} incidentId={selectedIncident.id} base="ocp-insights" />}
+
                 {/* RCA */}
                 {selectedIncident.rca_result?.analysis && (
                   <div>
@@ -526,7 +531,8 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                             <div className="flex gap-2 mt-0.5 text-[10px]" style={{ color: 'rgba(148,163,184,0.5)' }}>
                               <span className="font-mono">{evt.event_type}</span>
                               {evt.resolved && <span style={{ color: NEON.green }}>{t('inc_resolved').toLowerCase()}</span>}
-                              <span>{fmt(evt.created_at, locale)}</span>
+                              {evt.occurrence_count && evt.occurrence_count > 1 && <span>×{evt.occurrence_count}</span>}
+                              <span>{fmt(evt.last_seen || evt.created_at, locale)}</span>
                             </div>
                           </div>
                         </div>

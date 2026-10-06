@@ -11,6 +11,39 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Güvenlik — modül izolasyonu (RBAC)
+- Yetkisi olmayan modülün **hiçbir** API/sayfasına link, kısa yol, dashboard veya doğrudan URL ile erişilemez. Global middleware (`core/module_policy.py`) her `/api/v1` isteğini yol önekine göre modüle eşler; yetki yoksa 403. Yeni router sınıflandırılmadan kullanıcıya açılmaz (yalnız admin; test her route'un kapsandığını doğrular).
+- Daha önce yalnız token geçerliliği kontrol ediliyordu: modülü olmayan kullanıcı envanter, olay, ayar, Windows `run-ps`, Ansible ad-hoc, MCP `call-tool`, SSH terminal ve OpenShift pod exec / VM console uçlarına ulaşabiliyordu.
+- Middleware pasif / silinmiş kullanıcıyı ve MFA ara token'ını da reddeder (kısa TTL önbellek; modül ataması değişince anında geçerli).
+- `platform=` parametreli ortak uçlar (olay, incident, ops, metrics, platform-reports) ilgili modül olmadan 403. `executive` platform verisinde yalnız okuma.
+- Rol tabanı: `run-ps`, kimlik bilgisi yazma, `/mcp/*` → admin; ad-hoc / playbook / reboot / sync / bulk-delete → operator. Terminal, pod exec ve VM console WebSocket'leri modül + operator ister.
+- Unified chat: yetkisiz platform soruları reddedilir; envanter özeti ve sunucu listeleri yetkisiz platformdan arındırılır (`admin` / `ai_automation` / `executive` kısıtsız).
+- Frontend: `/dashboard` ve `/mcp` yalnız admin; `/terminal/:id` ve OpenShift VM console sayfaları modül ister; menüde Dashboard bağlantısı yalnız admin.
+
+### Sanallaştırma karar katmanı (VMware · OLVM · OCP Virt)
+- Ortak bulgu motoru: `infra_check_runs` / `infra_findings` / `infra_finding_exceptions`, kontrol kataloğu, periyodik fleet job `virt_insights` (aralık Ayarlar’dan). REST `/virt-insights/*` (`require_module("virtualization")`).
+- Yeni ekranlar: `/virt/capacity` (effective kapasite, N+1, runway, what-if, yerleşim), `/virt/reclaim`, `/virt/health` (sağlık, ISO 27001 uyum + CSV/JSON, istisna, referans paketleri, yazma hesabı), `/virt/changes` (yapılandırma geçmişi, baseline, sapma). Dashboard’a 4 özet kartı; virt incident’a zaman çizelgesi.
+- Raporlar: **Kapasite Planı (N+1)** ve **Denetim Kanıtı** (`/infra-reports`).
+- Komut taslakları (PowerCLI / `oc`, geri alma satırıyla; uygulama çalıştırmaz).
+- Offline CVE/VMSA, KB ve yükseltme/HCL paketleri (JSON yükleme; KB isteğe bağlı RAG).
+- Onaylı düzeltme (VMware): izin listesi (snapshot sil, NTP restart/ayar, SSH durdur), okuma hesabından ayrı mühürlü yazma hesabı, Agent bekleyen aksiyon onayı, rollback bilgisi.
+- Sohbet: READ_ONLY `virt_capacity_simulate`, `virt_placement_recommend`, `virt_reclaim_summary`, `virt_health_findings`, `virt_incident_timeline`; `h_capacity_n1` deterministik N+1 yanıtı. `virt_remediate` LLM’e görünmez (`Tool.llm_visible=False`).
+- Erişim yalnız vCenter / OLVM Manager / OpenShift API; host bağlantısı yok.
+- vCenter SOAP isteklerine `SOAPAction: urn:vim25/<apiVersion>` eklendi (karar katmanı istemcisi); aksi halde `layoutEx`, lockdown, vMotion ve datastore tarayıcısı eski API ile boş dönüyordu.
+- Tek host’lu cluster’da HA rezervi `single_host` (effective Memory boş kalmıyordu); güç durumu `POWERED_ON` normalize.
+
+### OpenShift karar katmanı
+- Yeni sayfaların (Kapasite, Geri Kazanım, Sağlık, Değişiklikler; sanallaştırma + OpenShift) başlığı yanına (i) bilgi simgesi: sayfa nedir / ne için / nasıl kullanılır (TR+EN).
+- Değişiklikler sayfasına **Mevcut durumu baseline yap** (operator): tür seçerek toplu ilk baseline. `POST /virt-insights/baseline` ve `/ocp-insights/baseline` kaynak/platform boşken tümüne uygulanır.
+- Sol menü: Kapasite / Geri kazanım / Sağlık (/ Değişiklikler) artık hem Sanallaştırma hem OpenShift grubunda **Planlama ve Denetim** alt grubunda.
+- `/openshift/changes`: node, MachineConfigPool, operatör sürümü ve cluster yapılandırması (proxy [kimlik bilgisi maskeli], OAuth, APIServer, Scheduler, Ingress) değişiklik geçmişi + baseline; baseline sapması `drift.entity.baseline` bulgusu (`platform=ocp`). REST `/ocp-insights/changes`, `/ocp-insights/baseline`.
+- Kapasite senaryosu `POST /ocp-insights/capacity/simulate`: seçilen node'lar drene edilirse ve/veya yeni pod'lar eklenirse request doluluğu, sığma sonucu, eklenebilecek pod sayısı.
+- Node risk kartı `GET /ocp-insights/node-risk` (Sağlık sayfası): tekrar eden NotReady / baskı / reboot / bağlantı kesintisi olayları; tahmin yok.
+- OpenShift envanter sayfasında 4 özet kartı; OCP incident zaman çizelgesine yapılandırma değişiklikleri eklendi.
+- Sanallaştırma incident zaman çizelgesi yapılandırma değişikliği sorgusu yalnız sanallaştırma platformlarıyla sınırlandı.
+- OCP incident detayına zaman çizelgesi + kök neden adayları: `/ocp-insights/incident-timeline/{id}` (DB olayları, aktif bulgular, salt okunur canlı pod durumu / K8s event / pod log hata satırları — sırlar maskeli).
+- `/openshift/capacity`, `/openshift/reclaim`, `/openshift/health`; REST `/ocp-insights/*` (`require_module("openshift")`). Worker N+1, PVC / request geri kazanımı, ClusterOperator / MCP / Compliance Operator / güncelleme bulguları.
+
 ## [1.0.9.39] - 2026-10-05
 
 ### Centrify / Level 1

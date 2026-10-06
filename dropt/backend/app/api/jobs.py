@@ -15,9 +15,9 @@ from app.models.job import Job, JobRun, JobStatus, PreviewArtifact
 from app.models.server import TargetServer
 from app.models.user import User
 from app.modules.log_collect import list_templates
-from app.schemas.job import JobCreate, JobListResponse, JobPublic, JobRunPublic, PreviewPublic
+from app.schemas.job import JobCreate, JobListResponse, JobPublic, JobRunPublic, PreviewPublic, RecordCompletedJobIn
 from app.services.artifacts import job_artifact_dir
-from app.services.job_engine import create_job, run_preview
+from app.services.job_engine import create_job, record_completed_job, run_preview
 from app.services.job_events import job_channel
 from app.worker import apply_job_task
 
@@ -76,6 +76,18 @@ def _run_public(r: JobRun) -> JobRunPublic:
     )
 
 
+def _payload_hostnames(payload: dict[str, Any]) -> list[str]:
+    if not payload:
+        return []
+    for key in ("hostnames", "targets", "computers"):
+        raw = payload.get(key)
+        if isinstance(raw, list):
+            out = [str(x).strip() for x in raw if str(x).strip()]
+            if out:
+                return out[:20]
+    return []
+
+
 def _hostnames_for_ids(session: Session, server_ids: list[int], host_map: dict[int, str] | None = None) -> list[str]:
     ids = [int(i) for i in (server_ids or []) if i is not None]
     if not ids:
@@ -102,19 +114,29 @@ def _job_public(
             preview = _preview_public(p)
         runs = [_run_public(r) for r in session.exec(select(JobRun).where(JobRun.job_id == job.id)).all()]
     server_ids = list(job.server_ids or [])
+    payload = _sanitize_payload(dict(job.payload or {}))
+    hostnames = _hostnames_for_ids(session, server_ids, host_map)
+    if not hostnames:
+        hostnames = _payload_hostnames(payload)
+    title = (job.title or "").strip()
+    summary = (job.summary_tr or "").strip()
+    if title in {"", "Centrify"} and summary:
+        title = f"Centrify — {summary}"[:255]
+    elif not title:
+        title = summary or "Centrify"
     return JobPublic(
         id=job.id,  # type: ignore[arg-type]
         module=job.module,
         action=job.action,
         status=job.status,
         talep_id=job.talep_id,
-        title=job.title,
+        title=title,
         summary_tr=job.summary_tr,
         created_by_username=job.created_by_username,
         created_by_role=job.created_by_role,
         server_ids=server_ids,
-        hostnames=_hostnames_for_ids(session, server_ids, host_map),
-        payload=_sanitize_payload(dict(job.payload or {})),
+        hostnames=hostnames,
+        payload=payload,
         dry_run=job.dry_run,
         progress_done=job.progress_done,
         progress_total=job.progress_total,
@@ -198,6 +220,32 @@ def create_job_endpoint(
             action=body.action,
             talep_id=body.talep_id,
             server_ids=body.server_ids,
+            payload=body.payload,
+            user_id=user.id,  # type: ignore[arg-type]
+            username=user.username,
+            role=user.role.value,
+            client_ip=_client_ip(request),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return _job_public(session, job, detail=True)
+
+
+@router.post("/record-completed", response_model=JobPublic, status_code=status.HTTP_201_CREATED)
+def record_completed_job_endpoint(
+    body: RecordCompletedJobIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> JobPublic:
+    try:
+        job = record_completed_job(
+            session,
+            module=body.module,
+            action=body.action,
+            talep_id=body.talep_id,
+            title=body.title,
+            summary_tr=body.summary_tr,
             payload=body.payload,
             user_id=user.id,  # type: ignore[arg-type]
             username=user.username,

@@ -111,14 +111,13 @@ def save_windows_logs_to_db(
     if not logs:
         return 0
 
-    since = datetime.utcnow() - timedelta(hours=since_hours)
     existing = (
         db.query(SystemEvent.id, SystemEvent.title, SystemEvent.raw_data)
         .filter(
             SystemEvent.server_id == server.id,
             SystemEvent.event_type == "log_entry",
             SystemEvent.source == "windows_collector",
-            SystemEvent.created_at >= since,
+            SystemEvent.resolved == False,  # noqa: E712
         )
         .all()
     )

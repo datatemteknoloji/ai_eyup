@@ -322,8 +322,10 @@ async def exadata_ops_summary(db: Session = Depends(get_db)):
     from app.api.ops_center import _active_events, ACTIVE_WINDOW_HOURS
     from datetime import timedelta
 
+    from app.services.event_grouping import unique_events
+
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
-    events = _active_events(db, since, platform="exadata")
+    events = unique_events(_active_events(db, since, platform="exadata"))
     critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
     warning = sum(1 for e in events if e.severity == "warning")
 

@@ -27,5 +27,7 @@ class User(Base):
     theme = Column(String(16), default="dark", nullable=False)
     # UI language: tr | en (per-user). Technical terms stay English in both.
     locale = Column(String(8), default="tr", nullable=False)
+    # Kullanıcı favori sayfaları: [{path, name}, ...]
+    favorite_paths = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)

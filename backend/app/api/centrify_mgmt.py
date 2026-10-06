@@ -71,7 +71,7 @@ class CentrifyConfigIn(BaseModel):
     winrm_port: int = Field(5985, ge=1, le=65535)
     winrm_https: bool = False
     service_account: str = Field(..., min_length=1, description="sAMAccountName (örn: service_centrify)")
-    password: str = Field(..., min_length=1)
+    password: str = Field("", description="Boş bırakılırsa mevcut şifre korunur (güncelleme)")
     sync_interval_minutes: int = Field(30, ge=5, le=1440)
     label: str = "Varsayılan"
 
@@ -329,7 +329,8 @@ async def save_config(body: CentrifyConfigIn):
             existing.winrm_port = body.winrm_port
             existing.winrm_https = body.winrm_https
             existing.service_account = body.service_account
-            existing.password_enc = encrypt_secret(body.password)
+            if body.password:
+                existing.password_enc = encrypt_secret(body.password)
             existing.sync_interval_minutes = body.sync_interval_minutes
             existing.label = body.label
             existing.enabled = True
@@ -337,6 +338,8 @@ async def save_config(body: CentrifyConfigIn):
             db.refresh(existing)
             cfg = existing
         else:
+            if not body.password:
+                raise HTTPException(status_code=400, detail="İlk kurulumda şifre zorunludur")
             cfg = CentrifyIntegrationConfig(
                 winrm_host=body.winrm_host,
                 winrm_port=body.winrm_port,
@@ -840,6 +843,21 @@ async def query_expiring_assignments(days: int = 30, limit: int = 50):
         raise HTTPException(503, "Centrify DB erişilemiyor")
     try:
         return find_expiring_assignments(db, days=days, limit=limit)
+    finally:
+        db.close()
+
+
+@router.get("/query/hygiene")
+async def query_hygiene(days: int = 30, limit: int = 200):
+    """Süresi dolmuş atama, orphan kayıt ve tutarsızlık taraması (yerel sync DB)."""
+    from app.services.centrify.database import get_centrify_thread_session
+    from app.services.centrify.query_service import find_hygiene_issues
+
+    db = get_centrify_thread_session()
+    if db is None:
+        raise HTTPException(503, "Centrify DB erişilemiyor")
+    try:
+        return find_hygiene_issues(db, expiring_days=days, limit=limit)
     finally:
         db.close()
 

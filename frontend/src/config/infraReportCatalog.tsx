@@ -42,6 +42,8 @@ const VIRT_CATALOG: ReportCatalogItem[] = [
   { type: 'forecast', titleKey: 'rpt_forecast', icon: <TrendingUp size={18} />, color: 'cyan', descKey: 'rpt_forecast_desc' },
   { type: 'sla', titleKey: 'rpt_sla', icon: <CheckCircle2 size={18} />, color: 'green', descKey: 'rpt_sla_desc' },
   { type: 'riskiest_assets', titleKey: 'rpt_riskiest', icon: <Target size={18} />, color: 'red', descKey: 'rpt_riskiest_desc' },
+  { type: 'capacity_plan', titleKey: 'rpt_capacity_plan', icon: <Layers size={18} />, color: 'blue', descKey: 'rpt_capacity_plan_desc' },
+  { type: 'audit_evidence', titleKey: 'rpt_audit_evidence', icon: <Shield size={18} />, color: 'teal', descKey: 'rpt_audit_evidence_desc' },
 ]
 
 const LINUX_CATALOG: ReportCatalogItem[] = [
@@ -107,6 +109,8 @@ const REPORT_METHODOLOGY_KEYS: Record<string, TranslationKey> = {
   forecast: 'rpt_method_forecast',
   riskiest_assets: 'rpt_method_riskiest',
   node_health: 'rpt_method_node_health',
+  capacity_plan: 'rpt_method_capacity_plan',
+  audit_evidence: 'rpt_method_audit_evidence',
 }
 
 export function reportMethodologyKey(

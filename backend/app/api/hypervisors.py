@@ -8,7 +8,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
 from pydantic import BaseModel
-from app.core.auth import get_current_user_optional
+from app.core.auth import get_current_user, get_current_user_optional, require_module
+from app.models.user import User
+from app.services.chat_session_scope import (
+    create_owned_session,
+    get_owned_session,
+    require_owned_session,
+    require_user_id,
+    sessions_q,
+    user_pk,
+)
 from app.core.database import get_db
 from app.core.inventory_guard import require_integrations_inventory
 from app.models.hypervisor import Hypervisor, HypervisorType
@@ -639,6 +648,10 @@ async def update_hypervisor(hypervisor_id: int, hypervisor: HypervisorUpdate, db
             update_data["password"] = sealed(update_data["password"])
         if "connection_config" in update_data and update_data["connection_config"]:
             update_data["connection_config"] = seal_connection_secrets(update_data["connection_config"])
+            # Karar katmanı yazma hesabı yalnız /virt-insights/write-credential ile yönetilir.
+            prev_wc = (db_hypervisor.connection_config or {}).get("write_credential")
+            if prev_wc and "write_credential" not in update_data["connection_config"]:
+                update_data["connection_config"]["write_credential"] = prev_wc
 
         for key, value in update_data.items():
             setattr(db_hypervisor, key, value)
@@ -1036,8 +1049,14 @@ async def delete_hypervisor(hypervisor_id: int, request: Request, db: Session = 
 # ── Sanallaştırma Komuta Merkezi (AIOps) ─────────────────────────────────────
 
 @router.get("/ops/command-center")
-async def virt_command_center(db: Session = Depends(get_db)):
-    """vCenter / OLVM manager, ESX host kaynakları ve platform logları."""
+async def virt_command_center(
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_module("virtualization")),
+):
+    """vCenter / OLVM manager, ESX host kaynakları ve platform logları.
+
+    Yönetici özeti bu endpoint'i kullanmaz; yalnız virtualization modülü.
+    """
     from app.services.virt_ops_center import build_virt_command_center
     try:
         return build_virt_command_center(db)
@@ -1047,7 +1066,10 @@ async def virt_command_center(db: Session = Depends(get_db)):
 
 
 @router.get("/ops/summary")
-async def virt_ops_summary_endpoint(db: Session = Depends(get_db)):
+async def virt_ops_summary_endpoint(
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_module("virtualization")),
+):
     """Navbar badge — sanallaştırma katmanı özet."""
     from app.services.virt_ops_center import virt_ops_summary
     return virt_ops_summary(db)
@@ -1128,17 +1150,24 @@ async def list_hypervisor_sessions(
     q: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Hypervisor AI asistan oturum geçmişi (arama destekli)."""
     from app.models.chat_session import ChatSession, ChatMessage
     from sqlalchemy import or_, func as sa_func
 
-    query = db.query(ChatSession).filter(ChatSession.category == HV_SESSION_CATEGORY)
+    uid = require_user_id(user)
+    query = sessions_q(db, uid, HV_SESSION_CATEGORY)
     if q and q.strip():
         term = f"%{q.strip()}%"
         msg_ids = [
             r[0] for r in db.query(ChatMessage.session_id)
-            .filter(ChatMessage.content.ilike(term))
+            .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+            .filter(
+                ChatSession.user_id == uid,
+                ChatSession.category == HV_SESSION_CATEGORY,
+                ChatMessage.content.ilike(term),
+            )
             .distinct()
             .all()
         ]
@@ -1168,29 +1197,25 @@ async def list_hypervisor_sessions(
 
 
 @router.post("/ask/sessions")
-async def create_hypervisor_session(db: Session = Depends(get_db)):
+async def create_hypervisor_session(
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
     """Yeni hypervisor AI oturumu."""
-    from app.models.chat_session import ChatSession
-    from datetime import datetime, timezone
-
-    session = ChatSession(title="Yeni Sohbet", server_ids=[], category=HV_SESSION_CATEGORY)
-    db.add(session)
-    db.commit()
-    db.refresh(session)
+    session = create_owned_session(
+        db, user_id=require_user_id(user), title="Yeni Sohbet",
+        category=HV_SESSION_CATEGORY, server_ids=[],
+    )
     return _hv_session_dict(session, message_count=0)
 
 
 @router.get("/ask/sessions/{session_id}/messages")
-async def get_hypervisor_session_messages(session_id: int, db: Session = Depends(get_db)):
+async def get_hypervisor_session_messages(
+    session_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
     """Oturum mesajlarını getir."""
-    from app.models.chat_session import ChatSession, ChatMessage
+    from app.models.chat_session import ChatMessage
 
-    session = db.query(ChatSession).filter(
-        ChatSession.id == session_id,
-        ChatSession.category == HV_SESSION_CATEGORY,
-    ).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Oturum bulunamadı")
+    session = require_owned_session(db, session_id, require_user_id(user), HV_SESSION_CATEGORY)
 
     rows = (
         db.query(ChatMessage)
@@ -1202,17 +1227,14 @@ async def get_hypervisor_session_messages(session_id: int, db: Session = Depends
 
 
 @router.delete("/ask/sessions/{session_id}")
-async def delete_hypervisor_session(session_id: int, db: Session = Depends(get_db)):
+async def delete_hypervisor_session(
+    session_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
     """Tek oturumu sil."""
-    from app.models.chat_session import ChatSession, ChatMessage
+    from app.models.chat_session import ChatMessage
     from sqlalchemy import delete
 
-    session = db.query(ChatSession).filter(
-        ChatSession.id == session_id,
-        ChatSession.category == HV_SESSION_CATEGORY,
-    ).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Oturum bulunamadı")
+    session = require_owned_session(db, session_id, require_user_id(user), HV_SESSION_CATEGORY)
     db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
     db.delete(session)
     db.commit()
@@ -1220,14 +1242,15 @@ async def delete_hypervisor_session(session_id: int, db: Session = Depends(get_d
 
 
 @router.delete("/ask/sessions")
-async def delete_all_hypervisor_sessions(db: Session = Depends(get_db)):
+async def delete_all_hypervisor_sessions(
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
     """Tüm hypervisor oturumlarını sil."""
     from app.models.chat_session import ChatSession, ChatMessage
     from sqlalchemy import delete
 
-    ids = [
-        s.id for s in db.query(ChatSession.id).filter(ChatSession.category == HV_SESSION_CATEGORY).all()
-    ]
+    uid = require_user_id(user)
+    ids = [s.id for s in sessions_q(db, uid, HV_SESSION_CATEGORY).all()]
     if ids:
         db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(ids)))
         db.execute(delete(ChatSession).where(ChatSession.id.in_(ids)))
@@ -1239,6 +1262,7 @@ async def delete_all_hypervisor_sessions(db: Session = Depends(get_db)):
 def ask_hypervisor_question(
     req: HypervisorAskRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """
     Doğal dil ile hypervisor/VM sorgulama ve rapor istekleri.
@@ -1266,29 +1290,20 @@ def ask_hypervisor_question(
     session_id = req.session_id
 
     try:
+        uid = require_user_id(user)
         session = None
         if session_id:
-            session = db.query(ChatSession).filter(
-                ChatSession.id == session_id,
-                ChatSession.category == HV_SESSION_CATEGORY,
-            ).first()
+            session = get_owned_session(db, session_id, uid, HV_SESSION_CATEGORY)
             if not session:
-                # Oturum silinmiş/artık yok (ör. kullanıcı sohbeti sildi ama eski
-                # session_id ile yeni bir soru gönderdi) — 404 ile tıkanıp kalmak
-                # yerine sessizce yeni bir oturum aç, kullanıcı cevabını görsün.
                 logger.warning(
                     f"[HypervisorAsk] session_id={session_id} bulunamadı, yeni oturum açılıyor"
                 )
                 session_id = None
         if not session:
-            session = ChatSession(
-                title=_hv_session_title(question),
-                server_ids=[],
-                category=HV_SESSION_CATEGORY,
+            session = create_owned_session(
+                db, user_id=uid, title=_hv_session_title(question),
+                category=HV_SESSION_CATEGORY, server_ids=[],
             )
-            db.add(session)
-            db.commit()
-            db.refresh(session)
             session_id = session.id
 
         db.add(ChatMessage(session_id=session_id, role="user", content=raw_question))
@@ -1690,7 +1705,10 @@ async def ask_hypervisor_stream(
 
         yield _sse({"phase": "collecting"})
         import asyncio
-        result = await asyncio.to_thread(ask_hypervisor_question, inner, db)
+        if user_pk(_auth_user) is None:
+            yield _sse({"error": "Kimlik doğrulaması gerekli"})
+            return
+        result = await asyncio.to_thread(ask_hypervisor_question, inner, db, _auth_user)
         result = result or {}
         sid = result.get("session_id")
         answer = result.get("answer") or result.get("error") or ""

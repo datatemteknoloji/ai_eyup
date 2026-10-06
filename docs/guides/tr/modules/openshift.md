@@ -42,6 +42,12 @@ OpenShift Virtualization (KubeVirt) her iki tarafa da düşer: OCP `/openshift/v
 | Events | `/openshift/events` | Cluster olayları |
 | Incidents | `/openshift/incidents` | Incident |
 | Asistan | `/openshift/chat` | Pod, node, proje, PVC, CrashLoop |
+| Planlama ve Denetim (alt grup) | — | Aşağıdaki 4 ekran sol menüde bu alt grupta toplanır (Sanallaştırma grubunda da aynı ad) |
+| Kapasite | `/openshift/capacity` | Worker allocatable vs request, request %, N+1 (en büyük worker düşerse); **senaryo**: seçtiğiniz node'lar drene edilirse / yeni pod'lar eklenirse sığar mı (son tarama özetinden) |
+| Geri kazanım | `/openshift/reclaim` | Bağlanmamış / kullanılmayan PVC, request’i kullanımın çok üstündeki pod’lar (VM/DataVolume PVC’leri hariç) |
+| Incidents (zaman çizelgesi) | `/openshift/incidents` | Incident detayında olay + bulgu + pod durumu / K8s event / log hata satırları ve kök neden adayları (OOMKilled, imaj çekme, zamanlama, volume, probe, CrashLoop, node, operatör) |
+| Sağlık | `/openshift/health` | ClusterOperator, MachineConfigPool, Compliance Operator sonuçları, sürüm / güncelleme; istisna (admin); **node risk kartı** (son günlerde NotReady / baskı / reboot / bağlantı kesintisi olay sayısı, tahmin yok) |
+| Değişiklikler | `/openshift/changes` | Node, MachineConfigPool (rendered config + kaynak MachineConfig'ler), operatör sürümleri, cluster yapılandırması (proxy, OAuth, APIServer, Scheduler, Ingress) değişiklik geçmişi + diff; baseline işaretleme (operator) ve baseline'dan sapma bulgusu |
 
 **Bağlantı:** Entegrasyonlar → OpenShift envanteri (`/integrations/openshift`). Host `/etc/hosts` ile dahili API adları (compose `extra_hosts` yazılmaz).
 

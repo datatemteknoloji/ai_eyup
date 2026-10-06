@@ -21,6 +21,13 @@ from app.core.config import settings, get_active_model, remote_llm_enabled
 from app.core.database import get_db
 from app.models.chat_session import ChatSession, ChatMessage
 from app.models.user import User
+from app.services.chat_session_scope import (
+    create_owned_session,
+    get_owned_session,
+    require_owned_session,
+    require_user_id,
+    sessions_q,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -942,16 +949,17 @@ async def centrify_chat_stream(
     from app.core.database import SessionLocal
     sdb = SessionLocal()
     try:
+        uid = require_user_id(user)
         if body.session_id:
-            session = sdb.query(ChatSession).filter_by(id=body.session_id, category=CATEGORY).first()
+            session = get_owned_session(sdb, body.session_id, uid, CATEGORY)
         else:
             session = None
 
         if not session:
             title = body.message[:60] + ("…" if len(body.message) > 60 else "")
-            session = ChatSession(title=title, category=CATEGORY, server_ids=[])
-            sdb.add(session)
-            sdb.flush()
+            session = create_owned_session(
+                sdb, user_id=uid, title=title, category=CATEGORY, server_ids=[],
+            )
 
         # Geçmiş mesajları
         history = sdb.query(ChatMessage).filter_by(session_id=session.id).order_by(ChatMessage.created_at).all()
@@ -1057,14 +1065,14 @@ async def centrify_chat_stream(
 
 
 @router.get("/sessions")
-async def list_sessions(request: Request):
+async def list_sessions(request: Request, user: User = Depends(require_module("level1"))):
     """Centrify chat oturumlarını listele."""
     from app.core.database import SessionLocal
     sdb = SessionLocal()
     try:
+        uid = require_user_id(user)
         sessions = (
-            sdb.query(ChatSession)
-            .filter_by(category=CATEGORY)
+            sessions_q(sdb, uid, CATEGORY)
             .order_by(ChatSession.created_at.desc())
             .limit(50)
             .all()
@@ -1082,11 +1090,12 @@ async def list_sessions(request: Request):
 
 
 @router.get("/sessions/{session_id}/messages")
-async def get_session_messages(session_id: int):
+async def get_session_messages(session_id: int, user: User = Depends(require_module("level1"))):
     """Oturum mesajlarını getir."""
     from app.core.database import SessionLocal
     sdb = SessionLocal()
     try:
+        require_owned_session(sdb, session_id, require_user_id(user), CATEGORY)
         msgs = (
             sdb.query(ChatMessage)
             .filter_by(session_id=session_id)
@@ -1102,13 +1111,14 @@ async def get_session_messages(session_id: int):
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: int):
+async def delete_session(session_id: int, user: User = Depends(require_module("level1"))):
     """Chat oturumunu sil."""
     from app.core.database import SessionLocal
     sdb = SessionLocal()
     try:
+        session = require_owned_session(sdb, session_id, require_user_id(user), CATEGORY)
         sdb.query(ChatMessage).filter_by(session_id=session_id).delete()
-        sdb.query(ChatSession).filter_by(id=session_id, category=CATEGORY).delete()
+        sdb.delete(session)
         sdb.commit()
         return {"ok": True}
     finally:

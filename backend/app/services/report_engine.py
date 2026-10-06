@@ -1656,6 +1656,35 @@ def generate_business_impact(db: Session) -> Dict[str, Any]:
     }
 
 
+def generate_capacity_plan_report(db: Session) -> Dict[str, Any]:
+    """Karar katmanı kapasite planı — effective kapasite, N+1, tükenme, aksiyon sırası."""
+    from app.services.virt_capacity_planner import build_capacity
+    cap = build_capacity(db, with_forecast=True)
+    clusters = cap.get("clusters") or []
+    n1_fail = sum(1 for c in clusters if (c.get("n_plus_one") or {}).get("status") == "fail")
+    hosts_needed = sum(int(a.get("hosts_needed") or 0) for c in clusters for a in c.get("actions") or []
+                       if a.get("kind") == "invest")
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "clusters": clusters, "datastores": cap.get("datastores") or [],
+        "thresholds": cap.get("thresholds"), "methodology": cap.get("method"),
+        "summary": {"clusters": len(clusters), "n1_fail": n1_fail, "hosts_needed": hosts_needed,
+                    "datastores_over": sum(1 for d in cap.get("datastores") or []
+                                           if (d.get("usage_pct") or 0) > 85)},
+    }
+
+
+def generate_audit_evidence_report(db: Session) -> Dict[str, Any]:
+    """Denetim kanıtı — ISO 27001 Ek A kontrol bazında otomatik teknik kanıt."""
+    from app.services.virt_compliance import compliance_report
+    rep = compliance_report(db, platforms=["vmware", "olvm", "ocp_virt"])
+    for c in rep.get("controls") or []:
+        c["findings"] = [{k: f.get(k) for k in ("platform", "source_name", "cluster_name", "entity_name",
+                                                "check_id", "title", "result", "severity", "detail", "last_seen")}
+                         | {"excepted": bool(f.get("exception"))} for f in c["findings"]]
+    return rep
+
+
 # ── Ana Dispatch ──────────────────────────────────────────────────────────────
 
 REPORT_REGISTRY: Dict[str, Any] = {
@@ -1675,6 +1704,8 @@ REPORT_REGISTRY: Dict[str, Any] = {
     "performance_bottleneck":  generate_performance_bottleneck,
     "sla":                     generate_sla_report,
     "business_impact":         generate_business_impact,
+    "capacity_plan":           generate_capacity_plan_report,
+    "audit_evidence":          generate_audit_evidence_report,
 }
 
 REPORT_TITLES: Dict[str, str] = {
@@ -1694,6 +1725,8 @@ REPORT_TITLES: Dict[str, str] = {
     "performance_bottleneck":  "Performans Darboğaz Raporu",
     "sla":                     "Erişilebilirlik Raporu (Tahmini)",
     "business_impact":         "Business Service Impact",
+    "capacity_plan":           "Kapasite Planı (N+1)",
+    "audit_evidence":          "Denetim Kanıtı",
 }
 
 
@@ -1933,6 +1966,41 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
                 ["HW Versiyon", "VM Sayısı"],
                 [[k, v] for k, v in sorted(hw.items(), key=lambda x: -x[1])]
             )
+
+    # ── Kapasite planı (karar katmanı) ─────────────────────────────────────────
+    elif report_type == "capacity_plan":
+        sm = data.get("summary") or {}
+        lines += [f"Cluster: {sm.get('clusters', 0)} · N+1 bozuk: {sm.get('n1_fail', 0)} · "
+                  f"Gereken ek host: {sm.get('hosts_needed', 0)}", ""]
+        rows = []
+        for c in data.get("clusters") or []:
+            n1 = c.get("n_plus_one") or {}
+            days = (((c.get("forecast") or {}).get("memory") or {}).get("days") or {})
+            rows.append([f"{c.get('hypervisor')} / {c.get('cluster')}", c.get("platform"),
+                         f"{c.get('hosts_usable')}/{c.get('hosts_total')}",
+                         (c.get("memory") or {}).get("effective_used_pct", "-"),
+                         f"{n1.get('status')} ({n1.get('mem_after_pct', '-')})",
+                         days.get("typical", "-") if isinstance(days, dict) else "-",
+                         "; ".join(a.get("title", "") for a in c.get("actions") or []) or "-"])
+        lines += ["## Cluster'lar"] + tbl(["Cluster", "Platform", "Host", "Eff. Memory %", "N+1",
+                                            "Tükenme (gün)", "Aksiyon"], rows)
+        if data.get("methodology"):
+            lines += ["", f"_{data['methodology']}_"]
+
+    # ── Denetim kanıtı ────────────────────────────────────────────────────────
+    elif report_type == "audit_evidence":
+        rows = []
+        for c in data.get("controls") or []:
+            k = c.get("counts") or {}
+            rows.append([c.get("title"), k.get("pass", 0), k.get("fail", 0), k.get("not_measurable", 0),
+                         k.get("excepted", 0), c.get("score_pct") if c.get("score_pct") is not None else "-"])
+        lines += ["## Kontroller"] + tbl(["Kontrol", "Pass", "Fail", "Ölçülemedi", "İstisna", "Skor %"], rows)
+        man = data.get("manual_review") or []
+        if man:
+            lines += ["", "## Manuel inceleme"] + [f"- **{m.get('control')}** {m.get('title')}: {m.get('note')}"
+                                                   for m in man]
+        if data.get("disclaimer"):
+            lines += ["", f"_{data['disclaimer']}_"]
 
     # ── Konsolidasyon ──────────────────────────────────────────────────────────
     elif report_type == "consolidation":

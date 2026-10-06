@@ -77,6 +77,7 @@ class Incident(Base):
     resolution = Column(Text)
     rca_result = Column(JSON, default=dict)  # AI RCA sonucu
     assigned_to = Column(String(100))
+    problem_key = Column(String(240), index=True, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     resolved_at = Column(DateTime(timezone=True))

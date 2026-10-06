@@ -157,6 +157,26 @@ def run_metric_sync() -> Dict[str, Any]:
         db.close()
 
 
+def run_virt_insights(hypervisor_id: Optional[int] = None, platform: Optional[str] = None,
+                      file_scan: Optional[bool] = None) -> Dict[str, Any]:
+    """Sanallaştırma karar katmanı turu (kapasite / sağlık / geri kazanım / sapma)."""
+    from app.services.fleet_mutex import fleet_lock
+    from app.services.findings.runner import run_cycle
+
+    db = _db()
+    try:
+        with fleet_lock("virt_insights", ttl_sec=7200) as ok:
+            if not ok:
+                return {"skipped": True}
+            logger.info("Celery fleet: virt insights")
+            return run_cycle(db, hypervisor_id=hypervisor_id, platform=platform, file_scan=file_scan)
+    except Exception as exc:
+        logger.exception("virt_insights hata: %s", exc)
+        return {"error": str(exc)}
+    finally:
+        db.close()
+
+
 def run_esx_metric_sync() -> Dict[str, Any]:
     from app.services.fleet_mutex import fleet_lock
     from app.services.esx_metric_sync import sync_esx_metrics

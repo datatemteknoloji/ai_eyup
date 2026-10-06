@@ -53,6 +53,7 @@ Ayarlar → Hakkında → **AI Mimari** bu metni PDF yapar. Kural ile kod çeli�
 |---|---|---|---|---|---|---|
 | Unified Intent Router | `unified_intent_router.py` | `route_unified` | `knowledge \| planning_clarify \| planning_agentic \| live` | mesaj + followup bayrakları | `UnifiedRoute` | Rule/keyword, LLM yok |
 | Module Orchestrator | `module_orchestrator.py` | `plan_modules` | linux/windows/virt/openshift/exadata seti | mesaj | `ModulePlan` | Keyword skor + düşük güvende `route_llm_hint` |
+| Modül Kapısı (RBAC) | `unified_chat.py` | `_chat_allowed_modules` / `_route_denied_modules` | router sonrası, collect/tool öncesi: kullanıcıda olmayan platform modülü (linux/windows/virtualization/openshift/exadata) isteniyorsa yanıt reddedilir; envanter fast-path ve `linux_servers`/`windows_servers` listeleri yetkisiz platformdan arındırılır. `admin`, `ai_automation`, `executive` kısıtsız | `UnifiedRoute.modules` + kullanıcı modülleri | ret mesajı veya devam | Deterministik, LLM yok |
 | Source Planner | `chat_source_planner.py` | `plan_sources` | db/ssh/winrm/vcenter/ocp/prom/rag | mesaj + scope | `SourcePlan` | Unified’da router’ı çağırır; diğerinde keyword |
 | Path Policy | `chat_path_policy.py` | `resolve_live_path` | fixed collect XOR agentic | bayraklar | `LivePathDecision` | Keyword + settings |
 | Chat Intent | `chat_intent.py` | `classify_chat_intent` | conceptual/inventory/live/mixed/general | mesaj | `ChatIntent` | Regex |
@@ -267,7 +268,8 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 | Konu | Gerçek |
 |---|---|
 | Detection | vcenter, vsphere, esxi, vmware, datastore, snapshot, `vm` regex, vb. |
-| Tools | `db_list_*`, `db_metric_trend`, `virt_health_overview`, `virt_bottleneck_diagnose`, `vcenter_*`, `vcenter_property_read` |
+| Tools | `db_list_*`, `db_metric_trend`, `virt_health_overview`, `virt_bottleneck_diagnose`, `vcenter_*`, `vcenter_property_read`; karar katmanı: `virt_capacity_simulate`, `virt_placement_recommend`, `virt_reclaim_summary`, `virt_health_findings`, `virt_incident_timeline` |
+| Karar katmanı | Deterministik motorlar (`virt_capacity_planner`, `virt_placement`, `virt_reclaim`, `findings/*`, `virt_incident_timeline`) VMware + OLVM + OCP Virt için ortak; sonuç `infra_findings` tablosunda. LLM sayı üretmez, motor çıktısını anlatır. QA_RULES `h_capacity_n1` (`n+1`, `kaç host lazım`, `host ihtiyacı`) LLM’siz N+1 tablosu döner. Erişim yalnız vCenter / OLVM Manager / OpenShift API (ESXi/KVM host’a bağlanılmaz). |
 | Context | `infra_overview` virt özeti; hypervisor chat’te `build_context` büyük DB dump |
 | Prompt | Unified SYSTEM_PROMPT virt kuralları; `_VIRTUALIZATION_PERSONA`; module persona |
 | RAG | Genel koleksiyonlar; virt-specific collection yok. Seed: `docs/rag_seed/VIRT-*.md` |
@@ -390,6 +392,19 @@ Virt DB tool domain: **yalnız `vcenter`** (`infra` yok). Linux/Windows-only pla
 | `vcenter_snapshot_summary` | SOAP | Filo snapshot |
 | `vcenter_list_vm_snapshots` | SOAP | Per-VM gerçek byte |
 
+### Sanallaştırma karar katmanı (`tools_virt_insights.py`, domain `vcenter`)
+
+| Tool | Kaynak | Amaç |
+|---|---|---|
+| `virt_capacity_simulate` | `virt_capacity_planner` (DB envanter + metrik) | Effective kapasite, N+1, runway; `vcpu/memory_gb/count` ile what-if |
+| `virt_placement_recommend` | `virt_placement` | Filtre (Memory/CPU/datastore/kural) + skorlu host önerisi; reddedilenler gerekçeli |
+| `virt_reclaim_summary` | `virt_reclaim` | Kapalı/atıl/oversized VM, snapshot, sahipsiz disk, ISO, kullanılmayan datastore |
+| `virt_health_findings` | `infra_findings` | Sağlık/uyum/sapma/donanım/CVE bulguları (istisnalı satırlar işaretli) |
+| `virt_incident_timeline` | alarm + event + config değişikliği + bulgu | Incident penceresi zaman çizelgesi (`items` en fazla 60) + aday nedenler |
+| `virt_remediate` | vCenter SOAP (**ayrı yazma hesabı**) | MUTATING, `llm_visible=False` — LLM spec’lerinde yok; yalnız UI önerisi → AgentAction onayı |
+
+Tümü READ_ONLY (son satır hariç). `unified_tool_chat` ipucu satırı kapasite / yerleşim / geri kazanım / sağlık / zaman çizelgesi sorularını bu tool’lara yönlendirir. OpenShift platform bulguları (`platform=ocp`, `/ocp-insights/*`) aynı `infra_findings` motorunu kullanır; sohbet tool’u yoktur (UI + rapor). OCP incident zaman çizelgesi `/ocp-insights/incident-timeline/{id}` (`ocp_incident_timeline.py`): DB olayları + aktif bulgular + salt okunur canlı pod durumu / K8s event / pod log hata satırları (sır maskeli); kural tabanlı adaylar (yapılandırma değişikliği dahil), LLM yok. Drain/what-if (`/ocp-insights/capacity/simulate`), node risk (`/node-risk`) ve değişiklik/baseline (`/changes`, `/baseline`) UI + REST; sohbet tool’u yok.
+
 ### OpenShift / KubeVirt
 
 | Tool | Kaynak |
@@ -427,6 +442,8 @@ Virt DB tool domain: **yalnız `vcenter`** (`infra` yok). Linux/Windows-only pla
 ### Agent-only
 
 `ask_user` — chat loop’da reddedilir; Agent’ta duraklatır.
+
+`Tool.llm_visible=False` olan tool’lar (`virt_remediate`) `tool_specs()` ve `tool_specs_read_only()` çıktısına girmez; model bunları çağıramaz. Onaylı düzeltme akışı: UI `POST /virt-insights/remediation/propose` → izin listesi (`ACTIONS`: snapshot sil, NTP restart, NTP sunucu ayarla, SSH durdur) + açık bulgu + ayrı yazma hesabı doğrulanır → `AgentAction(status=pending, risk=mutating)` + hazır transcript → `/agent/actions/{id}/approve` → `continue_after_decision` → `tool.execute` (yeniden doğrulama, önceki değeri okuma, rollback bilgisi) → `_run_loop` kısa özet. Serbest komut yoktur.
 
 ### Exadata (DB, READ_ONLY)
 
@@ -471,7 +488,7 @@ Canlı cellcli/ASMCMD yok. `connection_config` tool çıktısına girmez.
 
 **Dokümanlar**
 
-1. `runbook` — PDF/text, `docs/rag_seed/*`
+1. `runbook` — PDF/text, `docs/rag_seed/*`; ayrıca Karar katmanı → Ayarlar’dan yüklenen `kb_feed` paketi `ingest_rag=true` ile makale başına `ingest_runbook("KB <id>", …)` (yalnız admin, isteğe bağlı)
 2. `incidents` — SystemEvent/Incident reindex
 3. `metric_descriptions` — varsayılan metrik sözlüğü
 4. `knowledge_facts` — LearnedFact + pin

@@ -17,11 +17,20 @@ import json as _json
 import logging
 import httpx
 
-from app.core.auth import get_current_user_optional
+from app.core.auth import get_current_user, get_current_user_optional
 from app.core.database import get_db
 from app.core.config import settings, get_active_model
 from app.models.server import Server
 from app.models.chat_session import ChatSession, ChatMessage
+from app.models.user import User
+from app.services.chat_session_scope import (
+    create_owned_session,
+    get_owned_session,
+    require_owned_session,
+    require_user_id,
+    sessions_q,
+    user_pk,
+)
 from app.models.credential import GlobalCredential
 from app.services.platform_scope import is_windows_server
 from app.services import llm_gateway
@@ -95,6 +104,42 @@ class UnifiedChatRequest(BaseModel):
     skip_server_context: Optional[bool] = False
 
 
+_CHAT_MODULE_MAP = {
+    "linux": "linux", "exadata": "exadata", "windows": "windows",
+    "virt": "virtualization", "openshift": "openshift",
+}
+
+
+def _chat_allowed_modules(user, db: Session):
+    """Kullanıcının sohbette sorgulayabileceği platformlar (None → kısıtsız).
+
+    Admin ve cross-platform modüller (ai_automation / executive) kısıtsızdır;
+    diğerleri yalnız atanmış platform modüllerini sorgulayabilir.
+    """
+    if user is None:
+        return set()
+    from app.core.auth import user_has_module
+    if user.role in ("admin", "superadmin"):
+        return None
+    if user_has_module(user, "ai_automation", db) or user_has_module(user, "executive", db):
+        return None
+    return {k for k, mid in _CHAT_MODULE_MAP.items() if user_has_module(user, mid, db)}
+
+
+def _route_denied_modules(route, allowed) -> list:
+    """Rotanın istediği ama kullanıcıda olmayan platformlar."""
+    if allowed is None:
+        return []
+    need = set(route.modules or ())
+    if getattr(route, "wants_openshift", False):
+        need.add("openshift")
+    if getattr(route, "windows_specific", False):
+        need.add("windows")
+    if getattr(route, "linux_specific", False):
+        need.add("linux")
+    return sorted(m for m in need if m in _CHAT_MODULE_MAP and m not in allowed)
+
+
 def _session_to_dict(session: ChatSession, message_count: int = 0) -> dict:
     return {
         "id": session.id,
@@ -107,12 +152,11 @@ def _session_to_dict(session: ChatSession, message_count: int = 0) -> dict:
 
 
 @router.get("/sessions")
-async def list_sessions(db: Session = Depends(get_db)):
+async def list_sessions(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     from app.services.chat_history import repair_session_title_from_first_user_message
 
-    sessions = db.query(ChatSession).filter(
-        ChatSession.category == CATEGORY
-    ).order_by(
+    uid = require_user_id(user)
+    sessions = sessions_q(db, uid, CATEGORY).order_by(
         func.coalesce(ChatSession.updated_at, ChatSession.created_at).desc()
     ).all()
     result = []
@@ -130,18 +174,19 @@ async def list_sessions(db: Session = Depends(get_db)):
 
 
 @router.post("/sessions")
-async def create_session(db: Session = Depends(get_db)):
-    session = ChatSession(title="Yeni Chat", server_ids=[], category=CATEGORY)
-    db.add(session)
-    db.commit()
-    db.refresh(session)
+async def create_session(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    session = create_owned_session(
+        db, user_id=require_user_id(user), title="Yeni Chat",
+        category=CATEGORY, server_ids=[],
+    )
     return _session_to_dict(session, message_count=0)
 
 
 @router.get("/sessions/{session_id}/messages")
-async def get_session_messages(session_id: int, db: Session = Depends(get_db)):
-    if db.query(ChatSession).filter(ChatSession.id == session_id).first() is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def get_session_messages(
+    session_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    require_owned_session(db, session_id, require_user_id(user), CATEGORY)
     messages = (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session_id)
@@ -164,10 +209,10 @@ async def get_session_messages(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: int, db: Session = Depends(get_db)):
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def delete_session(
+    session_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    session = require_owned_session(db, session_id, require_user_id(user), CATEGORY)
     db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
     db.delete(session)
     db.commit()
@@ -175,8 +220,9 @@ async def delete_session(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/sessions")
-async def delete_all_sessions(db: Session = Depends(get_db)):
-    ids = [s.id for s in db.query(ChatSession.id).filter(ChatSession.category == CATEGORY).all()]
+async def delete_all_sessions(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    uid = require_user_id(user)
+    ids = [s.id for s in sessions_q(db, uid, CATEGORY).all()]
     if ids:
         db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(ids)))
         db.execute(delete(ChatSession).where(ChatSession.id.in_(ids)))
@@ -374,16 +420,19 @@ async def unified_chat_stream(
                 message, output_directive = extract_output_directive(raw_message)
 
                 session_id = request.session_id
+                uid = user_pk(_auth_user)
+                if uid is None:
+                    yield _sse({"error": "Kimlik doğrulaması gerekli"})
+                    return
                 if not session_id:
                     from app.services.chat_history import title_from_message
                     title = title_from_message(message)
-                    session = ChatSession(title=title, server_ids=[], category=CATEGORY)
-                    db.add(session)
-                    db.commit()
-                    db.refresh(session)
+                    session = create_owned_session(
+                        db, user_id=uid, title=title, category=CATEGORY, server_ids=[],
+                    )
                     session_id = session.id
                 else:
-                    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                    session = get_owned_session(db, session_id, uid, CATEGORY)
                     if not session:
                         yield _sse({"error": "Session bulunamadı"})
                         return
@@ -564,6 +613,24 @@ async def unified_chat_stream(
                     _route.mode, _route.reason, sorted(_route.domains), _route.complexity,
                 )
 
+                # Modül izolasyonu: kullanıcının yetkisi olmayan platformlar sohbetle sorgulanamaz.
+                _chat_allowed = _chat_allowed_modules(_auth_user, db)
+                _denied_mods = _route_denied_modules(_route, _chat_allowed)
+                if _denied_mods:
+                    _names = ", ".join(_CHAT_MODULE_MAP[m] for m in _denied_mods)
+                    answer_text = (
+                        f"Bu soru, yetkiniz olmayan modül(ler) için: **{_names}**. "
+                        "Yalnızca size atanmış modüllerin verisini sorgulayabilirsiniz. "
+                        "Erişim için yöneticinizden modül ataması isteyin."
+                    )
+                    yield _sse({"phase": "answering"})
+                    for i in range(0, len(answer_text), 8):
+                        yield _sse({"token": answer_text[i:i + 8]})
+                    db.add(ChatMessage(session_id=session_id, role="assistant", content=answer_text))
+                    db.commit()
+                    yield _sse({"done": True, "session_id": session_id})
+                    return
+
                 wants_openshift = _route.wants_openshift
                 linux_specific = _route.linux_specific
                 windows_specific = _route.windows_specific
@@ -609,11 +676,20 @@ async def unified_chat_stream(
                     is_inventory_status_query,
                     format_fleet_inventory_answer,
                 )
-                if is_inventory_status_query(message) or is_fleet_inventory_query(message):
+                if (
+                    (is_inventory_status_query(message) or is_fleet_inventory_query(message))
+                    and (_chat_allowed is None or _chat_allowed & {"linux", "windows", "exadata"})
+                ):
                     from app.services.infra_summary import build_infra_overview_text
                     ml = (message or "").lower()
                     linux_only = any(k in ml for k in ("linux", "rhel", "centos", "ubuntu", "debian"))
                     win_only = any(k in ml for k in ("windows", "winrm"))
+                    if _chat_allowed is not None:
+                        # Yetkisiz platformun envanterini kısıtlı kullanıcıya gösterme
+                        if "windows" not in _chat_allowed and "linux" in _chat_allowed:
+                            win_only, linux_only = False, True
+                        elif "linux" not in _chat_allowed and "windows" in _chat_allowed:
+                            win_only, linux_only = True, False
                     if is_inventory_status_query(message):
                         plat = None
                         if linux_only and not win_only:
@@ -652,6 +728,11 @@ async def unified_chat_stream(
 
                 linux_servers = _linux_ai_ready_servers(db)
                 windows_servers = _windows_ai_ready_servers(db)
+                if _chat_allowed is not None:
+                    if "linux" not in _chat_allowed and "exadata" not in _chat_allowed:
+                        linux_servers = []
+                    if "windows" not in _chat_allowed:
+                        windows_servers = []
 
                 # Mesajda açıkça belirtilen sunucu varsa sadece onu hedefle (daha hızlı ve odaklı).
                 # chat.py'deki _servers_mentioned_in_message'ı kullanıyoruz: sadece `name` +

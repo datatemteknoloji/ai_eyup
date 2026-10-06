@@ -126,6 +126,13 @@ def user_has_module(user: User, module_id: str, db: Session) -> bool:
     )
 
 
+def can_open_shell(user: User, db: Session, module_id: str, min_role: str = "operator") -> bool:
+    """WebSocket (SSH terminal / pod exec / VM console) için modül + minimum rol kontrolü."""
+    if ROLE_RANK.get(user.role, 0) < ROLE_RANK.get(min_role, 99):
+        return False
+    return user_has_module(user, module_id, db)
+
+
 def require_module(module_id: str):
     """Belirtilen platform modülüne erişimi zorunlu kılar (menü + URL + API)."""
 

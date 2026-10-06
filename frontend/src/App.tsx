@@ -20,6 +20,14 @@ const Applications = lazy(() => import('./pages/Applications'))
 const Servers = lazy(() => import('./pages/Servers'))
 const Hypervisors = lazy(() => import('./pages/Hypervisors'))
 const VirtMonitoring = lazy(() => import('./pages/VirtMonitoring'))
+const VirtCapacity = lazy(() => import('./pages/VirtCapacity'))
+const VirtReclaim = lazy(() => import('./pages/VirtReclaim'))
+const VirtHealthChecks = lazy(() => import('./pages/VirtHealthChecks'))
+const VirtChanges = lazy(() => import('./pages/VirtChanges'))
+const OcpCapacityPage = lazy(() => import('./pages/OcpInsightsPages').then(m => ({ default: m.OcpCapacityPage })))
+const OcpReclaimPage = lazy(() => import('./pages/OcpInsightsPages').then(m => ({ default: m.OcpReclaimPage })))
+const OcpHealthPage = lazy(() => import('./pages/OcpInsightsPages').then(m => ({ default: m.OcpHealthPage })))
+const OcpChangesPage = lazy(() => import('./pages/OcpInsightsPages').then(m => ({ default: m.OcpChangesPage })))
 const MonitoringHub = lazy(() => import('./pages/MonitoringHub'))
 const Agent = lazy(() => import('./pages/Agent'))
 const AiAutomationHub = lazy(() => import('./pages/AiAutomationHub'))
@@ -196,6 +204,21 @@ const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return <>{children}</>
 }
 
+/** Layout dışı (popup) sayfalar için: oturum + modül kontrolü (yükleme bitene kadar bekler). */
+const RequireStandaloneModule: React.FC<{ moduleId: string; children: React.ReactNode }> = ({ moduleId, children }) => {
+  const { user, loading, hasModule } = useAuth()
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <span className="w-8 h-8 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
+      </div>
+    )
+  }
+  if (!user) return <Navigate to="/login" replace />
+  if (!hasModule(moduleId)) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 const RequireAdmin: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth()
   if (user?.role !== 'admin' && !user?.is_admin) return <Navigate to="/" replace />
@@ -257,10 +280,10 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
 
-            <Route path="/terminal/:serverId" element={<TerminalPage />} />
+            <Route path="/terminal/:serverId" element={<RequireStandaloneModule moduleId="linux"><TerminalPage /></RequireStandaloneModule>} />
             <Route
               path="/openshift/vms/:clusterId/:namespace/:name/console"
-              element={<OpenShiftVmConsolePage />}
+              element={<RequireStandaloneModule moduleId="openshift"><OpenShiftVmConsolePage /></RequireStandaloneModule>}
             />
 
             <Route path="/*" element={
@@ -270,7 +293,7 @@ function App() {
                     <Suspense fallback={<PageFallback />}>
                     <Routes>
                       <Route path="/" element={<ErrorBoundary><HomeRedirect /></ErrorBoundary>} />
-                      <Route path="/dashboard" element={<ErrorBoundary><AdminDashboardPage /></ErrorBoundary>} />
+                      <Route path="/dashboard" element={<RequireAdmin><ErrorBoundary><AdminDashboardPage /></ErrorBoundary></RequireAdmin>} />
                       <Route path="/executive" element={<RequireModule moduleId="executive"><ErrorBoundary><ExecutiveDashboard /></ErrorBoundary></RequireModule>} />
                       <Route
                         path="/monitoring"
@@ -285,6 +308,10 @@ function App() {
                       <Route path="/servers" element={<RequireModule moduleId="linux"><ErrorBoundary><Servers /></ErrorBoundary></RequireModule>} />
                       <Route path="/hypervisors" element={<RequireModule moduleId="virtualization"><ErrorBoundary><Hypervisors /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt/monitoring" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtMonitoring /></ErrorBoundary></RequireModule>} />
+                      <Route path="/virt/capacity" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtCapacity /></ErrorBoundary></RequireModule>} />
+                      <Route path="/virt/reclaim" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtReclaim /></ErrorBoundary></RequireModule>} />
+                      <Route path="/virt/health" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtHealthChecks /></ErrorBoundary></RequireModule>} />
+                      <Route path="/virt/changes" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtChanges /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt/dashboard" element={<Navigate to="/hypervisors" replace />} />
                       <Route path="/virt-ops" element={<Navigate to="/virt/ops" replace />} />
                       <Route path="/linux/reports" element={<RequireModule moduleId="linux"><ErrorBoundary><LinuxInfraReportsPage /></ErrorBoundary></RequireModule>} />
@@ -335,6 +362,10 @@ function App() {
                       <Route path="/openshift/vms" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftVmsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/monitoring" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftMonitoring /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/access" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftAccessPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/capacity" element={<RequireModule moduleId="openshift"><ErrorBoundary><OcpCapacityPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/reclaim" element={<RequireModule moduleId="openshift"><ErrorBoundary><OcpReclaimPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/health" element={<RequireModule moduleId="openshift"><ErrorBoundary><OcpHealthPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/changes" element={<RequireModule moduleId="openshift"><ErrorBoundary><OcpChangesPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/chat" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftChatPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/ops" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/events" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
@@ -381,7 +412,7 @@ function App() {
                       <Route path="/metrics" element={<RequireModule moduleId="linux"><ErrorBoundary><LiveMetrics /></ErrorBoundary></RequireModule>} />
                       <Route path="/hypervisor-chat" element={<Navigate to="/virt/chat" replace />} />
                       <Route path="/ansible" element={<RequireModule moduleId="linux"><ErrorBoundary><Ansible /></ErrorBoundary></RequireModule>} />
-                      <Route path="/mcp" element={<ErrorBoundary><McpTools /></ErrorBoundary>} />
+                      <Route path="/mcp" element={<RequireAdmin><ErrorBoundary><McpTools /></ErrorBoundary></RequireAdmin>} />
                       <Route path="/packages" element={<RequireModule moduleId="linux"><ErrorBoundary><PackageManager /></ErrorBoundary></RequireModule>} />
                       <Route path="/repositories" element={<RequireModule moduleId="linux"><ErrorBoundary><Repositories /></ErrorBoundary></RequireModule>} />
                       <Route path="/system-update" element={<RequireModule moduleId="linux"><ErrorBoundary><SystemUpdate /></ErrorBoundary></RequireModule>} />

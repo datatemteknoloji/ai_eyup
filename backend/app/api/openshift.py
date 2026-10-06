@@ -1254,6 +1254,11 @@ async def kubevirt_vnc_console(
             await websocket.accept()
             await websocket.close(code=4401)
             return
+        from app.core.auth import can_open_shell
+        if not can_open_shell(user, db, "openshift", "operator"):
+            await websocket.accept()
+            await websocket.close(code=4403, reason="openshift modülü ve operator rolü gerekli")
+            return
 
         cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
         if not cluster:
@@ -1416,6 +1421,11 @@ async def kubevirt_serial_console(
         if not user:
             await websocket.accept()
             await websocket.close(code=4401)
+            return
+        from app.core.auth import can_open_shell
+        if not can_open_shell(user, db, "openshift", "operator"):
+            await websocket.accept()
+            await websocket.close(code=4403, reason="openshift modülü ve operator rolü gerekli")
             return
         cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
         if not cluster:
@@ -1773,6 +1783,11 @@ async def cluster_pod_exec(
             await websocket.send_text("\r\n\033[31mKullanıcı bulunamadı.\033[0m\r\n")
             await websocket.close(code=4401)
             return
+        from app.core.auth import can_open_shell
+        if not can_open_shell(user, db, "openshift", "operator"):
+            await websocket.accept()
+            await websocket.close(code=4403, reason="openshift modülü ve operator rolü gerekli")
+            return
 
         cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
         if not cluster:
@@ -2059,9 +2074,10 @@ async def list_workloads(
 async def openshift_ops_summary(db: Session = Depends(get_db)):
     """Navbar badge — OpenShift olay özeti."""
     from app.api.ops_center import _active_events, ACTIVE_WINDOW_HOURS
+    from app.services.event_grouping import unique_events
 
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
-    events = _active_events(db, since, platform="openshift")
+    events = unique_events(_active_events(db, since, platform="openshift"))
     critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
     warning = sum(1 for e in events if e.severity == "warning")
 
@@ -2082,9 +2098,10 @@ async def openshift_ops_summary(db: Session = Depends(get_db)):
 async def openshift_command_center(db: Session = Depends(get_db)):
     """Cluster durumu, node sağlığı ve son olaylar."""
     from app.api.ops_center import _active_events, ACTIVE_WINDOW_HOURS
+    from app.services.event_grouping import unique_events
 
     since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
-    events = _active_events(db, since, platform="openshift")
+    events = unique_events(_active_events(db, since, platform="openshift"))
 
     clusters = db.query(OpenShiftCluster).all()
     cluster_ids = [c.id for c in clusters]

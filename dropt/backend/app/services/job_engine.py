@@ -100,6 +100,71 @@ def create_job(
     return job
 
 
+def record_completed_job(
+    session: Session,
+    *,
+    module: str,
+    action: str,
+    talep_id: str,
+    title: str,
+    summary_tr: str,
+    payload: dict[str, Any],
+    user_id: int,
+    username: str,
+    role: str,
+    client_ip: str = "",
+) -> Job:
+    """SSH olmadan tamamlanmış iş + success denetim kaydı (Centrify toplu kaydet)."""
+    talep = normalize_talep_id(talep_id)
+    now = datetime.now(UTC)
+    ops = payload.get("ops") if isinstance(payload, dict) else None
+    n = len(ops) if isinstance(ops, list) and ops else 1
+    job = Job(
+        module=module or "centrify",
+        action=action or "apply",
+        status=JobStatus.success,
+        talep_id=talep,
+        title=(title or "Centrify")[:255],
+        summary_tr=(summary_tr or title or "Centrify değişiklikleri")[:1024],
+        created_by_user_id=user_id,
+        created_by_username=username,
+        created_by_role=role,
+        client_ip=client_ip,
+        payload=payload or {},
+        server_ids=[],
+        dry_run=False,
+        progress_done=n,
+        progress_total=n,
+        applied_at=now,
+        finished_at=now,
+        updated_at=now,
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    hosts = []
+    if isinstance(payload, dict):
+        raw_hosts = payload.get("hostnames") or payload.get("targets") or []
+        if isinstance(raw_hosts, list):
+            hosts = [str(x).strip() for x in raw_hosts if str(x).strip()]
+    write_audit(
+        session,
+        action="centrify.apply",
+        status=AuditStatus.success,
+        message=job.summary_tr or job.title,
+        user_id=user_id,
+        username=username,
+        role=role,
+        client_ip=client_ip,
+        hostname=", ".join(hosts)[:255],
+        talep_id=talep,
+        job_id=job.id,
+        after_state=payload or {},
+    )
+    return job
+
+
 def run_preview(session: Session, job: Job) -> PreviewArtifact:
     if job.status not in {JobStatus.draft, JobStatus.previewed, JobStatus.failed, JobStatus.partial}:
         raise ValueError(f"Bu durumda önizleme yapılamaz: {job.status}")

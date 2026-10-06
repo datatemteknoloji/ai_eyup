@@ -3,7 +3,7 @@
  *
  * Yalnızca WinRM bağlantı yapılandırması. Zone yönetimi Level 1 → Centrify sayfasında.
  */
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   KeyRound, RefreshCw, Settings, Loader2, CheckCircle2, XCircle,
@@ -49,6 +49,18 @@ export default function CentrifySettingsPage() {
       return res.json()
     },
   })
+
+  useEffect(() => {
+    if (config) {
+      setForm(prev => ({
+        ...prev,
+        winrm_host: config.winrm_host || prev.winrm_host,
+        winrm_port: String(config.winrm_port || prev.winrm_port),
+        service_account: config.service_account || prev.service_account,
+        label: config.label || prev.label,
+      }))
+    }
+  }, [config])
 
   const testConnection = async () => {
     setTesting(true); setTestResult(null)
@@ -156,7 +168,10 @@ export default function CentrifySettingsPage() {
           </div>
         </div>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">{t('cz_int_pass')}</label>
+          <label className="block text-xs text-slate-400 mb-1">
+            {t('cz_int_pass')}
+            {config && <span className="text-slate-600 ml-1">({t('hv_edit_pw_hint')})</span>}
+          </label>
           <input
             type="password"
             className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
@@ -191,7 +206,7 @@ export default function CentrifySettingsPage() {
         <div className="flex gap-3 pt-2">
           <button
             onClick={testConnection}
-            disabled={testing || !form.winrm_host || !form.password}
+            disabled={testing || !form.winrm_host || (!form.password && !config)}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-sm text-slate-200 rounded-lg transition-colors"
           >
             {testing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
@@ -199,7 +214,7 @@ export default function CentrifySettingsPage() {
           </button>
           <button
             onClick={saveConfig}
-            disabled={saving || !form.winrm_host || !form.password}
+            disabled={saving || !form.winrm_host || (!form.password && !config)}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm text-white rounded-lg transition-colors"
           >
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Settings size={14} />}

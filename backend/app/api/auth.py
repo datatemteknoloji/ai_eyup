@@ -68,6 +68,28 @@ class PasswordChangeRequest(BaseModel):
     new_password: str
 
 
+def _favorite_paths(u: User) -> list:
+    raw = getattr(u, "favorite_paths", None)
+    if not isinstance(raw, list):
+        return []
+    out = []
+    seen = set()
+    for item in raw:
+        path = name = ""
+        if isinstance(item, str):
+            path = item.strip()
+        elif isinstance(item, dict):
+            path = str(item.get("path") or "").strip()
+            name = str(item.get("name") or "").strip()[:255]
+        if not path.startswith("/") or path in seen or len(path) > 256:
+            continue
+        seen.add(path)
+        out.append({"path": path, "name": name or path})
+        if len(out) >= 40:
+            break
+    return out
+
+
 def _user_dict(u: User) -> dict:
     theme = getattr(u, "theme", None) or "dark"
     if theme not in ("dark", "light"):
@@ -85,6 +107,7 @@ def _user_dict(u: User) -> dict:
         "auth_source": getattr(u, "auth_source", None) or "local",
         "theme": theme,
         "locale": locale,
+        "favorite_paths": _favorite_paths(u),
         "created_at": u.created_at.isoformat() if u.created_at else None,
         "last_login": u.last_login.isoformat() if u.last_login else None,
     }
@@ -351,6 +374,7 @@ def change_own_password(req: PasswordChangeRequest, request: Request,
 class PreferencesPatch(BaseModel):
     theme: Optional[str] = None
     locale: Optional[str] = None
+    favorite_paths: Optional[list] = None
 
 
 @router.patch("/preferences")
@@ -368,6 +392,11 @@ def update_preferences(
         if loc not in ("tr", "en"):
             raise HTTPException(status_code=400, detail="locale tr veya en olmalı")
         user.locale = loc
+    if req.favorite_paths is not None:
+        if not isinstance(req.favorite_paths, list):
+            raise HTTPException(status_code=400, detail="favorite_paths liste olmalı")
+        fake = type("U", (), {"favorite_paths": req.favorite_paths})()
+        user.favorite_paths = _favorite_paths(fake)
     db.commit()
     db.refresh(user)
     return _user_dict_with_modules(user, db)

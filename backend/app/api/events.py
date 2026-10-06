@@ -8,13 +8,14 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional, List
 from pydantic import BaseModel
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_, and_
 from app.core.database import get_db
 from app.models.event import SystemEvent
 from app.models.server import Server
 from app.services.incident_auto import auto_create_or_link_incident
 from app.services.platform_scope import apply_platform_filter, VALID_PLATFORMS
 from app.services.event_filters import apply_actionable_event_filters, apply_hide_routine_virt
+from app.services.event_grouping import group_events, unique_events
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -124,9 +125,22 @@ def compute_event_stats(db: Session, platform: Optional[str], show_routine: bool
         q = apply_hide_routine_virt(q, show_routine=False)
 
     total = q.count()
-    unresolved = q.filter(SystemEvent.resolved == False).count()  # noqa: E712
     acknowledged = q.filter(SystemEvent.is_acknowledged == True, SystemEvent.resolved == False).count()  # noqa: E712
     known = q.filter(SystemEvent.is_known == True, SystemEvent.resolved == False).count()  # noqa: E712
+
+    open_window = q.filter(
+        SystemEvent.resolved == False,  # noqa: E712
+        or_(
+            SystemEvent.last_seen >= since,
+            and_(SystemEvent.last_seen.is_(None), SystemEvent.created_at >= since),
+        ),
+    )
+    open_rows = (
+        open_window.order_by(SystemEvent.last_seen.desc().nullslast())
+        .limit(12000)
+        .all()
+    )
+    unresolved = len(unique_events(open_rows))
 
     actionable = apply_platform_filter(
         apply_actionable_event_filters(
@@ -138,9 +152,11 @@ def compute_event_stats(db: Session, platform: Optional[str], show_routine: bool
     if platform == "virt" and not show_routine:
         actionable = apply_hide_routine_virt(actionable, show_routine=False)
 
-    critical = actionable.filter(SystemEvent.severity == "critical").count()
-    warning = actionable.filter(SystemEvent.severity == "warning").count()
-    emergency = actionable.filter(SystemEvent.severity == "emergency").count()
+    rows = actionable.all()
+    uniq = unique_events(rows)
+    critical = sum(1 for e in uniq if e.severity == "critical")
+    warning = sum(1 for e in uniq if e.severity == "warning")
+    emergency = sum(1 for e in uniq if e.severity == "emergency")
     critical_badge = critical + emergency
 
     return {
@@ -480,31 +496,13 @@ async def bulk_delete(data: BulkActionRequest, db: Session = Depends(get_db)):
 
 
 def _normalize_title(title: str) -> str:
-    """Log basligından timestamp ve syslog prefix soy (gruplama icin)."""
-    t = (title or "").strip()
-    # ISO timestamp: 2026-02-24T05:11:14+03:00
-    t = _re.sub(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}([+-]\d{2}:?\d{2}|Z)?\s+', '', t)
-    # syslog date: Feb 24 05:11:14
-    t = _re.sub(r'^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+', '', t)
-    # hostname (word without colon) followed by service[pid]: or service:
-    t = _re.sub(r'^\S+\s+\S+\[\d+\]:\s*', '', t)
-    t = _re.sub(r'^\S+\s+(?=\S+:)', '', t)
-    return t.strip() or (title or "").strip()
+    from app.services.event_grouping import normalize_title
+    return normalize_title(title)
 
 
 def _group_key_for_title(title: str) -> str:
-    """Gruplama icin normalize edilmis key: sayilar/hex/adresler N ile replace edilir."""
-    t = _normalize_title(title)
-    # hex values: 0x1a2b -> 0xN
-    t = _re.sub(r'0x[0-9a-fA-F]+', '0xN', t)
-    # IPv4/port addresses
-    t = _re.sub(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?', 'IP', t)
-    # UUIDs
-    t = _re.sub(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', 'UUID', _re.IGNORECASE | 0 and t or t, _re.IGNORECASE)
-    t = _re.sub(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', 'UUID', t)
-    # remaining numbers
-    t = _re.sub(r'\d+', 'N', t)
-    return t.strip()
+    from app.services.event_grouping import group_key_for_title
+    return group_key_for_title(title)
 
 
 _SEVERITY_ORDER = {"emergency": 0, "critical": 1, "error": 2, "warning": 3, "info": 4}
@@ -528,8 +526,8 @@ async def list_events_grouped(
     sort_dir: str = Query(default="desc"),
     db: Session = Depends(get_db),
 ):
-    """Event'leri normalize baslik + (event_type, severity, server_id) ile grupla.
-    last_seen alanini 'Son Olusum' icin kullanir. Tum gruplara gore server-side sort."""
+    """Event'leri sorun anahtarıyla grupla (sunucu + tip / normalize başlık).
+    last_seen 'Son Olusum'. Severity anahtara girmez — aynı sorun tek satır."""
     q = db.query(SystemEvent)
     q = apply_platform_filter(q, platform, db)
     if platform == "virt" and not show_routine:
@@ -563,46 +561,27 @@ async def list_events_grouped(
         servers = db.query(Server.id, Server.name).filter(Server.id.in_(server_ids)).all()
         server_map = {s.id: s.name for s in servers}
 
-    groups_map: dict = {}
-    for e in events:
-        clean_title = _normalize_title(e.title or "")
-        group_key_title = _group_key_for_title(e.title or "")
-        key = (e.event_type or "", group_key_title[:200], e.severity or "info", e.server_id or 0)
-        last_seen_val = (e.last_seen or e.created_at)
-        if key not in groups_map:
-            groups_map[key] = {
-                "event_type": e.event_type,
-                "title": clean_title,
-                "severity": e.severity,
-                "server_id": e.server_id,
-                "server_name": _event_display_server_name(e, server_map),
-                "event_ids": [],
-                "latest_created_at": last_seen_val.isoformat() if last_seen_val else None,
-                "resolved": e.resolved,
-                "is_acknowledged": e.is_acknowledged,
-                "is_known": getattr(e, "is_known", False),
-            }
-        groups_map[key]["event_ids"].append(e.id)
-        if last_seen_val:
-            cur = groups_map[key].get("latest_created_at") or ""
-            if last_seen_val.isoformat() > cur:
-                groups_map[key]["latest_created_at"] = last_seen_val.isoformat()
-
-    groups_list = [{**v, "count": len(v["event_ids"])} for v in groups_map.values()]
+    groups_list = group_events(events, server_map)
+    for g in groups_list:
+        g.pop("representative", None)
+        g.pop("problem_key", None)
 
     asc = sort_dir == "asc"
     if sort_by == "severity":
         groups_list.sort(key=lambda x: _SEVERITY_ORDER.get(x["severity"] or "info", 99), reverse=not asc)
     elif sort_by == "count":
-        groups_list.sort(key=lambda x: x["count"], reverse=not asc)
+        groups_list.sort(key=lambda x: x.get("occurrence_count") or x.get("count") or 0, reverse=not asc)
     elif sort_by == "title":
         groups_list.sort(key=lambda x: (x["title"] or "").lower(), reverse=not asc)
     elif sort_by == "server_name":
         groups_list.sort(key=lambda x: (x["server_name"] or "").lower(), reverse=not asc)
     elif sort_by == "event_type":
         groups_list.sort(key=lambda x: (x["event_type"] or "").lower(), reverse=not asc)
-    else:  # latest_created_at (default)
-        groups_list.sort(key=lambda x: x["latest_created_at"] or "", reverse=not asc)
+    else:
+        groups_list.sort(key=lambda x: x.get("latest_created_at") or x.get("last_seen") or "", reverse=not asc)
+
+    for g in groups_list:
+        g["count"] = g.get("occurrence_count") or len(g.get("event_ids") or [])
 
     total_groups = len(groups_list)
     groups_list = groups_list[offset : offset + limit]

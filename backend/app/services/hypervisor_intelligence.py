@@ -88,7 +88,14 @@ _VIRTUALIZATION_PERSONA = (
     "11 Monitoring: virt_health_overview, db_virt_alarms, vcenter_live_alarms/tasks, "
     "perf charts (ready/latency).\n"
     "13 Troubleshooting: virt_bottleneck_diagnose + ready/latency/balloon; HA isolation "
-    "için db_list_clusters + event; APD/PDL için multipath + datastore accessible.\n\n"
+    "için db_list_clusters + event; APD/PDL için multipath + datastore accessible.\n"
+    "14 Karar katmanı (deterministik motor — sayıyı motor verir, sen anlatırsın): "
+    "kapasite / N+1 / 'kaç host lazım' / what-if → virt_capacity_simulate; yerleşim → "
+    "virt_placement_recommend; atıl VM / eski snapshot / sahipsiz disk → virt_reclaim_summary; "
+    "best practice / yanlış konfigürasyon / donanım / CVE / KB / EOL / denetim → "
+    "virt_health_findings(category=); 'o saatte ne oldu' / kök neden → virt_incident_timeline "
+    "(aday listesi — kesin hüküm verme). Düzeltme isteğinde komut ÇALIŞTIRMA; Sağlık Kontrolleri "
+    "ekranındaki taslak / onaylı düzeltme akışına yönlendir.\n\n"
     "VERİ DİSİPLİNİ — KRİTİK:\n"
     "- Ortamda vCenter/hypervisor bağlantısı vardır; cevapları SAĞLANAN CANLI VERİYE dayandır.\n"
     "- 'Bilinmiyor', 'bu veriye erişimim yok', 'collector yok', 'senkronize edilmiyor' deme — "
@@ -1098,6 +1105,34 @@ def _na(detail: str) -> str:
 
 
 # ── VM Durumu ────────────────────────────────────────────────────────────────
+
+def h_capacity_n1(db: Session, question: str = "") -> str:
+    """N+1 / 'kaç host lazım' — karar katmanı kapasite motorundan deterministik tablo."""
+    from app.services.virt_capacity_planner import build_capacity
+    cap = build_capacity(db, with_forecast=True)
+    clusters = cap.get("clusters") or []
+    if not clusters:
+        return ""
+    st = {"ok": "✅ sağlam", "warn": "⚠️ sınırda", "fail": "❌ bozuk", "single_host": "tek host", "no_data": "veri yok"}
+    lines = ["| Platform | Cluster | Host | Effective Memory % | N+1 (en büyük host düşünce) | Memory tükenme | Öneri |",
+             "|---|---|---|---|---|---|---|"]
+    for c in sorted(clusters, key=lambda x: -((x.get("n_plus_one") or {}).get("mem_after_pct") or 0)):
+        n1 = c.get("n_plus_one") or {}
+        days = (((c.get("forecast") or {}).get("memory") or {}).get("days") or {})
+        rw = f"~{days.get('typical')} gün" if isinstance(days, dict) and days.get("typical") is not None else "-"
+        inv = next((a for a in c.get("actions") or [] if a.get("kind") == "invest"), None)
+        act = (f"{inv.get('hosts_needed')} host ekle" if inv and inv.get("hosts_needed") else
+               (inv.get("title") if inv else "-"))
+        n1_txt = st.get(n1.get("status"), n1.get("status") or "-")
+        if n1.get("mem_after_pct") is not None:
+            n1_txt += f" (%{n1['mem_after_pct']})"
+        lines.append(f"| {c.get('platform')} | {c.get('hypervisor')} / {c.get('cluster')} | "
+                     f"{c.get('hosts_usable')}/{c.get('hosts_total')} | "
+                     f"{(c.get('memory') or {}).get('effective_used_pct') or '-'} | {n1_txt} | {rw} | {act} |")
+    return ("**N+1 kapasite durumu** (HA rezervi düşülmüş effective kapasite; Memory birincil kısıt)\n\n"
+            + "\n".join(lines)
+            + "\n\nDetay ve what-if: Sanallaştırma → Kapasite Planlama.")
+
 
 def h_restart_week(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
@@ -3309,6 +3344,8 @@ def h_alarm_trend(db: Session, question: str = "") -> str:
 QA_RULES: List[Tuple[str, Any]] = [
     # ── Envanter / sayım (önce — LLM'e düşmesin; spesifik kurallar genelden önce) ──
     (r"restart\s*edilen\s*vm\s*say|kaç.*vm.*restart|son.*hafta.*restart\s*edil", h_restart_week),
+    # Karar katmanı kapasite — N+1 / host ihtiyacı (genel kapasite kalıplarından ÖNCE, dar kalıp)
+    (r"\bn\s*\+\s*1\b|kaç\s*host\s*(daha\s*)?(lazım|gerek|eklem)|host\s*ihtiyac", h_capacity_n1),
     # Cluster kapsamı — genel "kaç host/vm" kurallarından ÖNCE
     (r"cluster.?daki\s*(esx|esxi|host)|(?:yalnızca|yalnizca|yalnız|yalniz|sadece).{0,40}cluster.{0,40}(esx|esxi|host)|(esx|esxi|host).{0,40}cluster", h_hosts_in_cluster),
     (r"cluster.?daki\s*vm|(?:yalnızca|yalnizca|yalnız|yalniz|sadece).{0,40}cluster.{0,40}vm|vm.?ler.{0,30}cluster", h_vms_in_cluster),

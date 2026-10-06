@@ -23,13 +23,13 @@ const SEV_LABEL: Record<string, string> = {
 }
 
 // ── Page header ────────────────────────────────────────────────────────────
-export function PageHeader({ title, subtitle, actions }: {
-  title: string; subtitle?: string; actions?: React.ReactNode
+export function PageHeader({ title, subtitle, actions, titleExtra }: {
+  title: string; subtitle?: string; actions?: React.ReactNode; titleExtra?: React.ReactNode
 }) {
   return (
     <div className="flex items-end justify-between flex-wrap gap-3">
       <div>
-        <h1 className="text-lg font-bold text-white">{title}</h1>
+        <h1 className="text-lg font-bold text-white flex items-center gap-2">{title}{titleExtra}</h1>
         {subtitle && <p className="text-sm mt-0.5 text-slate-400">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}

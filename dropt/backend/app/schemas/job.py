@@ -14,6 +14,15 @@ class JobCreate(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class RecordCompletedJobIn(BaseModel):
+    talep_id: str = Field(min_length=1, max_length=255)
+    title: str = Field(default="Centrify", max_length=255)
+    summary_tr: str = Field(default="", max_length=1024)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    module: str = Field(default="centrify", max_length=64)
+    action: str = Field(default="apply", max_length=64)
+
+
 class JobRunPublic(BaseModel):
     id: int
     job_id: int

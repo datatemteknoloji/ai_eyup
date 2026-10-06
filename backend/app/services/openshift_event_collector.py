@@ -19,7 +19,7 @@ OPENSHIFT_SOURCE = "openshift_collector"
 
 
 def _upsert_openshift_event(db: Session, cluster: OpenShiftCluster, item: Dict[str, Any], now: datetime) -> bool:
-    ext_key = f"ocp{cluster.id}-{item.get('source_object')}-{item.get('reason')}-{item.get('timestamp')}"
+    ext_key = f"ocp{cluster.id}-{item.get('source_object')}-{item.get('reason')}"
     since = datetime.utcnow() - timedelta(days=7)
 
     # PostgreSQL JSON (non-JSONB): contains()/LIKE kırılır — astext ile filtrele

@@ -353,6 +353,12 @@ def _dispatch_operation(adapter, operation_type: str, desired: dict) -> dict:
             assignee_dn=desired["assignee_dn"],
             scope=desired.get("scope_type", "zone"),
         ),
+        "update_role_assignment": lambda: adapter.update_role_assignment(
+            zone_dn=desired.get("zone_dn") or "",
+            assignment_id=str(desired.get("assignment_ad_guid") or desired.get("assignment_id") or ""),
+            start_time=desired.get("start_time"),
+            end_time=desired.get("end_time"),
+        ),
         "delete_role_assignment": lambda: adapter.delete_role_assignment(
             zone_dn=desired["zone_dn"],
             assignment_id=desired["assignment_ad_guid"],
@@ -436,6 +442,17 @@ def apply_local_state(db: Session, op) -> None:
 
     def _guid():
         return uuid.uuid4()
+
+    def _dt(v):
+        if not v:
+            return None
+        if isinstance(v, datetime):
+            return v
+        s = str(v).replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(s)
+        except ValueError:
+            return None
 
     if op_type in ("create_role", "clone_role"):
         name = desired.get("name") or desired.get("dst_role_name")
@@ -559,8 +576,20 @@ def apply_local_state(db: Session, op) -> None:
             assignee_dn=desired.get("assignee_dn") or desired.get("assignee_name") or "",
             assignee_name=desired.get("assignee_name") or "",
             scope_type=desired.get("scope_type") or ("computer" if desired.get("computer_id") else "zone"),
+            start_time=_dt(desired.get("start_time")),
+            end_time=_dt(desired.get("end_time")),
             management_state="managed",
         ))
+
+    elif op_type == "update_role_assignment":
+        aid = desired.get("assignment_id")
+        a = db.query(CentrifyRoleAssignment).filter_by(id=aid).first() if aid else None
+        if not a:
+            raise ValueError("Atama bulunamadı")
+        if "start_time" in desired:
+            a.start_time = _dt(desired.get("start_time"))
+        if "end_time" in desired:
+            a.end_time = _dt(desired.get("end_time"))
 
     elif op_type == "delete_role_assignment":
         aid = desired.get("assignment_id")

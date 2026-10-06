@@ -117,8 +117,17 @@ export function JobDetailPage() {
         <h2 className="text-xl font-semibold">
           #{job.id} · {job.title}
         </h2>
+        {job.summary_tr && job.summary_tr !== job.title ? (
+          <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{job.summary_tr}</p>
+        ) : null}
         <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
           {t("talep_id")}: <span className="font-mono text-[var(--color-foreground)]">{job.talep_id}</span>
+          {job.hostnames?.length ? (
+            <>
+              {" · "}
+              {job.hostnames.join(", ")}
+            </>
+          ) : null}
           {" · "}
           <Badge variant="muted">{job.status}</Badge>
         </p>

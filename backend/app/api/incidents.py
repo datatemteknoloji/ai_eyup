@@ -19,6 +19,7 @@ from app.services.platform_scope import (
     incident_affected_server_clause,
     incident_platform_clause,
 )
+from app.services.event_grouping import unique_incidents
 from app.services import llm_gateway
 
 logger = logging.getLogger(__name__)
@@ -103,23 +104,26 @@ def _apply_status(db: Session, inc: Incident, status: str) -> int:
 
 
 def compute_incident_stats(db: Session, platform: Optional[str] = None) -> dict:
-    """Incident sayaçları. Dashboard önbelleği bunu arka planda çağırır."""
+    """Incident sayaçları. Açık kuyruk sorun anahtarına göre tekilleşir."""
     q = _filtered_incidents(db, platform=platform)
-    total, open_count, investigating, resolved, critical = q.with_entities(
+    total, resolved = q.with_entities(
         func.count(Incident.id),
-        func.coalesce(func.sum(case((Incident.status == "open", 1), else_=0)), 0),
-        func.coalesce(func.sum(case((Incident.status == "investigating", 1), else_=0)), 0),
         func.coalesce(func.sum(case((Incident.status.in_(("resolved", "closed")), 1), else_=0)), 0),
-        func.coalesce(func.sum(case((
-            and_(Incident.status == "open", Incident.severity == "critical"), 1
-        ), else_=0)), 0),
     ).one()
+
+    active_rows = q.filter(Incident.status.in_(["open", "investigating"])).all()
+    uniq = unique_incidents(active_rows)
+    open_count = sum(1 for i in uniq if i.status == "open")
+    investigating = sum(1 for i in uniq if i.status == "investigating")
+    critical = sum(1 for i in uniq if i.status == "open" and (i.severity or "") == "critical")
+
     return {
         "total": int(total or 0),
-        "open": int(open_count or 0),
-        "investigating": int(investigating or 0),
+        "open": int(open_count),
+        "investigating": int(investigating),
         "resolved": int(resolved or 0),
-        "critical": int(critical or 0),
+        "critical": int(critical),
+        "open_active": int(open_count + investigating),
     }
 
 
@@ -371,12 +375,14 @@ async def get_incident(incident_id: int, db: Session = Depends(get_db)):
 
     related_event_details = []
     if inc.related_events:
-        events = db.query(SystemEvent).filter(SystemEvent.id.in_(inc.related_events)).order_by(desc(SystemEvent.created_at)).all()
+        events = db.query(SystemEvent).filter(SystemEvent.id.in_(inc.related_events)).order_by(desc(SystemEvent.last_seen), desc(SystemEvent.created_at)).all()
         related_event_details = [{
             "id": e.id, "title": e.title, "severity": e.severity,
             "event_type": e.event_type, "source": e.source,
             "resolved": e.resolved, "is_acknowledged": e.is_acknowledged,
-            "created_at": e.created_at.isoformat() if e.created_at else None
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+            "last_seen": (e.last_seen or e.created_at).isoformat() if (e.last_seen or e.created_at) else None,
+            "occurrence_count": e.occurrence_count or 1,
         } for e in events]
 
     return {

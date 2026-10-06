@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -13,10 +13,11 @@ import {
 import {
   Crown, Server, Shield, Cloud, AlertTriangle, CheckCircle2,
   RefreshCw, Clock, ArrowRight, HeartPulse, Siren, BellRing,
-  BrainCircuit, HardDrive, Trophy, Sparkles, Radar,
+  BrainCircuit, HardDrive, Trophy, Sparkles, Radar, X,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useT, useLocale } from '../i18n/LocaleProvider'
+import { useAuth } from '../auth/AuthContext'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -33,15 +34,32 @@ interface PlatformStat {
   hypervisor_count?: number
   vm_count?: number
   vm_running_count?: number
+  cluster_count?: number
+  unhealthy_clusters?: number
+  includes?: string[]
 }
 
 interface TopAlert {
-  event_id: number
-  platform: 'linux' | 'windows' | 'virtualization'
+  id?: string
+  event_id: number | null
+  event_ids?: number[]
+  platform: 'linux' | 'windows' | 'virtualization' | 'openshift' | string
+  family?: string | null
   server_name: string
   severity: string
   title: string
   last_seen: string | null
+  first_seen?: string | null
+  occurrence_count?: number
+  href?: string
+  event_type?: string
+}
+
+interface ComparisonRow {
+  key: string
+  label: string
+  critical: number
+  warning: number
 }
 
 interface ExecSummary {
@@ -51,8 +69,36 @@ interface ExecSummary {
     critical_total: number; warning_total: number
     open_incidents: number; total_servers: number
   }
-  platforms: { linux: PlatformStat; windows: PlatformStat; virtualization: PlatformStat }
+  platforms: {
+    linux: PlatformStat
+    windows: PlatformStat
+    virtualization: PlatformStat
+    openshift?: PlatformStat
+  }
+  comparison?: ComparisonRow[]
+  critical_items?: TopAlert[]
+  warning_items?: TopAlert[]
+  open_incident_items?: OpenIncident[]
   top_alerts: TopAlert[]
+}
+
+interface OpenIncident {
+  id: number
+  title: string
+  severity: string
+  status: string
+  platform: string
+  server_name: string
+  last_seen: string | null
+  href: string
+}
+
+const PLATFORM_MODULE: Record<string, string> = {
+  linux: 'linux',
+  windows: 'windows',
+  virtualization: 'virtualization',
+  openshift: 'openshift',
+  exadata: 'exadata',
 }
 
 // ── Style helpers ────────────────────────────────────────────────────────────
@@ -87,6 +133,9 @@ const PLATFORM_META: Record<string, { icon: React.ReactNode; badge: string; hex:
   linux:          { icon: <Server size={12} />, badge: 'bg-green-500/15 text-green-300 border-green-500/30',   hex: '#4ade80', glow: 'from-green-500/10' },
   windows:        { icon: <Shield size={12} />, badge: 'bg-blue-500/15 text-blue-300 border-blue-500/30',      hex: '#60a5fa', glow: 'from-blue-500/10' },
   virtualization: { icon: <Cloud size={12} />,  badge: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30', hex: '#818cf8', glow: 'from-indigo-500/10' },
+  openshift:      { icon: <Cloud size={12} />,  badge: 'bg-sky-500/15 text-sky-300 border-sky-500/30', hex: '#38bdf8', glow: 'from-sky-500/10' },
+  vcenter:        { icon: <Cloud size={12} />,  badge: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30', hex: '#818cf8', glow: 'from-indigo-500/10' },
+  openshift_virt: { icon: <Cloud size={12} />,  badge: 'bg-sky-500/15 text-sky-300 border-sky-500/30', hex: '#38bdf8', glow: 'from-sky-500/10' },
 }
 
 const MEDAL_COLOR: Record<number, string> = { 0: '#facc15', 1: '#cbd5e1', 2: '#d97706' }
@@ -173,12 +222,19 @@ function MiniRing({ score, size = 46 }: { score: number; size?: number }) {
   )
 }
 
-function KpiCard({ icon, label, value, tone, pulse }: {
+function KpiCard({ icon, label, value, tone, pulse, onClick }: {
   icon: React.ReactNode; label: string; value: number; tone: string; pulse?: boolean
+  onClick?: () => void
 }) {
   const animated = useCountUp(value)
   return (
-    <div className="relative bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 flex items-center gap-3 overflow-hidden group hover:border-slate-600 transition-colors">
+    <div
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } } : undefined}
+      className={`relative bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 flex items-center gap-3 overflow-hidden group hover:border-slate-600 transition-colors ${onClick ? 'cursor-pointer' : ''}`}
+    >
       <div className={`absolute -right-4 -top-4 w-16 h-16 rounded-full blur-2xl opacity-40 ${tone}`} />
       <div className={`relative w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${tone}`}>
         {pulse && value > 0 && <span className="absolute inline-flex h-full w-full rounded-lg bg-red-400 opacity-20 animate-ping" />}
@@ -196,17 +252,24 @@ function platformLabel(key: string, t: ReturnType<typeof useT>) {
   if (key === 'virtualization') return t('exec_virt')
   if (key === 'linux') return 'Linux'
   if (key === 'windows') return 'Windows'
+  if (key === 'openshift') return t('exec_ocp')
+  if (key === 'vcenter') return t('exec_vcenter')
+  if (key === 'openshift_virt') return t('exec_ocp_virt')
+  if (key === 'ovirt') return t('exec_ovirt')
   return key
 }
 
-function PlatformPanel({ platformKey, stat, link, linkLabel }: {
-  platformKey: 'linux' | 'windows' | 'virtualization'
+function PlatformPanel({ platformKey, stat, link, linkLabel, onCriticalClick, onWarningClick, canOpen }: {
+  platformKey: string
   stat: PlatformStat
   link: string
   linkLabel: string
+  onCriticalClick?: () => void
+  onWarningClick?: () => void
+  canOpen?: boolean
 }) {
   const t = useT()
-  const meta = PLATFORM_META[platformKey]
+  const meta = PLATFORM_META[platformKey] || PLATFORM_META.linux
   return (
     <div className="relative bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 flex flex-col gap-4 overflow-hidden hover:border-slate-600/80 transition-all group">
       <div className={`absolute inset-x-0 top-0 h-24 bg-gradient-to-b ${meta.glow} to-transparent pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity`} />
@@ -215,28 +278,43 @@ function PlatformPanel({ platformKey, stat, link, linkLabel }: {
           <div className={`w-9 h-9 rounded-lg border flex items-center justify-center ${meta.badge}`}>{meta.icon}</div>
           <div>
             <h3 className="text-white font-semibold text-sm">{platformLabel(platformKey, t)}</h3>
-            <p className="text-slate-500 text-[11px]">
+            <p className={`text-slate-500 text-[11px]`}>
               {platformKey === 'virtualization'
                 ? t('exec_hv_vms', { hv: stat.hypervisor_count ?? 0, running: stat.vm_running_count ?? 0, total: stat.vm_count ?? 0 })
-                : t('exec_servers_n', { n: stat.server_count ?? 0 })}
+                : platformKey === 'openshift'
+                  ? t('exec_ocp_clusters', { n: stat.cluster_count ?? 0 })
+                  : t('exec_servers_n', { n: stat.server_count ?? 0 })}
             </p>
+            {platformKey === 'virtualization' && (stat.includes?.length ?? 0) > 0 && (
+              <p className="text-slate-500 text-[10px] mt-0.5">{t('exec_virt_includes', { list: (stat.includes || []).join(' · ') })}</p>
+            )}
           </div>
         </div>
         <MiniRing score={stat.health_score} />
       </div>
 
       <div className="grid grid-cols-2 gap-2 relative">
-        <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+        <button
+          type="button"
+          onClick={onCriticalClick}
+          disabled={!onCriticalClick || stat.critical <= 0}
+          className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 text-left disabled:cursor-default hover:border-red-500/40 transition-colors"
+        >
           <div className="text-lg font-bold text-red-300 tabular-nums">{stat.critical}</div>
           <div className="text-[10px] text-red-400/80">{t('exec_crit_alarm')}</div>
-        </div>
-        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+        </button>
+        <button
+          type="button"
+          onClick={onWarningClick}
+          disabled={!onWarningClick || stat.warning <= 0}
+          className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 text-left disabled:cursor-default hover:border-amber-500/40 transition-colors"
+        >
           <div className="text-lg font-bold text-amber-300 tabular-nums">{stat.warning}</div>
           <div className="text-[10px] text-amber-400/80">{t('status_warning')}</div>
-        </div>
+        </button>
       </div>
 
-      {platformKey !== 'virtualization' && (
+      {platformKey !== 'virtualization' && platformKey !== 'openshift' && (
         <div className="flex items-center gap-3 text-[11px] text-slate-400 relative">
           <span className="flex items-center gap-1"><BrainCircuit size={11} /> {t('exec_ai_ready_n', { n: stat.ai_ready_count ?? 0 })}</span>
           <span className="flex items-center gap-1">
@@ -248,9 +326,13 @@ function PlatformPanel({ platformKey, stat, link, linkLabel }: {
         </div>
       )}
 
-      <Link to={link} className="relative mt-auto flex items-center justify-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 border border-blue-500/20 hover:border-blue-500/40 bg-blue-600/10 hover:bg-blue-600/20 rounded-lg px-3 py-2 transition-all">
-        {linkLabel} <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
-      </Link>
+      {canOpen ? (
+        <Link to={link} className="relative mt-auto flex items-center justify-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 border border-blue-500/20 hover:border-blue-500/40 bg-blue-600/10 hover:bg-blue-600/20 rounded-lg px-3 py-2 transition-all">
+          {linkLabel} <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
+        </Link>
+      ) : (
+        <p className="relative mt-auto text-[10px] text-slate-500 text-center leading-relaxed">{t('exec_no_module_cc')}</p>
+      )}
     </div>
   )
 }
@@ -285,7 +367,10 @@ function CustomPieTooltip({ active, payload }: any) {
 export default function ExecutiveDashboard() {
   const t = useT()
   const { locale } = useLocale()
+  const { hasModule } = useAuth()
+  const navigate = useNavigate()
   const dateLoc = locale === 'en' ? 'en-GB' : 'tr-TR'
+  const [drawer, setDrawer] = useState<{ kind: 'critical' | 'warning' | 'incidents' | 'servers'; platform?: string } | null>(null)
   const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery<ExecSummary>({
     queryKey: ['executive-summary'],
     queryFn: async () => {
@@ -310,19 +395,48 @@ export default function ExecutiveDashboard() {
     )
   }
 
-  const { overall, platforms, top_alerts } = data
+  const { overall, platforms, top_alerts, comparison, critical_items, warning_items, open_incident_items } = data
+  const ocp = platforms.openshift
+  const showOcp = (ocp?.cluster_count ?? 0) > 0 || (ocp?.critical ?? 0) > 0 || (ocp?.warning ?? 0) > 0
 
-  const comparisonData = [
-    { name: 'Linux', critical: platforms.linux.critical, warning: platforms.linux.warning },
-    { name: 'Windows', critical: platforms.windows.critical, warning: platforms.windows.warning },
-    { name: t('exec_virt'), critical: platforms.virtualization.critical, warning: platforms.virtualization.warning },
-  ]
+  const comparisonData = (comparison && comparison.length
+    ? comparison.map(row => ({
+        name: platformLabel(row.key, t) === row.key ? row.label : platformLabel(row.key, t),
+        critical: row.critical,
+        warning: row.warning,
+      }))
+    : [
+        { name: 'Linux', critical: platforms.linux.critical, warning: platforms.linux.warning },
+        { name: 'Windows', critical: platforms.windows.critical, warning: platforms.windows.warning },
+        { name: t('exec_virt'), critical: platforms.virtualization.critical, warning: platforms.virtualization.warning },
+      ]
+  )
 
   const assetData = [
     { name: t('exec_linux_srv'), value: platforms.linux.server_count ?? 0, fill: PLATFORM_META.linux.hex },
     { name: t('exec_win_srv'), value: platforms.windows.server_count ?? 0, fill: PLATFORM_META.windows.hex },
     { name: t('exec_virt_vm'), value: platforms.virtualization.vm_count ?? 0, fill: PLATFORM_META.virtualization.hex },
+    { name: t('exec_ocp'), value: ocp?.cluster_count ?? 0, fill: PLATFORM_META.openshift.hex },
   ].filter(d => d.value > 0)
+
+  const critList = critical_items ?? top_alerts.filter(a => a.severity === 'critical' || a.severity === 'emergency')
+  const warnList = warning_items ?? top_alerts.filter(a => a.severity === 'warning')
+  const canOpenPlatform = (platform: string) => {
+    const mod = PLATFORM_MODULE[platform]
+    return mod ? hasModule(mod) : false
+  }
+  const openAlert = (a: TopAlert) => {
+    if (a.href && canOpenPlatform(a.platform)) navigate(a.href)
+  }
+  const openIncident = (inc: OpenIncident) => {
+    if (inc.href && canOpenPlatform(inc.platform)) navigate(inc.href)
+  }
+
+  const drawerAlerts = !drawer || (drawer.kind !== 'critical' && drawer.kind !== 'warning')
+    ? []
+    : (drawer.kind === 'critical' ? critList : warnList).filter(a =>
+        !drawer.platform || drawer.platform === 'all' || a.platform === drawer.platform || a.family === drawer.platform
+      )
 
   // Riskli varlıklar için tekilleştirilmiş liderlik tablosu (ilk 5 farklı sunucu)
   const seen = new Set<string>()
@@ -387,10 +501,10 @@ export default function ExecutiveDashboard() {
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <KpiCard icon={<Siren size={18} className="text-red-300" />} label={t('exec_total_crit')} value={overall.critical_total} tone="bg-red-500/15" pulse />
-          <KpiCard icon={<AlertTriangle size={18} className="text-amber-300" />} label={t('exec_total_warn')} value={overall.warning_total} tone="bg-amber-500/15" />
-          <KpiCard icon={<BellRing size={18} className="text-orange-300" />} label={t('exec_open_inc')} value={overall.open_incidents} tone="bg-orange-500/15" />
-          <KpiCard icon={<HardDrive size={18} className="text-cyan-300" />} label={t('exec_total_srv')} value={overall.total_servers} tone="bg-cyan-500/15" />
+          <KpiCard icon={<Siren size={18} className="text-red-300" />} label={t('exec_total_crit')} value={overall.critical_total} tone="bg-red-500/15" pulse onClick={() => overall.critical_total > 0 && setDrawer({ kind: 'critical', platform: 'all' })} />
+          <KpiCard icon={<AlertTriangle size={18} className="text-amber-300" />} label={t('exec_total_warn')} value={overall.warning_total} tone="bg-amber-500/15" onClick={() => overall.warning_total > 0 && setDrawer({ kind: 'warning', platform: 'all' })} />
+          <KpiCard icon={<BellRing size={18} className="text-orange-300" />} label={t('exec_open_inc')} value={overall.open_incidents} tone="bg-orange-500/15" onClick={() => overall.open_incidents > 0 && setDrawer({ kind: 'incidents' })} />
+          <KpiCard icon={<HardDrive size={18} className="text-cyan-300" />} label={t('exec_total_srv')} value={overall.total_servers} tone="bg-cyan-500/15" onClick={() => overall.total_servers > 0 && setDrawer({ kind: 'servers' })} />
         </div>
       </div>
 
@@ -400,6 +514,7 @@ export default function ExecutiveDashboard() {
           <h2 className="text-slate-300 text-sm font-medium mb-4 flex items-center gap-2">
             <Radar size={14} className="text-blue-400" /> {t('exec_compare')}
           </h2>
+          <p className="text-[10px] text-slate-500 -mt-2 mb-3">{t('exec_compare_note')}</p>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={comparisonData} barGap={6}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
@@ -439,16 +554,19 @@ export default function ExecutiveDashboard() {
       {/* Platform panelleri */}
       <div>
         <h2 className="text-slate-300 text-sm font-medium mb-3">{t('exec_envs')}</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <PlatformPanel platformKey="linux" stat={platforms.linux} link="/linux/ops" linkLabel={t('exec_linux_cc')} />
-          <PlatformPanel platformKey="windows" stat={platforms.windows} link="/windows/aiops/ops" linkLabel={t('exec_win_cc')} />
-          <PlatformPanel platformKey="virtualization" stat={platforms.virtualization} link="/virt/ops" linkLabel={t('exec_virt_cc')} />
+        <div className={`grid grid-cols-1 md:grid-cols-2 ${showOcp ? 'xl:grid-cols-4' : 'xl:grid-cols-3'} gap-4`}>
+          <PlatformPanel platformKey="linux" stat={platforms.linux} link="/linux/ops" linkLabel={t('exec_linux_cc')} canOpen={hasModule('linux')} onCriticalClick={() => platforms.linux.critical > 0 && setDrawer({ kind: 'critical', platform: 'linux' })} onWarningClick={() => platforms.linux.warning > 0 && setDrawer({ kind: 'warning', platform: 'linux' })} />
+          <PlatformPanel platformKey="windows" stat={platforms.windows} link="/windows/aiops/ops" linkLabel={t('exec_win_cc')} canOpen={hasModule('windows')} onCriticalClick={() => platforms.windows.critical > 0 && setDrawer({ kind: 'critical', platform: 'windows' })} onWarningClick={() => platforms.windows.warning > 0 && setDrawer({ kind: 'warning', platform: 'windows' })} />
+          <PlatformPanel platformKey="virtualization" stat={platforms.virtualization} link="/virt/ops" linkLabel={t('exec_virt_cc')} canOpen={hasModule('virtualization')} onCriticalClick={() => platforms.virtualization.critical > 0 && setDrawer({ kind: 'critical', platform: 'virtualization' })} onWarningClick={() => platforms.virtualization.warning > 0 && setDrawer({ kind: 'warning', platform: 'virtualization' })} />
+          {showOcp && ocp && (
+            <PlatformPanel platformKey="openshift" stat={ocp} link="/openshift/ops" linkLabel={t('exec_ocp_cc')} canOpen={hasModule('openshift')} onCriticalClick={() => (ocp.critical ?? 0) > 0 && setDrawer({ kind: 'critical', platform: 'openshift' })} onWarningClick={() => (ocp.warning ?? 0) > 0 && setDrawer({ kind: 'warning', platform: 'openshift' })} />
+          )}
         </div>
       </div>
 
       {/* Risk liderlik tablosu + Detaylı olay listesi */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        <div className="lg:col-span-2 bg-slate-800/60 border border-slate-700/50 rounded-xl p-5">
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+        <div className="xl:col-span-2 bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 min-w-0">
           <h2 className="text-slate-300 text-sm font-medium mb-4 flex items-center gap-2">
             <Trophy size={14} className="text-amber-400" /> {t('exec_risk')}
           </h2>
@@ -461,7 +579,14 @@ export default function ExecutiveDashboard() {
               {leaderboard.map((a, i) => {
                 const meta = PLATFORM_META[a.platform]
                 return (
-                  <div key={a.event_id} className={`flex items-center gap-3 bg-slate-900/40 border-l-4 ${SEV_STRIPE[a.severity] || SEV_STRIPE.info} border-y border-r border-slate-700/40 rounded-r-lg px-3 py-2.5`}>
+                  <div
+                    key={a.id || `${a.platform}:${a.server_name}:${a.title}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openAlert(a)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') openAlert(a) }}
+                    className={`flex items-center gap-3 bg-slate-900/40 border-l-4 ${SEV_STRIPE[a.severity] || SEV_STRIPE.info} border-y border-r border-slate-700/40 rounded-r-lg px-3 py-2.5 cursor-pointer hover:bg-slate-800/60`}
+                  >
                     <span className="w-6 flex items-center justify-center flex-shrink-0">
                       {MEDAL_COLOR[i]
                         ? <Trophy size={15} strokeWidth={2} style={{ color: MEDAL_COLOR[i] }} />
@@ -486,43 +611,58 @@ export default function ExecutiveDashboard() {
           )}
         </div>
 
-        <div className="lg:col-span-3">
+        <div className="xl:col-span-3 min-w-0">
           <h2 className="text-slate-300 text-sm font-medium mb-3">{t('exec_top_events')}</h2>
-          <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl overflow-hidden">
+          <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl overflow-x-auto">
             {top_alerts.length === 0 ? (
               <div className="flex items-center justify-center gap-2 text-slate-500 text-sm py-10">
                 <CheckCircle2 size={16} className="text-green-400" /> {t('exec_no_alerts')}
               </div>
             ) : (
-              <table className="w-full text-sm">
+              <table className="w-full text-sm table-fixed min-w-[36rem]">
+                <colgroup>
+                  <col className="w-[18%]" />
+                  <col className="w-[26%]" />
+                  <col className="w-[28%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[16%]" />
+                </colgroup>
                 <thead>
                   <tr className="border-b border-slate-700/50 text-xs text-slate-500">
-                    <th className="text-left px-4 py-2">{t('exec_col_env')}</th>
-                    <th className="text-left px-4 py-2">{t('exec_col_server')}</th>
-                    <th className="text-left px-4 py-2">{t('exec_col_event')}</th>
-                    <th className="text-left px-4 py-2">{t('exec_col_sev')}</th>
-                    <th className="text-left px-4 py-2">{t('exec_col_seen')}</th>
+                    <th className="text-left px-3 py-2">{t('exec_col_env')}</th>
+                    <th className="text-left px-3 py-2">{t('exec_col_server')}</th>
+                    <th className="text-left px-3 py-2">{t('exec_col_event')}</th>
+                    <th className="text-left px-3 py-2">{t('exec_col_sev')}</th>
+                    <th className="text-left px-3 py-2">{t('exec_col_seen')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {top_alerts.map(a => {
                     const meta = PLATFORM_META[a.platform]
+                    const occ = a.occurrence_count || 1
+                    const seen = a.last_seen
+                      ? new Date(a.last_seen).toLocaleString(dateLoc, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                      : '—'
                     return (
-                      <tr key={a.event_id} className="border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors">
-                        <td className="px-4 py-2.5">
-                          <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${meta?.badge || ''}`}>
+                      <tr
+                        key={a.id || `${a.platform}:${a.event_id}:${a.server_name}`}
+                        className="border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors cursor-pointer"
+                        onClick={() => openAlert(a)}
+                      >
+                        <td className="px-3 py-2.5">
+                          <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border max-w-full truncate ${meta?.badge || ''}`}>
                             {meta?.icon} {platformLabel(a.platform, t) || a.platform}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-white">{a.server_name}</td>
-                        <td className="px-4 py-2.5 text-slate-300 max-w-xs truncate" title={a.title}>{a.title}</td>
-                        <td className="px-4 py-2.5">
+                        <td className="px-3 py-2.5 text-white truncate" title={a.server_name}>{a.server_name}</td>
+                        <td className="px-3 py-2.5 text-slate-300 truncate" title={a.title}>{a.title}</td>
+                        <td className="px-3 py-2.5">
                           <span className={`text-[10px] px-2 py-0.5 rounded-full border ${SEV_BADGE[a.severity] || SEV_BADGE.info}`}>
                             {a.severity}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-slate-500 text-xs">
-                          {a.last_seen ? new Date(a.last_seen).toLocaleString(dateLoc) : '-'}
+                        <td className="px-3 py-2.5 text-slate-500 text-xs whitespace-nowrap" title={a.last_seen || ''}>
+                          {seen}{occ > 1 ? ` · ×${occ}` : ''}
                         </td>
                       </tr>
                     )
@@ -533,6 +673,122 @@ export default function ExecutiveDashboard() {
           </div>
         </div>
       </div>
+
+      {drawer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => setDrawer(null)}>
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-3xl max-h-[80vh] overflow-hidden shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700">
+              <h3 className="text-white font-semibold text-sm">
+                {drawer.kind === 'critical' && t('exec_crit_list')}
+                {drawer.kind === 'warning' && t('exec_warn_list')}
+                {drawer.kind === 'incidents' && t('exec_inc_list')}
+                {drawer.kind === 'servers' && t('exec_srv_list')}
+                <span className="text-slate-500 font-normal ml-2">
+                  ({drawer.kind === 'incidents'
+                    ? (open_incident_items?.length ?? 0)
+                    : drawer.kind === 'servers'
+                      ? (assetData.length)
+                      : drawerAlerts.length})
+                </span>
+              </h3>
+              <button type="button" onClick={() => setDrawer(null)} className="text-slate-400 hover:text-white p-1">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="overflow-y-auto max-h-[calc(80vh-52px)]">
+              {(drawer.kind === 'critical' || drawer.kind === 'warning') && (
+                drawerAlerts.length === 0 ? (
+                  <p className="text-slate-500 text-sm p-8 text-center">{t('exec_no_alerts')}</p>
+                ) : (
+                  <ul className="divide-y divide-slate-800">
+                    {drawerAlerts.map(a => {
+                      const allowed = canOpenPlatform(a.platform)
+                      return (
+                        <li key={a.id || `${a.platform}:${a.server_name}:${a.title}`}>
+                          <button
+                            type="button"
+                            onClick={() => openAlert(a)}
+                            className={`w-full text-left px-5 py-3 transition-colors ${allowed ? 'hover:bg-slate-800/80 cursor-pointer' : 'cursor-default'}`}
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${SEV_BADGE[a.severity] || SEV_BADGE.info}`}>{a.severity}</span>
+                              <span className="text-white text-sm font-medium truncate">{a.server_name}</span>
+                              <span className="text-[10px] text-slate-500">{platformLabel(a.platform, t)}</span>
+                              {(a.occurrence_count || 1) > 1 && (
+                                <span className="text-[10px] text-amber-300">×{a.occurrence_count}</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400 truncate">{a.title}</p>
+                            <p className="text-[10px] text-slate-600 mt-1">
+                              {t('exec_col_seen')}: {a.last_seen ? new Date(a.last_seen).toLocaleString(dateLoc, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                              {!allowed && <span className="ml-2 text-slate-500">· {t('exec_view_only')}</span>}
+                            </p>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )
+              )}
+              {drawer.kind === 'incidents' && (
+                !(open_incident_items?.length) ? (
+                  <p className="text-slate-500 text-sm p-8 text-center">{t('exec_no_alerts')}</p>
+                ) : (
+                  <ul className="divide-y divide-slate-800">
+                    {open_incident_items!.map(inc => {
+                      const allowed = canOpenPlatform(inc.platform)
+                      return (
+                        <li key={inc.id}>
+                          <button
+                            type="button"
+                            onClick={() => openIncident(inc)}
+                            className={`w-full text-left px-5 py-3 transition-colors ${allowed ? 'hover:bg-slate-800/80 cursor-pointer' : 'cursor-default'}`}
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${SEV_BADGE[inc.severity] || SEV_BADGE.info}`}>{inc.severity}</span>
+                              <span className="text-white text-sm font-medium truncate">{inc.title}</span>
+                            </div>
+                            <p className="text-xs text-slate-400 truncate">{inc.server_name} · {inc.status} · {platformLabel(inc.platform, t)}</p>
+                            {!allowed && <p className="text-[10px] text-slate-500 mt-1">{t('exec_view_only')}</p>}
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )
+              )}
+              {drawer.kind === 'servers' && (
+                <ul className="divide-y divide-slate-800">
+                  {[
+                    { key: 'linux', label: t('exec_linux_srv'), n: platforms.linux.server_count ?? 0, href: '/servers' },
+                    { key: 'windows', label: t('exec_win_srv'), n: platforms.windows.server_count ?? 0, href: '/windows' },
+                    { key: 'virtualization', label: t('exec_virt_vm'), n: platforms.virtualization.vm_count ?? 0, href: '/hypervisors' },
+                    { key: 'openshift', label: t('exec_ocp'), n: ocp?.cluster_count ?? 0, href: '/openshift' },
+                  ].filter(r => r.n > 0).map(r => {
+                    const allowed = canOpenPlatform(r.key)
+                    return (
+                      <li key={r.key}>
+                        <button
+                          type="button"
+                          onClick={() => { if (allowed) navigate(r.href) }}
+                          className={`w-full text-left px-5 py-3 flex items-center justify-between ${allowed ? 'hover:bg-slate-800/80 cursor-pointer' : 'cursor-default'}`}
+                        >
+                          <span className="text-white text-sm">{r.label}</span>
+                          <span className="text-slate-400 tabular-nums">{r.n}{!allowed ? ` · ${t('exec_view_only')}` : ''}</span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+            <p className="px-5 py-2.5 text-[10px] text-slate-500 border-t border-slate-800 leading-relaxed">{t('exec_module_gate_note')}</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

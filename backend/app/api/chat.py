@@ -12,12 +12,21 @@ import re
 import unicodedata
 import httpx
 
-from app.core.auth import get_current_user_optional
+from app.core.auth import get_current_user, get_current_user_optional
 from app.core.database import get_db
 from app.core.config import settings, get_active_model, remote_llm_enabled
 from app.models.server import Server
 from app.models.hypervisor import Hypervisor
 from app.models.chat_session import ChatSession, ChatMessage
+from app.models.user import User
+from app.services.chat_session_scope import (
+    create_owned_session,
+    get_owned_session,
+    require_owned_session,
+    require_user_id,
+    sessions_q,
+    user_pk,
+)
 from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
 from app.models.credential import GlobalCredential
 from app.services.platform_scope import is_windows_server
@@ -275,14 +284,17 @@ def _servers_mentioned_in_message(db: Session, message: str) -> List[Server]:
 
 
 @router.get("/sessions")
-async def list_chat_sessions(category: str = "linux", db: Session = Depends(get_db)):
-    """Platform AI chat session'larını listele (DB'den)."""
+async def list_chat_sessions(
+    category: str = "linux",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Platform AI chat session'larını listele (yalnızca oturum sahibi)."""
     from app.services.chat_history import repair_session_title_from_first_user_message
 
     cat = _normalize_chat_platform(category)
-    sessions = db.query(ChatSession).filter(
-        ChatSession.category == cat
-    ).order_by(
+    uid = require_user_id(user)
+    sessions = sessions_q(db, uid, cat).order_by(
         func.coalesce(ChatSession.updated_at, ChatSession.created_at).desc()
     ).all()
     result = []
@@ -303,25 +315,28 @@ async def list_chat_sessions(category: str = "linux", db: Session = Depends(get_
 async def create_chat_session(
     body: SessionCreate = Body(default_factory=SessionCreate),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Yeni chat session oluştur"""
     cat = _normalize_chat_platform(body.category)
-    session = ChatSession(
+    session = create_owned_session(
+        db,
+        user_id=require_user_id(user),
         title="Yeni Chat",
-        server_ids=body.server_ids or [],
         category=cat,
+        server_ids=body.server_ids or [],
     )
-    db.add(session)
-    db.commit()
-    db.refresh(session)
     return _session_to_dict(session, message_count=0)
 
 
 @router.get("/sessions/{session_id}/messages")
-async def get_session_messages(session_id: int, db: Session = Depends(get_db)):
+async def get_session_messages(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Session mesajlarını getir"""
-    if db.query(ChatSession).filter(ChatSession.id == session_id).first() is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    require_owned_session(db, session_id, require_user_id(user))
     messages = (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session_id)
@@ -346,11 +361,10 @@ async def update_session_title(
     session_id: int,
     title: str,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Session başlığını güncelle"""
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = require_owned_session(db, session_id, require_user_id(user))
     session.title = title
     session.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -358,11 +372,13 @@ async def update_session_title(
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: int, db: Session = Depends(get_db)):
+async def delete_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Session'ı sil"""
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = require_owned_session(db, session_id, require_user_id(user))
     db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
     db.delete(session)
     db.commit()
@@ -370,10 +386,15 @@ async def delete_session(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/sessions")
-async def delete_all_sessions(category: str = "linux", db: Session = Depends(get_db)):
-    """Platform chat session'larını sil (kalıcı)"""
+async def delete_all_sessions(
+    category: str = "linux",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Kullanıcının bu platformdaki chat session'larını sil"""
     cat = _normalize_chat_platform(category)
-    ids = [s.id for s in db.query(ChatSession.id).filter(ChatSession.category == cat).all()]
+    uid = require_user_id(user)
+    ids = [s.id for s in sessions_q(db, uid, cat).all()]
     if ids:
         db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(ids)))
         db.execute(delete(ChatSession).where(ChatSession.id.in_(ids)))
@@ -382,7 +403,7 @@ async def delete_all_sessions(category: str = "linux", db: Session = Depends(get
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
+async def chat_message(request: ChatRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Chat mesajı gönder ve AI yanıtı al (SSH komut çalıştırma desteği ile)"""
     try:
         raw_message = request.message.strip()
@@ -392,24 +413,21 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         from app.services.chat_output_directives import extract_output_directive
         message, output_directive = extract_output_directive(raw_message)
 
+        uid = require_user_id(user)
         session_id = request.session_id
         if not session_id:
-            # Yeni session oluştur
             from app.services.chat_history import title_from_message
             title = title_from_message(message)
-            session = ChatSession(
+            session = create_owned_session(
+                db,
+                user_id=uid,
                 title=title,
+                category=_normalize_chat_platform(getattr(request, "platform", None) or "linux"),
                 server_ids=request.server_ids or [],
-                category="linux",
             )
-            db.add(session)
-            db.commit()
-            db.refresh(session)
             session_id = session.id
         else:
-            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-            if not session:
-                raise HTTPException(status_code=404, detail="Session not found")
+            session = require_owned_session(db, session_id, uid)
             from app.services.chat_history import maybe_set_session_title
             if maybe_set_session_title(session, message):
                 db.commit()
@@ -1370,20 +1388,23 @@ async def chat_stream(
 
                 # ── Session ──────────────────────────────────────────────────
                 session_id = request.session_id
+                uid = user_pk(_auth_user)
+                if uid is None:
+                    yield _sse({"error": "Kimlik doğrulaması gerekli"})
+                    return
                 if not session_id:
                     from app.services.chat_history import title_from_message
                     title = "[Gizli]" if ephemeral else title_from_message(message)
-                    session = ChatSession(
+                    session = create_owned_session(
+                        db,
+                        user_id=uid,
                         title=title,
-                        server_ids=request.server_ids or [],
                         category=chat_platform,
+                        server_ids=request.server_ids or [],
                     )
-                    db.add(session)
-                    db.commit()
-                    db.refresh(session)
                     session_id = session.id
                 else:
-                    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                    session = get_owned_session(db, session_id, uid, chat_platform)
                     if not session:
                         yield _sse({"error": "Session bulunamadı"})
                         return

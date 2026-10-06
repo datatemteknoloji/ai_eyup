@@ -90,6 +90,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_virt_log_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_inventory_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_esx_metric_sync()))
+        self.tasks.append(asyncio.create_task(self._periodic_virt_insights()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_maintenance()))
         self.tasks.append(asyncio.create_task(self._periodic_snapshot_cleanup()))
@@ -376,6 +377,23 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"ESX metric sync task unexpected error: {e}")
                 await asyncio.sleep(_rt_sec("esx_metric_interval_sec", 900))
+
+    async def _periodic_virt_insights(self):
+        """Sanallaştırma karar katmanı — Celery (ilk tur metrik sync'ten sonra)."""
+        logger.info("Virt insights task started (Celery, first run in 600s)")
+        await asyncio.sleep(600)
+
+        while self.running:
+            try:
+                from app.services.fleet_jobs import run_virt_insights
+                await _enqueue_or_run("fleet.virt_insights", run_virt_insights, label="virt_insights")
+                await asyncio.sleep(_rt_sec("virt_insights_interval_sec", 3600))
+            except asyncio.CancelledError:
+                logger.info("Virt insights task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Virt insights task unexpected error: {e}")
+                await asyncio.sleep(_rt_sec("virt_insights_interval_sec", 3600))
 
     async def _periodic_rag_reindex(self):
         """RAG reindex tetikleyici — asıl embedding işi Celery worker'ında çalışır.

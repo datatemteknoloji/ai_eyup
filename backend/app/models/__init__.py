@@ -37,6 +37,10 @@ from app.models.linux_inventory import (
     PackageInventory, OpenPort, NlqQueryAudit,
 )
 from app.models.custom_report import CustomReportDefinition
+from app.models.infra_finding import (
+    InfraCheckRun, InfraFinding, InfraFindingException,
+    VirtConfigSnapshot, VirtDatastoreFile, InfraReferenceData,
+)
 
 __all__ = [
     "Server", "Hypervisor", "ChatSession", "ChatMessage", "ChatTurn", "ChatQACache",
@@ -64,4 +68,6 @@ __all__ = [
     "LinuxInventory", "FilesystemMetric", "ServiceStatus",
     "PackageInventory", "OpenPort", "NlqQueryAudit",
     "CustomReportDefinition",
+    "InfraCheckRun", "InfraFinding", "InfraFindingException",
+    "VirtConfigSnapshot", "VirtDatastoreFile", "InfraReferenceData",
 ]

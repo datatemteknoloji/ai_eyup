@@ -519,6 +519,118 @@ def find_expiring_assignments(
     }
 
 
+def find_hygiene_issues(db: Session, *, expiring_days: int = 30, limit: int = 200) -> dict[str, Any]:
+    """Süresi dolmuş / orphan / tutarsız Centrify kayıtları (yerel sync DB)."""
+    from app.models.centrify_zone import (
+        CentrifyRoleAssignment, CentrifyRole, CentrifyZone, CentrifyComputer,
+        CentrifyUnixProfile, CentrifyCommand, CentrifyRoleCommand, CentrifyOperation,
+    )
+
+    now = _utcnow()
+    until = now + timedelta(days=max(1, min(int(expiring_days or 30), 365)))
+    cap = max(1, min(int(limit or 200), 500))
+    findings: list[dict[str, Any]] = []
+
+    def add(kind: str, severity: str, title: str, detail: str, extra: dict | None = None):
+        if len(findings) >= cap:
+            return
+        row = {"kind": kind, "severity": severity, "title": title, "detail": detail}
+        if extra:
+            row.update(extra)
+        findings.append(row)
+
+    roles = {r.id: r for r in db.query(CentrifyRole).all()}
+    computers = {c.id: c for c in db.query(CentrifyComputer).all()}
+    zones = {z.id: z for z in db.query(CentrifyZone).all()}
+
+    assignments = db.query(CentrifyRoleAssignment).filter(
+        CentrifyRoleAssignment.deleted_in_ad.is_(False),
+    ).all()
+
+    for a in assignments:
+        zone = zones.get(a.zone_id)
+        zname = zone.name if zone else f"zone#{a.zone_id}"
+        role = roles.get(a.role_id)
+        extra = {
+            "assignment_id": a.id,
+            "zone_id": a.zone_id,
+            "zone_name": zname,
+            "assignee_name": a.assignee_name,
+            "role_id": a.role_id,
+            "end_time": a.end_time.isoformat() if a.end_time else None,
+        }
+        end = a.end_time
+        if end and end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        if end and end < now:
+            add("expired_assignment", "high", f"Süresi dolmuş atama: {a.assignee_name}",
+                f"{zname} / {(role.name if role else a.role_id)} bitiş {end.isoformat()}", extra)
+        elif end and now <= end <= until:
+            days_left = (end - now).total_seconds() / 86400
+            add("expiring_assignment", "medium", f"Yakında dolacak: {a.assignee_name}",
+                f"{(role.name if role else a.role_id)} — {days_left:.1f} gün", extra)
+
+        if not role or role.deleted_in_ad:
+            add("orphan_role", "high", f"Atama silinmiş/eksik role bağlı: {a.assignee_name}",
+                f"{zname} role_id={a.role_id}", extra)
+        if a.computer_id:
+            comp = computers.get(a.computer_id)
+            if not comp or comp.deleted_in_ad:
+                add("orphan_computer", "high", f"Atama silinmiş host'a bağlı: {a.assignee_name}",
+                    f"{zname} computer_id={a.computer_id}", extra)
+        if not (a.assignee_name or "").strip() or not (a.assignee_dn or "").strip():
+            add("orphan_assignee", "medium", "Atamada kullanıcı/grup adı veya DN boş",
+                f"{zname} assignment #{a.id}", extra)
+
+    profiles = db.query(CentrifyUnixProfile).all()
+    assignee_keys = {(a.assignee_name or "").lower() for a in assignments}
+    for p in profiles:
+        uname = (getattr(p, "user_name", None) or "").strip()
+        if uname and uname.lower() not in assignee_keys:
+            zone = zones.get(p.zone_id)
+            add("unix_profile_no_assignment", "low", f"UNIX profili var, role assignment yok: {uname}",
+                f"{zone.name if zone else p.zone_id}",
+                {"zone_id": p.zone_id, "user_name": uname})
+
+    for r in roles.values():
+        if r.deleted_in_ad:
+            continue
+        cmds = db.query(CentrifyRoleCommand).filter_by(role_id=r.id).count()
+        if cmds == 0:
+            zone = zones.get(r.zone_id)
+            add("empty_role", "low", f"Komutsuz rol: {r.name}",
+                zone.name if zone else str(r.zone_id),
+                {"zone_id": r.zone_id, "role_id": r.id, "role_name": r.name})
+
+    failed = (
+        db.query(CentrifyOperation)
+        .filter(CentrifyOperation.status.in_(["failed", "pending_approval"]))
+        .order_by(CentrifyOperation.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    for op in failed:
+        add("stale_operation", "medium", f"Operasyon {op.status}: {op.operation_type}",
+            (op.error_message or op.reason or "")[:200],
+            {"operation_id": op.id, "status": op.status})
+
+    counts: dict[str, int] = {}
+    for f in findings:
+        counts[f["kind"]] = counts.get(f["kind"], 0) + 1
+
+    return {
+        "ok": True,
+        "count": len(findings),
+        "counts": counts,
+        "items": findings,
+        "as_of": now.isoformat(),
+        "limitations": [
+            "local_sync_db_only",
+            "ad_live_user_lookup_not_performed",
+        ],
+    }
+
+
 def _role_cmd_set(role) -> set[str]:
     names = set()
     for rc in role.role_commands or []:

@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Maximize2, X } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { useT, useLocale } from '../i18n/LocaleProvider'
@@ -614,6 +615,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
   const [chartSlots, setChartSlots] = useState<string[]>(() => [...DEFAULT_CHART_METRICS])
   const [hostFilter, setHostFilter] = useState('')
   const [tablePage, setTablePage] = useState(1)
+  const [fullscreenSlot, setFullscreenSlot] = useState<number | null>(null)
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -1249,6 +1251,9 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
                 <label className="text-xs font-medium text-slate-400 whitespace-nowrap">
                   {t('lm_chart_metric', { n: slotIndex + 1 })}
                 </label>
+                <button type="button" onClick={() => setFullscreenSlot(slotIndex)} className="text-slate-400 hover:text-white p-1 rounded hover:bg-white/[0.06] transition-colors" title={t('lm_fullscreen')}>
+                  <Maximize2 size={14} />
+                </button>
                 <select
                   value={chartSlots[slotIndex] ?? DEFAULT_CHART_METRICS[slotIndex]}
                   onChange={(e) => setChartSlot(slotIndex, e.target.value)}
@@ -1403,6 +1408,31 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
               {isLoading ? t('lm_loading') : t('lm_not_found')}
             </div>
           )}
+        </div>
+      )}
+
+      {fullscreenSlot != null && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6" onClick={() => setFullscreenSlot(null)}>
+          <div className="bg-[#0d1422] border border-white/[0.1] rounded-2xl w-full max-w-6xl p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-semibold text-white">
+                {getLabelForMetricKey(chartSlots[fullscreenSlot] ?? DEFAULT_CHART_METRICS[fullscreenSlot])}
+                {getUnitForMetricKey(chartSlots[fullscreenSlot] ?? DEFAULT_CHART_METRICS[fullscreenSlot]) &&
+                  ` (${getUnitForMetricKey(chartSlots[fullscreenSlot] ?? DEFAULT_CHART_METRICS[fullscreenSlot])})`}
+              </div>
+              <button type="button" onClick={() => setFullscreenSlot(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <EnterpriseMetricChart
+              chartId={`fullscreen-${fullscreenSlot}`}
+              title={getLabelForMetricKey(chartSlots[fullscreenSlot] ?? DEFAULT_CHART_METRICS[fullscreenSlot])}
+              results={hasServerSelection ? customChartResults[fullscreenSlot] : []}
+              unit={getUnitForMetricKey(chartSlots[fullscreenSlot] ?? DEFAULT_CHART_METRICS[fullscreenSlot])}
+              height={520}
+              instanceLabels={instanceLabels}
+              loading={hasServerSelection && customChartLoading[fullscreenSlot]}
+              emptyMessage={hasServerSelection ? t('lm_empty_data') : t('lm_empty_pick')}
+            />
+          </div>
         </div>
       )}
     </div>

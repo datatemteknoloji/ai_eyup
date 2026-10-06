@@ -126,6 +126,9 @@ class Tool:
     # Platform kapsamı — Linux sohbetinde OpenShift araçları (ve tersi) karışmasın.
     # Örn. {"linux"}, {"openshift"}, {"vcenter"}, {"infra"}
     domains: frozenset = frozenset({"linux"})
+    # False → LLM şemasına girmez; yalnız sunucu tarafı akışlar (ör. karar katmanı
+    # onaylı düzeltme önerisi) AgentAction ile çağırır.
+    llm_visible: bool = True
 
     def preview(self, db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         if self.direct_handler:
@@ -4327,6 +4330,10 @@ TOOLS: Dict[str, Tool] = {
 }
 
 
+from app.services.agent.tools_virt_insights import VIRT_INSIGHTS_TOOLS  # noqa: E402
+TOOLS.update(VIRT_INSIGHTS_TOOLS)
+
+
 # Platform domain etiketleri — sohbet kapsamına göre tool filtresi için.
 _TOOL_DOMAIN_OVERRIDE = {
     "infra_overview": frozenset({"infra"}),
@@ -4388,6 +4395,13 @@ _TOOL_DOMAIN_OVERRIDE = {
     "zabbix_query": frozenset({"infra"}),  # Unified + Zabbix Other label
     "kubevirt_vm_detail": frozenset({"openshift", "vcenter"}),
     "kubevirt_snapshots": frozenset({"openshift", "vcenter"}),
+    # Karar katmanı (virt_insights): yalnız virt sohbeti — "infra" EKLEME.
+    "virt_capacity_simulate": frozenset({"vcenter"}),
+    "virt_placement_recommend": frozenset({"vcenter"}),
+    "virt_reclaim_summary": frozenset({"vcenter"}),
+    "virt_health_findings": frozenset({"vcenter"}),
+    "virt_incident_timeline": frozenset({"vcenter"}),
+    "virt_remediate": frozenset({"vcenter"}),
 }
 for _tool_name, _tool in TOOLS.items():
     if _tool_name in _TOOL_DOMAIN_OVERRIDE:
@@ -4479,6 +4493,7 @@ def tool_specs() -> List[Dict[str, Any]]:
             },
         }
         for t in TOOLS.values()
+        if t.llm_visible
     ]
     # Windows tools
     try:
@@ -4507,7 +4522,7 @@ def tool_specs_read_only(domains: Optional[frozenset] = None) -> List[Dict[str, 
             "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
         }
         for t in TOOLS.values()
-        if t.risk_level == RiskLevel.READ_ONLY
+        if t.risk_level == RiskLevel.READ_ONLY and t.llm_visible
         and (domains is None or (t.domains & domains))
     ]
     try:

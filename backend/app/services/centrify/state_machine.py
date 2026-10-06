@@ -37,7 +37,7 @@ TERMINAL_STATES = {"completed", "cancelled", "rolled_back"}
 APPROVAL_REQUIRED_OPS = {
     "create_role", "delete_role", "update_role",
     "create_command", "delete_command", "update_command",
-    "create_role_assignment", "delete_role_assignment",
+    "create_role_assignment", "update_role_assignment", "delete_role_assignment",
     "clone_role", "overwrite_role",
     "add_command_to_role", "remove_command_from_role",
     "add_user_to_group", "remove_user_from_group",

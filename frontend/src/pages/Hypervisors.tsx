@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import VirtInsightsStrip from '../components/insights/VirtInsightsStrip'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import { inventoryHeaders } from '../lib/inventoryApi'
@@ -7,7 +8,7 @@ import {
   Server, Cpu, MemoryStick, Power, PowerOff, Monitor, Search,
   Plus, Trash2, RefreshCw, ChevronDown, ChevronRight, LayoutDashboard,
   Database, Settings, X, Check, AlertTriangle, BarChart3, HardDrive,
-  Network, Cloud, ExternalLink,
+  Network, Cloud, ExternalLink, Pencil, Loader2,
 } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { isVmOnline, isPoweredOn as isPowerStateOn } from '../utils/powerState'
@@ -892,6 +893,7 @@ const HypervisorManagement = ({
   onSync,
   onSyncAll,
   onShowProgress,
+  onEdit,
   syncingAll = false,
   readOnly = false,
 }: { 
@@ -901,6 +903,7 @@ const HypervisorManagement = ({
   onSync: (id: number) => void
   onSyncAll?: () => void
   onShowProgress?: (id: number) => void
+  onEdit?: (hv: Hypervisor) => void
   syncingAll?: boolean
   readOnly?: boolean
 }) => {
@@ -1011,6 +1014,15 @@ const HypervisorManagement = ({
                     <RefreshCw className={`w-3.5 h-3.5 ${(hv.sync_job?.status === 'running' || hv.status === 'SYNCING') ? 'animate-spin' : ''}`} />
                     {(hv.sync_job?.status === 'running' || hv.status === 'SYNCING') ? t('hv_scanning_dots') : t('hv_sync_vms')}
                   </button>
+                  {onEdit && (
+                    <button
+                      onClick={() => onEdit(hv)}
+                      className="px-3 py-2 bg-white/[0.06] text-slate-300 rounded-lg hover:bg-white/[0.12] text-xs transition-colors"
+                      title={t('hv_edit_title')}
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={() => onDelete(hv.id)}
                     className="px-3 py-2 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 text-xs transition-colors"
@@ -1203,6 +1215,166 @@ const SyncScanningOverlay = ({
             {done ? tr('close') : tr('job_continue_bg')}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Edit Hypervisor Modal ────────────────────────────────────────────────────
+const EditHypervisorModal = ({ hv, onClose, onSave, saving }: {
+  hv: Hypervisor; onClose: () => void; onSave: (data: Record<string, unknown>) => void; saving?: boolean
+}) => {
+  const t = useT()
+  const isOcp = hv.type?.toLowerCase() === 'openshift_virt'
+  const [form, setForm] = useState({
+    name: hv.name,
+    hostname: hv.hostname || '',
+    ip_address: hv.ip_address || '',
+    port: hv.port || 443,
+    username: hv.username || '',
+    password: '',
+    token: '',
+  })
+  const [ocpAuthMethod, setOcpAuthMethod] = useState<'token' | 'credentials'>(
+    hv.connection_config?.has_token ? 'token' : 'credentials',
+  )
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  const testConnection = async () => {
+    setTesting(true); setTestResult(null)
+    try {
+      const payload: Record<string, unknown> = {
+        type: hv.type, hostname: form.hostname || form.ip_address, ip_address: form.ip_address, port: form.port,
+        username: form.username, password: form.password,
+      }
+      if (isOcp) {
+        payload.api_url = form.ip_address
+        if (ocpAuthMethod === 'token') { payload.token = form.token; delete payload.username; delete payload.password }
+      }
+      const r = await fetch(`${API_BASE_URL}/hypervisors/test-connection`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...inventoryHeaders() },
+        body: JSON.stringify(payload),
+      })
+      const data = await r.json()
+      setTestResult({ success: data.success, message: data.message })
+    } catch { setTestResult({ success: false, message: 'Bağlantı hatası' }) }
+    setTesting(false)
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const data: Record<string, unknown> = { name: form.name.trim() }
+    if (form.ip_address !== hv.ip_address) data.ip_address = form.ip_address
+    if (form.hostname !== hv.hostname) data.hostname = form.hostname
+    if (form.port !== hv.port) data.port = form.port
+    if (form.username !== hv.username) data.username = form.username
+    if (isOcp) {
+      data.api_url = form.ip_address
+      if (ocpAuthMethod === 'token' && form.token.trim()) data.token = form.token.trim()
+      else if (ocpAuthMethod === 'credentials' && form.password) data.password = form.password
+    } else {
+      if (form.password) data.password = form.password
+    }
+    onSave(data)
+  }
+
+  const canTest = isOcp
+    ? (ocpAuthMethod === 'token' ? Boolean(form.token) : Boolean(form.username) && Boolean(form.password))
+    : Boolean(form.username) && Boolean(form.password)
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">{t('hv_edit_title')}</h2>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">{t('hv_name')}</label>
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs text-slate-400 mb-1.5">IP / Hostname</label>
+              <input value={form.ip_address} onChange={(e) => { setForm({ ...form, ip_address: e.target.value, hostname: e.target.value }); setTestResult(null) }}
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white font-mono" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">{t('hv_port')}</label>
+              <input type="number" value={form.port} onChange={(e) => setForm({ ...form, port: Number(e.target.value) || 443 })}
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+            </div>
+          </div>
+          {isOcp ? (
+            <>
+              <div className="grid grid-cols-2 gap-2 p-1 bg-cyber-deep border border-white/[0.06] rounded-lg">
+                <button type="button" onClick={() => { setOcpAuthMethod('token'); setTestResult(null) }}
+                  className={`py-1.5 rounded-md text-sm font-medium transition-colors ${ocpAuthMethod === 'token' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                  Bearer Token
+                </button>
+                <button type="button" onClick={() => { setOcpAuthMethod('credentials'); setTestResult(null) }}
+                  className={`py-1.5 rounded-md text-sm font-medium transition-colors ${ocpAuthMethod === 'credentials' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                  {t('hv_user_pass')}
+                </button>
+              </div>
+              {ocpAuthMethod === 'token' ? (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1.5">Token <span className="text-slate-600">({t('hv_edit_pw_hint')})</span></label>
+                  <textarea rows={3} value={form.token} onChange={(e) => { setForm({ ...form, token: e.target.value }); setTestResult(null) }}
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white font-mono" />
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1.5">{t('hv_username_req')}</label>
+                    <input value={form.username} onChange={(e) => { setForm({ ...form, username: e.target.value }); setTestResult(null) }}
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1.5">{t('hv_password')} <span className="text-slate-600">({t('hv_edit_pw_hint')})</span></label>
+                    <input type="password" value={form.password} onChange={(e) => { setForm({ ...form, password: e.target.value }); setTestResult(null) }}
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">{t('hv_username_req')}</label>
+                <input value={form.username} onChange={(e) => { setForm({ ...form, username: e.target.value }); setTestResult(null) }}
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">{t('hv_password')} <span className="text-slate-600">({t('hv_edit_pw_hint')})</span></label>
+                <input type="password" value={form.password} onChange={(e) => { setForm({ ...form, password: e.target.value }); setTestResult(null) }}
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white" />
+              </div>
+            </>
+          )}
+          {testResult && (
+            <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${testResult.success ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+              {testResult.success ? <Check size={14} /> : <AlertTriangle size={14} />}
+              {testResult.message}
+            </div>
+          )}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={testConnection} disabled={testing || !canTest}
+              className="px-4 py-2.5 bg-white/[0.07] text-white rounded-lg text-sm hover:bg-white/[0.12] disabled:opacity-40 flex items-center gap-2">
+              {testing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              {testing ? t('hv_testing') : t('hv_test_conn')}
+            </button>
+            <div className="flex-1" />
+            <button type="button" onClick={onClose} className="px-4 py-2.5 bg-white/[0.07] text-white rounded-lg text-sm">{t('cancel')}</button>
+            <button type="submit" disabled={saving}
+              className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+              {t('save')}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )
@@ -1514,6 +1686,25 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
     onError: (e) => alert(e instanceof Error ? e.message : t('hv_sync_error')),
   })
 
+  const [editHv, setEditHv] = useState<Hypervisor | null>(null)
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: Record<string, unknown> }) => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/${id}`, {
+        method: 'PUT',
+        headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(data),
+      })
+      if (!r.ok) throw new Error((await r.json()).detail || 'Güncelleme başarısız')
+      return r.json()
+    },
+    onSuccess: () => {
+      setEditHv(null)
+      queryClient.invalidateQueries({ queryKey: ['hypervisors'] })
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : 'Güncelleme hatası'),
+  })
+
   const [syncingAll, setSyncingAll] = useState(false)
 
   const syncAllMutation = useMutation({
@@ -1606,6 +1797,14 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
     <>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
       {allowInventoryEdit && showAddModal && <AddHypervisorModal onClose={() => setShowAddModal(false)} onCreate={data => createMutation.mutate(data)} />}
+      {allowInventoryEdit && editHv && (
+        <EditHypervisorModal
+          hv={editHv}
+          onClose={() => setEditHv(null)}
+          onSave={(data) => updateMutation.mutate({ id: editHv.id, data })}
+          saving={updateMutation.isPending}
+        />
+      )}
       {scanTarget && (
         <SyncScanningOverlay
           hypervisorId={scanTarget.id}
@@ -1654,6 +1853,8 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
               <StatCard icon={Cpu} label={t('hv_stat_vcpu')} value={totalVmCpu} sub={t('hv_sub_cores')} accent={NEON.orange} />
               <StatCard icon={MemoryStick} label={t('hv_stat_mem')} value={`${totalVmRam} GB`} sub={t('hv_sub_mem')} accent={NEON.red} />
             </div>
+
+            <VirtInsightsStrip />
 
             <div className="flex justify-end">
               <Link
@@ -1799,6 +2000,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             onSync={(id) => syncMutation.mutate(id)}
             onSyncAll={() => syncAllMutation.mutate()}
             onShowProgress={openProgress}
+            onEdit={allowInventoryEdit ? (hv) => setEditHv(hv) : undefined}
             syncingAll={syncingAll || syncAllMutation.isPending}
           />
         )}

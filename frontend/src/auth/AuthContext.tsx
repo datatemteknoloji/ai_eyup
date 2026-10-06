@@ -2,6 +2,11 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { API_BASE_URL } from '../config/api'
 import { getToken, setToken, clearToken } from './authStore'
 
+export interface FavoritePath {
+  path: string
+  name: string
+}
+
 export interface AuthUser {
   id: number
   username: string
@@ -15,6 +20,7 @@ export interface AuthUser {
   is_admin: boolean
   theme?: 'dark' | 'light'
   locale?: 'tr' | 'en'
+  favorite_paths?: FavoritePath[]
 }
 
 export type LoginResult =
@@ -33,6 +39,7 @@ interface AuthContextValue {
   logout: () => void
   refresh: () => Promise<void>
   hasModule: (moduleId: string) => boolean
+  patchPreferences: (body: { theme?: 'dark' | 'light'; locale?: 'tr' | 'en'; favorite_paths?: FavoritePath[] }) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue>(null as any)
@@ -44,6 +51,7 @@ function applyUser(data: any): AuthUser {
     ...data,
     modules: data.modules ?? [],
     is_admin: data.is_admin ?? (data.role === 'admin'),
+    favorite_paths: Array.isArray(data.favorite_paths) ? data.favorite_paths : [],
   }
 }
 
@@ -142,9 +150,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user.modules.includes(moduleId)
   }, [user])
 
+  const patchPreferences = useCallback(async (body: {
+    theme?: 'dark' | 'light'
+    locale?: 'tr' | 'en'
+    favorite_paths?: FavoritePath[]
+  }) => {
+    const token = getToken()
+    if (!token) return
+    const r = await fetch(`${API_BASE_URL}/auth/preferences`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}))
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Tercih kaydedilemedi')
+    }
+    setUser(applyUser(await r.json()))
+  }, [])
+
   return (
     <AuthContext.Provider value={{
-      user, loading, login, completeMfaLogin, logout, refresh: fetchMe, hasModule,
+      user, loading, login, completeMfaLogin, logout, refresh: fetchMe, hasModule, patchPreferences,
     }}>
       {children}
     </AuthContext.Provider>

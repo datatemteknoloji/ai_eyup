@@ -85,6 +85,14 @@ async def ssh_terminal(websocket: WebSocket, server_id: int, token: str = ""):
             await websocket.send_text("\r\n\033[31mYetkilendirme hatası: kullanıcı bulunamadı.\033[0m\r\n")
             await websocket.close(code=4401)
             return
+        from app.core.auth import can_open_shell
+        if not can_open_shell(user, db, "linux", "operator"):
+            await websocket.accept()
+            await websocket.send_text(
+                "\r\n\033[31mYetki hatası: SSH terminal için 'linux' modülü ve en az 'operator' rolü gerekli.\033[0m\r\n"
+            )
+            await websocket.close(code=4403)
+            return
     finally:
         db.close()
 

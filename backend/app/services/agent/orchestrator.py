@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_agent_model, settings
 from app.models.agent_action import AgentAction
 from app.models.chat_session import ChatSession, ChatMessage
+from app.services.chat_session_scope import create_owned_session, get_owned_session, user_pk
 from app.services.audit import record_audit
 from app.services.agent import tools as tool_mod
 from app.services.agent.executor import get_default_credential
@@ -97,14 +98,23 @@ def _actor_name(actor) -> str:
 
 
 def _ensure_session(db: Session, session_id: Optional[int], first_message: str,
-                    server_ids: List[int]) -> Optional[int]:
+                    server_ids: List[int], user_id: Optional[int] = None) -> Optional[int]:
     """Agent konuşması için ChatSession garanti eder; yoksa oluşturur."""
     try:
         if session_id:
-            exists = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if user_id is not None:
+                exists = get_owned_session(db, session_id, user_id)
+            else:
+                exists = db.query(ChatSession).filter(ChatSession.id == session_id).first()
             if exists:
                 return session_id
         title = (first_message or "Agent").strip()[:60] or "Agent"
+        if user_id is not None:
+            sess = create_owned_session(
+                db, user_id=user_id, title=f"[Agent] {title}",
+                category="linux", server_ids=server_ids or [],
+            )
+            return sess.id
         sess = ChatSession(title=f"[Agent] {title}", server_ids=server_ids or [])
         db.add(sess)
         db.commit()
@@ -427,7 +437,8 @@ def start_agent(
 ) -> Dict[str, Any]:
     server_ids = server_ids or []
     actor_name = _actor_name(actor)
-    session_id = _ensure_session(db, session_id, user_message, server_ids)
+    uid = user_pk(actor) if actor is not None and not isinstance(actor, str) else None
+    session_id = _ensure_session(db, session_id, user_message, server_ids, user_id=uid)
     _save_msg(db, session_id, "user", user_message)
 
     record_audit(db, category="agent", action="agent.ask", actor=actor,

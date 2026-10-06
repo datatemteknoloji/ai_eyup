@@ -237,6 +237,11 @@ def set_user_modules(
         db.add(UserModule(user_id=user_id, module_id=mid, granted_by=current_user.id))
 
     db.commit()
+    try:
+        from app.core.principal import invalidate as _invalidate_principals
+        _invalidate_principals()
+    except Exception:
+        pass
     logger.info("Modules updated for user %s by admin %s: %s", user.username, current_user.username, body.module_ids)
 
     from app.services.audit import record_audit

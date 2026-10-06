@@ -1,6 +1,7 @@
 /**
  * OpenShift Container Platform Dashboard — cluster bağlantısı, node/proje/workload envanteri.
  */
+import OcpInsightsStrip from '../components/insights/OcpInsightsStrip'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -985,6 +986,8 @@ export default function OpenShiftDashboard({
           )}
         </div>
       </div>
+
+      {!isIntegration && <OcpInsightsStrip />}
 
       {isIntegration ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">

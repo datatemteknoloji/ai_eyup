@@ -130,14 +130,36 @@ async def _require_auth_middleware(request, call_next):
     auth_header = request.headers.get("authorization", "")
     token = auth_header[7:] if auth_header.lower().startswith("bearer ") else None
     from app.core.security import decode_access_token
-    token_valid = bool(token) and bool(decode_access_token(token))
-    if not token_valid:
+    payload = decode_access_token(token) if token else None
+    if not payload:
         if not _path_matches_known_route(request):
             # Var olmayan bir endpoint — yanıltıcı "giriş yap" yerine doğal 404.
             return await call_next(request)
         if not token:
             return JSONResponse(status_code=401, content={"detail": "Kimlik doğrulama gerekli"})
         return JSONResponse(status_code=401, content={"detail": "Geçersiz veya süresi dolmuş token"})
+
+    # Modül yetkisi: yetkisi olmayan modülün hiçbir API'sine erişilemez (menü gizleme yetmez).
+    if payload.get("purpose"):
+        # MFA ara token'ı API erişimi vermez
+        return JSONResponse(status_code=401, content={"detail": "Geçersiz veya süresi dolmuş token"})
+    from starlette.concurrency import run_in_threadpool
+    from app.core import module_policy
+    from app.core.principal import principal_from_payload
+    principal = await run_in_threadpool(principal_from_payload, payload)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Geçersiz veya eksik kimlik bilgisi"})
+    decision = module_policy.decide(
+        role=principal.role,
+        modules=principal.modules,
+        method=method,
+        path=path,
+        query=dict(request.query_params),
+    )
+    if not decision.allowed:
+        if not _path_matches_known_route(request):
+            return await call_next(request)  # var olmayan yol → doğal 404
+        return JSONResponse(status_code=decision.status, content={"detail": decision.detail})
     return await call_next(request)
 
 
@@ -348,11 +370,16 @@ async def startup_tasks():
         _ddl("ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_tiers JSONB")
         _ddl("ALTER TABLE users ADD COLUMN IF NOT EXISTS theme VARCHAR(16) DEFAULT 'dark'")
         _ddl("ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(8) DEFAULT 'tr'")
+        _ddl("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_paths JSONB DEFAULT '[]'")
+        _ddl("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER")
+        _ddl("CREATE INDEX IF NOT EXISTS ix_chat_sessions_user_id ON chat_sessions (user_id)")
         _ddl("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR(20) DEFAULT 'local'")
         _ddl("ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL")
         _ddl("ALTER TABLE chat_qa_cache ADD COLUMN IF NOT EXISTS rejected BOOLEAN DEFAULT FALSE")
         _ddl("ALTER TABLE chat_qa_cache ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
         _ddl("ALTER TABLE chat_qa_cache ALTER COLUMN context_key TYPE VARCHAR(80)")
+        _ddl("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS problem_key VARCHAR(240)")
+        _ddl("CREATE INDEX IF NOT EXISTS ix_incidents_problem_key ON incidents (problem_key)")
         _ddl("CREATE INDEX IF NOT EXISTS ix_chat_qa_cache_context_key ON chat_qa_cache (context_key)")
         _ddl("CREATE INDEX IF NOT EXISTS ix_chat_qa_cache_expires_at ON chat_qa_cache (expires_at)")
         for _idx in [

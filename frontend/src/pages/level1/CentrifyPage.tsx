@@ -8,19 +8,22 @@
  * RoleDialog: 5 tab (General, System Rights, Authentication, Audit, Custom Attributes)
  * AssignRoleDialog: Filtrelenebilir data-grid rol seçimi + zone/computer scope ayrımı
  */
-import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import React, { useState, useCallback, useRef, useEffect, useMemo, createContext, useContext, PointerEvent as ReactPointerEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
   KeyRound, ChevronRight, ChevronDown, FolderTree, Shield,
   Terminal, Users, Monitor, User, RefreshCw, AlertTriangle,
   Loader2, Info, Search, Folder,
-  PanelLeftClose, PanelLeft, XCircle, CheckCircle2,
-  Plus, Copy, ClipboardPaste, Pencil, Trash2, FileDown, Link2, Unlink, Send,
+  PanelLeftClose, PanelLeft, XCircle, CheckCircle2, ScanSearch, Save,
+  Plus, Copy, ClipboardPaste, Pencil, Trash2, FileDown, FileText, Link2, Unlink, Send,
 } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import { useT } from '../../i18n/LocaleProvider'
 import type { TranslationKey } from '../../i18n/messages'
+import { recordCompletedJob } from '@dropt/api'
+import { getToken as getDroptToken } from '@dropt/session'
+import { ensureDroptSession } from './Level1Shell'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { chatMarkdownComponents, chatResponseBody } from '../../components/chatMarkdown'
@@ -98,6 +101,289 @@ async function fetchJson<T>(path: string): Promise<T> {
   const res = await fetch(api(path), { headers: { Authorization: `Bearer ${token()}` } })
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
+}
+
+type DraftOp = { id: string; label: string; path: string; body: Record<string, unknown> }
+let draftEnqueue: ((d: Omit<DraftOp, 'id'>) => void) | null = null
+const DraftPreviewCtx = createContext<DraftOp[]>([])
+function useDrafts() { return useContext(DraftPreviewCtx) }
+
+function draftDesired(d: DraftOp): Record<string, unknown> {
+  const ds = d.body.desired_state
+  if (ds && typeof ds === 'object') return ds as Record<string, unknown>
+  return d.body
+}
+
+function draftOpType(d: DraftOp): string {
+  const op = d.body.operation_type
+  if (typeof op === 'string' && op) return op
+  if (d.path.includes('/commands/delete')) return 'delete_command'
+  if (d.path.endsWith('/commands') || d.path.includes('/commands?')) return 'create_command'
+  if (d.path.includes('add-to-role')) return 'add_cmd_to_role'
+  if (d.path.includes('remove-from-role')) return 'remove_cmd_from_role'
+  return ''
+}
+
+function draftZoneId(d: DraftOp): number | undefined {
+  const z = d.body.zone_id ?? draftDesired(d).zone_id
+  return typeof z === 'number' ? z : undefined
+}
+
+function overlayAssignments(items: any[], drafts: DraftOp[], zoneId: number, computerId?: number): any[] {
+  let rows = items.map(a => ({ ...a }))
+  for (const d of drafts) {
+    if (draftZoneId(d) != null && draftZoneId(d) !== zoneId) continue
+    const op = draftOpType(d)
+    const ds = draftDesired(d)
+    if (op === 'update_role_assignment') {
+      const id = ds.assignment_id
+      rows = rows.map(a => a.id === id ? {
+        ...a,
+        start_time: ds.start_time !== undefined ? ds.start_time : a.start_time,
+        end_time: ds.end_time !== undefined ? ds.end_time : a.end_time,
+        _preview: true,
+      } : a)
+    } else if (op === 'create_role_assignment') {
+      const cid = ds.computer_id ?? null
+      if (computerId && cid !== computerId) continue
+      if (!computerId && cid) continue
+      rows = [...rows, {
+        id: `draft-${d.id}`,
+        assignee_name: ds.assignee_name,
+        assignee_type: ds.assignee_type,
+        role_id: ds.role_id,
+        role_name: ds.role_name,
+        scope_type: ds.scope_type || (computerId ? 'computer' : 'zone'),
+        start_time: ds.start_time ?? null,
+        end_time: ds.end_time ?? null,
+        _preview: true,
+      }]
+    } else if (op === 'delete_role_assignment') {
+      rows = rows.filter(a => a.id !== ds.assignment_id)
+    }
+  }
+  return rows
+}
+
+function overlayRoles(items: Role[], drafts: DraftOp[], zoneId: number): Role[] {
+  let rows = items.map(r => ({ ...r }))
+  for (const d of drafts) {
+    if (draftZoneId(d) != null && draftZoneId(d) !== zoneId) continue
+    const op = draftOpType(d)
+    const ds = draftDesired(d)
+    const name = String(ds.name || '')
+    if (op === 'create_role' || op === 'clone_role') {
+      rows = [...rows, {
+        id: -Math.abs(d.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) || Date.now(),
+        ad_guid: '',
+        name: name || (op === 'clone_role' ? `${ds.source_role_name || 'role'}-copy` : 'role'),
+        description: (ds.description as string) || null,
+        is_system_role: false,
+        management_state: 'preview',
+        command_count: 0,
+        _preview: true,
+      } as Role & { _preview?: boolean }]
+    } else if (op === 'update_role') {
+      rows = rows.map(r => r.name === name || r.name === ds.source_role_name ? {
+        ...r,
+        name: name || r.name,
+        description: ds.description !== undefined ? (ds.description as string) : r.description,
+        management_state: 'preview',
+        _preview: true,
+      } as Role & { _preview?: boolean } : r)
+    } else if (op === 'delete_role') {
+      rows = rows.filter(r => r.name !== name)
+    } else if (op === 'add_cmd_to_role') {
+      const rn = String(ds.role_name || d.body.role_name || '')
+      rows = rows.map(r => r.name === rn ? { ...r, command_count: (r.command_count || 0) + 1, _preview: true } as Role & { _preview?: boolean } : r)
+    } else if (op === 'remove_cmd_from_role') {
+      const rn = String(ds.role_name || d.body.role_name || '')
+      rows = rows.map(r => r.name === rn ? { ...r, command_count: Math.max(0, (r.command_count || 0) - 1), _preview: true } as Role & { _preview?: boolean } : r)
+    }
+  }
+  return rows
+}
+
+function overlayCommands(items: Command[], drafts: DraftOp[], zoneId: number): Command[] {
+  let rows = items.map(c => ({ ...c }))
+  for (const d of drafts) {
+    if (draftZoneId(d) != null && draftZoneId(d) !== zoneId) continue
+    const op = draftOpType(d)
+    const ds = draftDesired(d)
+    if (op === 'create_command') {
+      rows = [...rows, {
+        id: -(Math.abs(Array.from(d.id).reduce((a, c) => a + c.charCodeAt(0), 0)) || 1),
+        ad_guid: '',
+        name: String(ds.name || ''),
+        command_path: String(ds.command_path || ''),
+        match_type: String(ds.match_type || 'glob'),
+        run_as_user: String(ds.run_as_user || ''),
+        auth_type: String(ds.auth_type || ''),
+        description: (ds.description as string) || '',
+        management_state: 'preview',
+        _preview: true,
+      } as Command & { _preview?: boolean }]
+    } else if (op === 'delete_command') {
+      const n = String(ds.command_name || ds.name || '')
+      rows = rows.filter(c => c.name !== n)
+    }
+  }
+  return rows
+}
+
+function centrifyJobMeta(drafts: DraftOp[], zones: Zone[]): { title: string; summary: string; hostnames: string[] } {
+  const labels = drafts.map(d => d.label).filter(Boolean)
+  const summary = labels.join(' · ').slice(0, 1024)
+  const seen = new Set<string>()
+  const computers: string[] = []
+  const zoneNames: string[] = []
+  const add = (arr: string[], v: unknown) => {
+    const s = typeof v === 'string' ? v.trim() : ''
+    if (!s || seen.has(s)) return
+    seen.add(s)
+    arr.push(s)
+  }
+  for (const d of drafts) {
+    const ds = draftDesired(d)
+    add(computers, ds.computer_name)
+    add(computers, ds.computerName)
+    add(computers, ds.hostname)
+    add(computers, ds.fqdn)
+    add(zoneNames, zones.find(z => z.id === draftZoneId(d))?.name)
+  }
+  const head = labels[0] || 'değişiklik'
+  const title = (labels.length > 1 ? `Centrify — ${head} (+${labels.length - 1})` : `Centrify — ${head}`).slice(0, 255)
+  return { title, summary, hostnames: computers.length ? computers : zoneNames }
+}
+
+const PreviewMark: React.FC = () => {
+  const t = useT()
+  return <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300">{t('cz_preview')}</span>
+}
+
+async function centrifyMutate(path: string, body: Record<string, unknown>, label: string) {
+  if (draftEnqueue) {
+    draftEnqueue({ path, body, label })
+    return { queued: true }
+  }
+  const res = await fetch(api(path), { method: 'POST', headers: hdrs(), body: JSON.stringify(body) })
+  if (!res.ok) throw new Error(await res.text().catch(() => `API ${res.status}`))
+  return res.json().catch(() => ({}))
+}
+
+function fmtTs(iso?: string | null) {
+  if (!iso) return '—'
+  try { return new Date(iso).toLocaleString('tr-TR') } catch { return iso }
+}
+
+function csvCell(v: unknown): string {
+  return `"${String(v ?? '').replace(/"/g, '""')}"`
+}
+
+function downloadCsv(filename: string, headers: string[], rows: string[][]) {
+  const csv = [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\n')
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function mdCell(v: unknown): string {
+  return String(v ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ')
+}
+
+function rowsToMarkdownTable(headers: string[], rows: string[][]): string {
+  const head = `| ${headers.map(mdCell).join(' | ')} |`
+  const sep = `| ${headers.map(() => '---').join(' | ')} |`
+  const body = rows.map(r => `| ${r.map(mdCell).join(' | ')} |`).join('\n')
+  return `${head}\n${sep}\n${body}`
+}
+
+function slugFile(s: string): string {
+  return (s || 'zone').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'zone'
+}
+
+async function exportCentrifyList(opts: {
+  format: 'csv' | 'pdf'
+  zoneId: number
+  nodeType: VNodeType
+  computerId?: number
+  zoneName?: string
+  t: (k: TranslationKey, vars?: Record<string, string | number>) => string
+}): Promise<void> {
+  const { format, zoneId, nodeType, computerId, zoneName, t } = opts
+  const titleByType: Record<string, string> = {
+    computers: t('cz_computers'),
+    role_definitions: t('cz_role_definitions'),
+    commands: t('cz_commands'),
+    role_assignments: t('cz_role_assignments'),
+  }
+  const title = titleByType[nodeType] || t('cz_export_list')
+  const stamp = new Date().toISOString().slice(0, 10)
+  const fileBase = `centrify_${slugFile(nodeType)}_${slugFile(zoneName || String(zoneId))}_${stamp}`
+
+  let headers: string[] = []
+  let rows: string[][] = []
+
+  if (nodeType === 'computers') {
+    const items = await fetchJson<Computer[]>(`/zones/${zoneId}/computers`)
+    headers = [t('cz_col_name'), t('cz_col_joined'), t('cz_col_agent'), t('cz_col_os'), t('cz_col_canonical')]
+    rows = items.map(c => [
+      c.name, c.management_state === 'managed' ? 'Y' : 'N', c.agent_version || '', c.os_type || '', c.fqdn || '',
+    ])
+  } else if (nodeType === 'role_definitions') {
+    const items = await fetchJson<Role[]>(`/zones/${zoneId}/roles`)
+    headers = [t('cz_col_name'), t('cz_col_desc'), t('cz_commands'), 'Status']
+    rows = items.map(r => [r.name, r.description || '', String(r.command_count ?? 0), r.management_state || ''])
+  } else if (nodeType === 'commands') {
+    const items = await fetchJson<Command[]>(`/zones/${zoneId}/commands`)
+    headers = [t('cz_col_name'), t('cz_col_desc'), t('cz_col_path'), t('cz_col_run_as_dzdo'), t('cz_col_authentication')]
+    rows = items.map(c => [
+      c.name, c.description || '', c.command_path || '', c.run_as_user || '', c.auth_type || '',
+    ])
+  } else if (nodeType === 'role_assignments') {
+    const endpoint = computerId
+      ? `/zones/${zoneId}/computers/${computerId}/role-assignments`
+      : `/zones/${zoneId}/role-assignments`
+    const [items, roles] = await Promise.all([
+      fetchJson<any[]>(endpoint),
+      fetchJson<Role[]>(`/zones/${zoneId}/roles`),
+    ])
+    const roleName = new Map(roles.map(r => [r.id, r.name]))
+    headers = [t('cz_col_assignee'), t('cz_col_assignee_type'), t('cz_col_role'), 'Scope']
+    rows = items.map(a => [
+      a.assignee_name || '', a.assignee_type || '', roleName.get(a.role_id) || String(a.role_id ?? ''), a.scope_type || 'zone',
+    ])
+  } else {
+    return
+  }
+
+  if (!rows.length) {
+    alert(t('cz_export_empty'))
+    return
+  }
+
+  if (format === 'csv') {
+    downloadCsv(`${fileBase}.csv`, headers, rows)
+    return
+  }
+
+  const { exportMarkdownToPrintWindow } = await import('../../utils/pdfExport')
+  const md = [
+    zoneName ? `**Zone:** ${zoneName}` : '',
+    computerId ? `**Computer ID:** ${computerId}` : '',
+    `${t('cz_export_count', { n: rows.length })}`,
+    '',
+    rowsToMarkdownTable(headers, rows),
+  ].filter(Boolean).join('\n')
+  exportMarkdownToPrintWindow(md, {
+    title,
+    subtitle: zoneName || undefined,
+    filename: fileBase,
+  })
 }
 
 // ── Ağaç yardımcıları ────────────────────────────────────────
@@ -328,6 +614,9 @@ const ContextMenu: React.FC<{
   }
   if (ctx.nodeType === 'role_assignments') {
     items.push({ key: 'assign_role', label: t('cz_assign_role'), icon: <Plus size={13} /> })
+    if (ctx.item) {
+      items.push({ key: 'edit_assignment', label: t('cz_edit_assignment'), icon: <Pencil size={13} /> })
+    }
   }
   if (ctx.nodeType === 'role_definitions') {
     items.push({ key: 'add_role', label: t('cz_add_role'), icon: <Plus size={13} /> })
@@ -358,7 +647,10 @@ const ContextMenu: React.FC<{
   items.push({ key: 'refresh', label: t('cz_refresh'), icon: <RefreshCw size={13} /> })
 
   if (['role_definitions', 'commands', 'role_assignments', 'computers'].includes(ctx.nodeType)) {
-    items.push({ key: 'export', label: t('cz_export_list'), icon: <FileDown size={13} /> })
+    items.push(
+      { key: 'export_csv', label: t('cz_export_csv'), icon: <FileDown size={13} /> },
+      { key: 'export_pdf', label: t('cz_export_pdf'), icon: <FileText size={13} /> },
+    )
   }
 
   return (
@@ -461,9 +753,8 @@ const RoleDialog: React.FC<{
   const doSave = async () => {
     setSaving(true)
     setError('')
-    const res = await fetch(api('/operations'), {
-      method: 'POST', headers: hdrs(),
-      body: JSON.stringify({
+    try {
+      await centrifyMutate('/operations', {
         operation_type: mode === 'create' ? 'create_role' : mode === 'copy' ? 'clone_role' : 'update_role',
         zone_id: zoneId,
         desired_state: {
@@ -478,11 +769,9 @@ const RoleDialog: React.FC<{
           custom_attributes: attrs.length > 0 ? attrs : null,
         },
         reason: reason || `${name} — ${mode}`,
-      }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      setError(typeof body.detail === 'string' ? body.detail : `İşlem oluşturulamadı (${res.status})`)
+      }, `${mode === 'create' ? 'Rol oluştur' : mode === 'copy' ? 'Rol kopyala' : 'Rol güncelle'}: ${name}`)
+    } catch (e: any) {
+      setError(e?.message || 'İşlem oluşturulamadı')
       setSaving(false)
       return
     }
@@ -677,17 +966,14 @@ const CommandDialog: React.FC<{
   const doSave = async () => {
     setSaving(true)
     setError('')
-    const res = await fetch(api('/commands'), {
-      method: 'POST', headers: hdrs(),
-      body: JSON.stringify({
+    try {
+      await centrifyMutate('/commands', {
         zone_id: zoneId, name, command_path: path, match_type: matchType,
         run_as_user: runAs, run_as_group: '', auth_type: authType,
         description: desc, reason: reason || `${name} — ${mode}`,
-      }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      setError(typeof body.detail === 'string' ? body.detail : `Komut oluşturulamadı (${res.status})`)
+      }, `Komut: ${name}`)
+    } catch (e: any) {
+      setError(e?.message || 'Komut oluşturulamadı')
       setSaving(false)
       return
     }
@@ -777,18 +1063,12 @@ const CommandToRoleDialog: React.FC<{
     setSaving(true)
     setError('')
     const path = mode === 'add' ? '/commands/add-to-role' : '/commands/remove-from-role'
-    const res = await fetch(api(path), {
-      method: 'POST', headers: hdrs(),
-      body: JSON.stringify({
-        zone_id: zoneId,
-        role_name: roleName,
-        command_name: cmd.name,
-        reason,
-      }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      setError(typeof body.detail === 'string' ? body.detail : `İşlem oluşturulamadı (${res.status})`)
+    try {
+      await centrifyMutate(path, {
+        zone_id: zoneId, role_name: roleName, command_name: cmd.name, reason,
+      }, `${mode === 'add' ? 'Komut ekle' : 'Komut çıkar'}: ${cmd.name} → ${roleName}`)
+    } catch (e: any) {
+      setError(e?.message || 'İşlem oluşturulamadı')
       setSaving(false)
       return
     }
@@ -1007,23 +1287,21 @@ const AssignRoleDialog: React.FC<{
       : assignees
 
     for (const a of assigneeList) {
-      await fetch(api('/operations'), {
-        method: 'POST', headers: hdrs(),
-        body: JSON.stringify({
-          operation_type: 'create_role_assignment', zone_id: zoneId,
-          desired_state: {
-            role_name: selectedRole.name,
-            assignee_name: a.name,
-            assignee_type: a.type.includes('Group') ? 'group' : a.type === 'all' ? 'all' : 'user',
-            computer_id: computerId || null,
-            scope_type: computerId ? 'computer' : 'zone',
-            start_time: startImmediate ? null : startTime,
-            end_time: neverExpire ? null : endTime,
-            description: assignDesc,
-          },
-          reason: reason || `${a.name} → ${selectedRole.name}`,
-        }),
-      })
+      await centrifyMutate('/operations', {
+        operation_type: 'create_role_assignment', zone_id: zoneId,
+        desired_state: {
+          role_name: selectedRole.name,
+          assignee_name: a.name,
+          assignee_type: a.type.includes('Group') ? 'group' : a.type === 'all' ? 'all' : 'user',
+          computer_id: computerId || null,
+          computer_name: computerName || null,
+          scope_type: computerId ? 'computer' : 'zone',
+          start_time: startImmediate ? null : startTime,
+          end_time: neverExpire ? null : endTime,
+          description: assignDesc,
+        },
+        reason: reason || `${a.name} → ${selectedRole.name}`,
+      }, `Atama: ${a.name} → ${selectedRole.name}`)
     }
     setSaving(false); onDone(); onClose()
   }
@@ -1258,6 +1536,8 @@ const Spin: React.FC = () => <div className="flex items-center justify-center py
 const Empty: React.FC<{ text: string }> = ({ text }) => <div className="flex flex-col items-center justify-center py-12 text-slate-500"><Info size={24} className="mb-2" /><span className="text-sm">{text}</span></div>
 const Badge: React.FC<{ state: string }> = ({ state }) => state === 'managed'
   ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">Managed</span>
+  : state === 'preview'
+    ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">Önizleme</span>
   : <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-600/30 text-slate-400">Read Only</span>
 
 const ComputersPanel: React.FC<{
@@ -1363,9 +1643,11 @@ const UsersPanel: React.FC<{ zoneId: number }> = ({ zoneId }) => {
 
 const RolesPanel: React.FC<{ zoneId: number; onRowCtx: (e: React.MouseEvent, r: Role) => void }> = ({ zoneId, onRowCtx }) => {
   const t = useT()
+  const drafts = useDrafts()
   const { data: roles = [], isLoading } = useQuery<Role[]>({ queryKey: ['centrify-roles', zoneId], queryFn: () => fetchJson(`/zones/${zoneId}/roles`) })
+  const visible = useMemo(() => overlayRoles(roles, drafts, zoneId), [roles, drafts, zoneId])
   if (isLoading) return <Spin />
-  if (!roles.length) return <Empty text={t('cz_no_data')} />
+  if (!visible.length) return <Empty text={t('cz_no_data')} />
   return (
     <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-slate-400 border-b border-slate-700/50 bg-slate-900/30">
       <th className="py-2 px-3 text-xs font-medium">{t('cz_col_name')}</th>
@@ -1373,12 +1655,13 @@ const RolesPanel: React.FC<{ zoneId: number; onRowCtx: (e: React.MouseEvent, r: 
       <th className="py-2 px-3 text-xs font-medium text-center">{t('cz_commands')}</th>
       <th className="py-2 px-3 text-xs font-medium">Status</th>
     </tr></thead><tbody>
-      {roles.map(r => <tr key={r.id} className="border-b border-slate-800/50 hover:bg-slate-800/30 cursor-context-menu"
+      {visible.map(r => <tr key={r.id} className={`border-b border-slate-800/50 hover:bg-slate-800/30 cursor-context-menu ${(r as any)._preview ? 'bg-amber-500/5' : ''}`}
         onContextMenu={e => { e.preventDefault(); onRowCtx(e, r) }}>
         <td className="py-1.5 px-3"><div className="flex items-center gap-2">
           <Shield size={13} className={r.is_system_role ? 'text-amber-400' : 'text-blue-400'} />
           <span className="text-slate-200 text-xs font-medium">{r.name}</span>
           {r.is_system_role && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400">SYS</span>}
+          {(r as any)._preview ? <PreviewMark /> : null}
         </div></td>
         <td className="py-1.5 px-3 text-xs text-slate-400 max-w-xs truncate">{r.description || '—'}</td>
         <td className="py-1.5 px-3 text-center text-xs text-slate-300">{r.command_count}</td>
@@ -1390,9 +1673,11 @@ const RolesPanel: React.FC<{ zoneId: number; onRowCtx: (e: React.MouseEvent, r: 
 
 const CommandsPanel: React.FC<{ zoneId: number; onRowCtx: (e: React.MouseEvent, c: Command) => void }> = ({ zoneId, onRowCtx }) => {
   const t = useT()
+  const drafts = useDrafts()
   const { data: cmds = [], isLoading } = useQuery<Command[]>({ queryKey: ['centrify-commands', zoneId], queryFn: () => fetchJson(`/zones/${zoneId}/commands`) })
+  const visible = useMemo(() => overlayCommands(cmds, drafts, zoneId), [cmds, drafts, zoneId])
   if (isLoading) return <Spin />
-  if (!cmds.length) return <Empty text={t('cz_no_data')} />
+  if (!visible.length) return <Empty text={t('cz_no_data')} />
   return (
     <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-slate-400 border-b border-slate-700/50 bg-slate-900/30">
       <th className="py-2 px-3 text-xs font-medium">{t('cz_col_name')}</th>
@@ -1402,9 +1687,9 @@ const CommandsPanel: React.FC<{ zoneId: number; onRowCtx: (e: React.MouseEvent, 
       <th className="py-2 px-3 text-xs font-medium">{t('cz_col_run_as_dzdo')}</th>
       <th className="py-2 px-3 text-xs font-medium">{t('cz_col_authentication')}</th>
     </tr></thead><tbody>
-      {cmds.map(c => <tr key={c.id} className="border-b border-slate-800/50 hover:bg-slate-800/30 cursor-context-menu"
+      {visible.map(c => <tr key={c.id} className={`border-b border-slate-800/50 hover:bg-slate-800/30 cursor-context-menu ${(c as any)._preview ? 'bg-amber-500/5' : ''}`}
         onContextMenu={e => { e.preventDefault(); onRowCtx(e, c) }}>
-        <td className="py-1.5 px-3 text-xs text-slate-200">{c.name}</td>
+        <td className="py-1.5 px-3 text-xs text-slate-200">{c.name}{(c as any)._preview ? <PreviewMark /> : null}</td>
         <td className="py-1.5 px-3 text-xs text-slate-500 max-w-[120px] truncate">{c.description || ''}</td>
         <td className="py-1.5 px-3 text-xs text-slate-300">{c.name}</td>
         <td className="py-1.5 px-3 text-xs text-slate-400 font-mono max-w-[180px] truncate">{c.command_path || '—'}</td>
@@ -1421,8 +1706,12 @@ const AssignmentsPanel: React.FC<{
   zoneId: number; computerId?: number; computerName?: string
   onAssign: () => void
   onCtx?: (e: React.MouseEvent) => void
-}> = ({ zoneId, computerId, onAssign, onCtx }) => {
+  onRowCtx?: (e: React.MouseEvent, a: any) => void
+}> = ({ zoneId, computerId, onAssign, onCtx, onRowCtx }) => {
   const t = useT()
+  const drafts = useDrafts()
+  const { data: roles = [] } = useQuery<Role[]>({ queryKey: ['centrify-roles', zoneId], queryFn: () => fetchJson(`/zones/${zoneId}/roles`) })
+  const roleName = useMemo(() => new Map(roles.map(r => [r.id, r.name])), [roles])
   const endpoint = computerId
     ? `/zones/${zoneId}/computers/${computerId}/role-assignments`
     : `/zones/${zoneId}/role-assignments`
@@ -1430,6 +1719,7 @@ const AssignmentsPanel: React.FC<{
     queryKey: ['centrify-assignments', zoneId, computerId || 'zone'],
     queryFn: () => fetchJson(endpoint),
   })
+  const visible = useMemo(() => overlayAssignments(items, drafts, zoneId, computerId), [items, drafts, zoneId, computerId])
   return (
     <div className="flex flex-col h-full min-h-0" onContextMenu={e => { e.preventDefault(); onCtx?.(e) }}>
       <div className="px-3 py-2 border-b border-slate-700/40 flex justify-end">
@@ -1438,23 +1728,105 @@ const AssignmentsPanel: React.FC<{
           <Plus size={12} /> {t('cz_assign_role')}
         </button>
       </div>
-      {isLoading ? <Spin /> : !items.length ? <Empty text="There are no items to show in this view." /> : (
+      {isLoading ? <Spin /> : !visible.length ? <Empty text="There are no items to show in this view." /> : (
         <div className="overflow-x-auto flex-1"><table className="w-full text-sm"><thead><tr className="text-left text-slate-400 border-b border-slate-700/50 bg-slate-900/30">
           <th className="py-2 px-3 text-xs font-medium">{t('cz_col_assignee')}</th>
           <th className="py-2 px-3 text-xs font-medium">{t('cz_col_assignee_type')}</th>
           <th className="py-2 px-3 text-xs font-medium">{t('cz_col_role')}</th>
           <th className="py-2 px-3 text-xs font-medium">Scope</th>
+          <th className="py-2 px-3 text-xs font-medium">{t('cz_ar_start_time')}</th>
+          <th className="py-2 px-3 text-xs font-medium">{t('cz_ar_end_time')}</th>
         </tr></thead><tbody>
-          {items.map((a: any) => <tr key={a.id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
-            <td className="py-1.5 px-3 text-xs text-slate-200">{a.assignee_name}</td>
-            <td className="py-1.5 px-3 text-xs text-slate-400 capitalize">{a.assignee_type}</td>
-            <td className="py-1.5 px-3 text-xs text-slate-400">{a.role_id}</td>
-            <td className="py-1.5 px-3"><span className={`text-[10px] px-1.5 py-0.5 rounded ${
-              a.scope_type === 'computer' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'
-            }`}>{a.scope_type || 'zone'}</span></td>
-          </tr>)}
+          {visible.map((a: any) => {
+            const expired = a.end_time && new Date(a.end_time).getTime() < Date.now()
+            return (
+            <tr key={a.id} className={`border-b border-slate-800/50 hover:bg-slate-800/30 cursor-context-menu ${a._preview ? 'bg-amber-500/5' : ''}`}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onRowCtx?.(e, a) }}>
+              <td className="py-1.5 px-3 text-xs text-slate-200">{a.assignee_name}{a._preview ? <PreviewMark /> : null}</td>
+              <td className="py-1.5 px-3 text-xs text-slate-400 capitalize">{a.assignee_type}</td>
+              <td className="py-1.5 px-3 text-xs text-slate-400">{roleName.get(a.role_id) || a.role_name || a.role_id}</td>
+              <td className="py-1.5 px-3"><span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                a.scope_type === 'computer' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'
+              }`}>{a.scope_type || 'zone'}</span></td>
+              <td className={`py-1.5 px-3 text-xs ${a._preview ? 'text-amber-300' : 'text-slate-400'}`}>{fmtTs(a.start_time)}</td>
+              <td className={`py-1.5 px-3 text-xs ${expired ? 'text-red-400' : a._preview ? 'text-amber-300' : 'text-slate-400'}`}>{fmtTs(a.end_time)}</td>
+            </tr>
+            )
+          })}
         </tbody></table></div>
       )}
+    </div>
+  )
+}
+
+const EditAssignmentDialog: React.FC<{
+  zoneId: number; item: any; onClose: () => void; onDone: () => void
+}> = ({ zoneId, item, onClose, onDone }) => {
+  const t = useT()
+  const toLocal = (iso?: string | null) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ''
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+  const [neverExpire, setNeverExpire] = useState(!item?.end_time)
+  const [endTime, setEndTime] = useState(toLocal(item?.end_time))
+  const [startTime, setStartTime] = useState(toLocal(item?.start_time))
+  const [reason, setReason] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const submit = async () => {
+    setSaving(true)
+    try {
+      await centrifyMutate('/operations', {
+        operation_type: 'update_role_assignment',
+        zone_id: zoneId,
+        desired_state: {
+          assignment_id: item.id,
+          assignment_ad_guid: item.ad_guid,
+          computer_name: item.computer_name || item.hostname || item.computerName || null,
+          assignee_name: item.assignee_name,
+          start_time: startTime ? new Date(startTime).toISOString() : null,
+          end_time: neverExpire ? null : (endTime ? new Date(endTime).toISOString() : null),
+        },
+        reason: reason || `Süre güncelle: ${item.assignee_name}`,
+      }, `Atama süre: ${item.assignee_name}`)
+      onDone(); onClose()
+    } catch (e: any) {
+      alert(e?.message || t('cz_export_fail'))
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 w-[420px] shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-sm font-semibold text-slate-100 mb-3">{t('cz_edit_assignment')}</h3>
+        <p className="text-xs text-slate-400 mb-3">{item.assignee_name}</p>
+        <label className="block text-xs text-slate-400 mb-1">{t('cz_ar_start_time')}</label>
+        <input type="datetime-local" value={startTime} onChange={e => setStartTime(e.target.value)}
+          className="w-full mb-3 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200" />
+        <label className="flex items-center gap-2 text-xs text-slate-300 mb-2">
+          <input type="checkbox" checked={neverExpire} onChange={e => setNeverExpire(e.target.checked)} />
+          {t('cz_ar_never_expire')}
+        </label>
+        {!neverExpire && (
+          <>
+            <label className="block text-xs text-slate-400 mb-1">{t('cz_ar_end_time')}</label>
+            <input type="datetime-local" value={endTime} onChange={e => setEndTime(e.target.value)}
+              className="w-full mb-3 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200" />
+          </>
+        )}
+        <label className="block text-xs text-slate-400 mb-1">{t('cz_reason')}</label>
+        <input value={reason} onChange={e => setReason(e.target.value)} placeholder="min 3 karakter"
+          className="w-full mb-4 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200" />
+        <div className="flex gap-2 justify-end">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs text-slate-300">{t('cancel')}</button>
+          <button type="button" onClick={() => void submit()} disabled={saving || reason.length < 3}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-xs text-white rounded-md">{t('save')}</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1554,7 +1926,7 @@ function stripAiHtml(s: string): string {
     .trim()
 }
 
-const CentrifyAiDrawer: React.FC<{ zoneId?: number; onClose: () => void }> = ({ zoneId, onClose }) => {
+const CentrifyAiDrawer: React.FC<{ zoneId?: number; onClose: () => void; onMinimize?: () => void; hidden?: boolean }> = ({ zoneId, onClose, onMinimize, hidden }) => {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [lines, setLines] = useState<{ role: 'user' | 'ai'; text: string }[]>([])
@@ -1622,13 +1994,20 @@ const CentrifyAiDrawer: React.FC<{ zoneId?: number; onClose: () => void }> = ({ 
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-40 w-[440px] max-w-[calc(100vw-2rem)] h-[520px] max-h-[75vh] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex flex-col overflow-hidden">
+    <div className={`w-[440px] max-w-[calc(100vw-2rem)] h-[520px] max-h-[75vh] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex flex-col overflow-hidden${hidden ? ' hidden' : ''}`}>
       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-700 bg-slate-800/80">
         <KeyRound size={15} className="text-purple-400" />
         <span className="text-sm font-medium text-slate-100">Centrify AI</span>
-        <button onClick={onClose} className="ml-auto p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-slate-100" title="Kapat">
-          <XCircle size={16} />
-        </button>
+        <div className="ml-auto flex items-center gap-0.5">
+          {onMinimize && (
+            <button onClick={onMinimize} className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-slate-100" title="Arka plana al">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>
+            </button>
+          )}
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-slate-100" title="Kapat">
+            <XCircle size={16} />
+          </button>
+        </div>
       </div>
       <div ref={boxRef} className="flex-1 overflow-y-auto p-3 space-y-2 text-sm">
         {lines.length === 0 && (
@@ -1662,6 +2041,173 @@ const CentrifyAiDrawer: React.FC<{ zoneId?: number; onClose: () => void }> = ({ 
   )
 }
 
+type FabPos = { x: number; y: number }
+const CZ_FAB_SIZE = 48
+const CZ_FAB_MARGIN = 12
+const CZ_POS_KEY = 'ainew.centrify.ai.fab.pos'
+const CZ_DRAG_THRESHOLD = 6
+
+function clampCzFab(pos: FabPos): FabPos {
+  const maxX = Math.max(CZ_FAB_MARGIN, window.innerWidth - CZ_FAB_SIZE - CZ_FAB_MARGIN)
+  const maxY = Math.max(CZ_FAB_MARGIN, window.innerHeight - CZ_FAB_SIZE - CZ_FAB_MARGIN)
+  return {
+    x: Math.min(maxX, Math.max(CZ_FAB_MARGIN, pos.x)),
+    y: Math.min(maxY, Math.max(CZ_FAB_MARGIN, pos.y)),
+  }
+}
+
+function defaultCzFab(): FabPos {
+  return clampCzFab({ x: window.innerWidth - CZ_FAB_SIZE - 24, y: window.innerHeight - CZ_FAB_SIZE - 24 })
+}
+
+function loadCzFab(): FabPos {
+  try {
+    const raw = localStorage.getItem(CZ_POS_KEY)
+    if (!raw) return defaultCzFab()
+    const parsed = JSON.parse(raw) as Partial<FabPos>
+    if (typeof parsed.x === 'number' && typeof parsed.y === 'number') return clampCzFab({ x: parsed.x, y: parsed.y })
+  } catch { /* ignore */ }
+  return defaultCzFab()
+}
+
+const CentrifyAiDock: React.FC<{
+  zoneId?: number
+  chatMode: 'closed' | 'open' | 'minimized'
+  setChatMode: (m: 'closed' | 'open' | 'minimized') => void
+  draftsCount: number
+  onSaveClick: () => void
+}> = ({ zoneId, chatMode, setChatMode, draftsCount, onSaveClick }) => {
+  const t = useT()
+  const [pos, setPos] = useState<FabPos>(() => typeof window !== 'undefined' ? loadCzFab() : { x: 24, y: 24 })
+  const [dragging, setDragging] = useState(false)
+  const skipClickRef = useRef(false)
+  const dragRef = useRef<{
+    pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean
+  } | null>(null)
+
+  const reclamp = useCallback(() => {
+    setPos(p => {
+      const next = clampCzFab(p)
+      if (next.x !== p.x || next.y !== p.y) {
+        try { localStorage.setItem(CZ_POS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      }
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener('resize', reclamp)
+    return () => window.removeEventListener('resize', reclamp)
+  }, [reclamp])
+
+  const onFabPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return
+    dragRef.current = {
+      pointerId: e.pointerId, startX: e.clientX, startY: e.clientY,
+      originX: pos.x, originY: pos.y, moved: false,
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const onFabPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== e.pointerId) return
+    const dx = e.clientX - drag.startX
+    const dy = e.clientY - drag.startY
+    if (!drag.moved && Math.hypot(dx, dy) >= CZ_DRAG_THRESHOLD) {
+      drag.moved = true
+      setDragging(true)
+    }
+    if (!drag.moved) return
+    setPos(clampCzFab({ x: drag.originX + dx, y: drag.originY + dy }))
+  }
+  const onFabPointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== e.pointerId) return
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
+    skipClickRef.current = drag.moved
+    if (drag.moved) {
+      try { localStorage.setItem(CZ_POS_KEY, JSON.stringify(pos)) } catch { /* ignore */ }
+    }
+    setDragging(false)
+    dragRef.current = null
+  }
+
+  const panelH = Math.min(typeof window !== 'undefined' ? window.innerHeight * 0.75 : 520, 520)
+  const spaceAbove = pos.y - CZ_FAB_MARGIN
+  const spaceBelow = (typeof window !== 'undefined' ? window.innerHeight : 800) - pos.y - CZ_FAB_SIZE - CZ_FAB_MARGIN
+  const openAbove = spaceAbove >= Math.min(panelH, 280) || spaceAbove >= spaceBelow
+  const alignRight = pos.x + CZ_FAB_SIZE / 2 > (typeof window !== 'undefined' ? window.innerWidth : 800) / 2
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-40">
+      <div className="pointer-events-none absolute" style={{ left: pos.x, top: pos.y, width: CZ_FAB_SIZE, height: CZ_FAB_SIZE }}>
+        {draftsCount > 0 && (
+          <button
+            type="button"
+            onClick={onSaveClick}
+            className="pointer-events-auto absolute top-0 flex h-12 items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 text-sm text-white shadow-lg hover:bg-blue-500"
+            style={pos.x > 170 ? { right: CZ_FAB_SIZE + 10 } : { left: CZ_FAB_SIZE + 10 }}
+          >
+            <Save size={15} /> {t('save')} <span className="text-[11px] bg-white/20 rounded px-1.5">{draftsCount}</span>
+          </button>
+        )}
+        {chatMode === 'open' && (
+          <div
+            className="pointer-events-auto absolute"
+            style={{
+              ...(openAbove ? { bottom: CZ_FAB_SIZE + 12 } : { top: CZ_FAB_SIZE + 12 }),
+              ...(alignRight ? { right: 0 } : { left: 0 }),
+            }}
+          >
+            <CentrifyAiDrawer zoneId={zoneId} onClose={() => setChatMode('closed')} onMinimize={() => setChatMode('minimized')} />
+          </div>
+        )}
+        {chatMode !== 'open' && (
+          <button
+            type="button"
+            className={`pointer-events-auto relative flex h-12 w-12 touch-none items-center justify-center rounded-full bg-purple-600 hover:bg-purple-500 text-white shadow-lg ${
+              dragging ? 'cursor-grabbing scale-105' : 'cursor-grab'
+            }`}
+            title={`Centrify AI — ${t('cz_ai_drag_hint')}`}
+            onPointerDown={onFabPointerDown}
+            onPointerMove={onFabPointerMove}
+            onPointerUp={onFabPointerUp}
+            onPointerCancel={onFabPointerUp}
+            onClick={() => {
+              if (skipClickRef.current) { skipClickRef.current = false; return }
+              setChatMode('open')
+            }}
+          >
+            <KeyRound size={20} />
+            {chatMode === 'minimized' && (
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full border-2 border-slate-900" />
+            )}
+          </button>
+        )}
+        {chatMode === 'open' && (
+          <button
+            type="button"
+            className={`pointer-events-auto relative flex h-12 w-12 touch-none items-center justify-center rounded-full bg-purple-600 hover:bg-purple-500 text-white shadow-lg ${
+              dragging ? 'cursor-grabbing scale-105' : 'cursor-grab'
+            }`}
+            title={`Centrify AI — ${t('cz_ai_drag_hint')}`}
+            onPointerDown={onFabPointerDown}
+            onPointerMove={onFabPointerMove}
+            onPointerUp={onFabPointerUp}
+            onPointerCancel={onFabPointerUp}
+            onClick={() => {
+              if (skipClickRef.current) { skipClickRef.current = false; return }
+              setChatMode('minimized')
+            }}
+          >
+            <XCircle size={20} />
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function CentrifyPage() {
   const t = useT()
   const qc = useQueryClient()
@@ -1670,10 +2216,17 @@ export default function CentrifyPage() {
   const [isSearching, setIsSearching] = useState(false)
   const [searchRes, setSearchRes] = useState<SearchResult | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(() => localStorage.getItem(DRAWER_KEY) !== '1')
-  const [chatOpen, setChatOpen] = useState(false)
+  const [chatMode, setChatMode] = useState<'closed' | 'open' | 'minimized'>('closed')
+  const [drafts, setDrafts] = useState<DraftOp[]>([])
+  const [saveOpen, setSaveOpen] = useState(false)
+  const [talepId, setTalepId] = useState('')
+  const [savingDrafts, setSavingDrafts] = useState(false)
+  const [hygieneOpen, setHygieneOpen] = useState(false)
+  const [hygiene, setHygiene] = useState<{ count: number; items: any[]; counts?: Record<string, number> } | null>(null)
+  const [hygieneLoading, setHygieneLoading] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null)
   const [dialog, setDialog] = useState<{
-    type: 'role' | 'command' | 'assign' | 'cmd_to_role'
+    type: 'role' | 'command' | 'assign' | 'cmd_to_role' | 'edit_assign'
     mode: 'create' | 'edit' | 'copy' | 'add' | 'remove'
     zoneId: number; item?: any; computerId?: number; computerName?: string
   } | null>(null)
@@ -1685,6 +2238,13 @@ export default function CentrifyPage() {
 
   const toggleDrawer = useCallback(() => {
     setDrawerOpen(prev => { const n = !prev; localStorage.setItem(DRAWER_KEY, n ? '0' : '1'); return n })
+  }, [])
+
+  useEffect(() => {
+    draftEnqueue = (d) => {
+      setDrafts(prev => [...prev, { ...d, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }])
+    }
+    return () => { draftEnqueue = null }
   }, [])
 
   const { data: config } = useQuery<Config | null>({
@@ -1699,6 +2259,62 @@ export default function CentrifyPage() {
   const triggerSync = useCallback(async () => {
     setSyncing(true); try { await fetch(api('/sync/trigger'), { method: 'POST', headers: { Authorization: `Bearer ${tk}` } }); await refetchZones() } catch {} setSyncing(false)
   }, [refetchZones, tk])
+
+  const runHygiene = useCallback(async () => {
+    setHygieneOpen(true)
+    setHygieneLoading(true)
+    try {
+      const data = await fetchJson<any>('/query/hygiene?days=30&limit=200')
+      setHygiene(data)
+    } catch {
+      setHygiene({ count: 0, items: [] })
+    }
+    setHygieneLoading(false)
+  }, [])
+
+  const commitDrafts = useCallback(async () => {
+    const tid = talepId.trim()
+    if (!tid || !drafts.length) return
+    setSavingDrafts(true)
+    const prevEnqueue = draftEnqueue
+    draftEnqueue = null
+    const snapshot = [...drafts]
+    try {
+      for (const d of snapshot) {
+        const body = { ...d.body }
+        if (typeof body.reason === 'string') body.reason = `[${tid}] ${body.reason}`
+        else body.reason = tid
+        const res = await fetch(api(d.path), { method: 'POST', headers: hdrs(), body: JSON.stringify(body) })
+        if (!res.ok) throw new Error(await res.text().catch(() => `API ${res.status}`))
+      }
+      try {
+        await ensureDroptSession()
+        const dtok = getDroptToken()
+        if (!dtok) throw new Error('Dropt oturumu yok')
+        const meta = centrifyJobMeta(snapshot, zones)
+        await recordCompletedJob(dtok, {
+          talep_id: tid,
+          title: meta.title,
+          summary_tr: meta.summary,
+          payload: {
+            hostnames: meta.hostnames,
+            ops: snapshot.map(d => ({ label: d.label, path: d.path, operation_type: d.body.operation_type })),
+          },
+        })
+      } catch (e: any) {
+        alert(t('cz_jobs_record_fail', { msg: e?.message || String(e) }))
+      }
+      setDrafts([])
+      setSaveOpen(false)
+      setTalepId('')
+      qc.invalidateQueries()
+    } catch (e: any) {
+      alert(e?.message || 'Kayıt başarısız')
+    } finally {
+      draftEnqueue = prevEnqueue
+      setSavingDrafts(false)
+    }
+  }, [drafts, talepId, qc, t, zones])
 
   // Search
   const doSearch = useCallback(async (q: string) => {
@@ -1751,6 +2367,9 @@ export default function CentrifyPage() {
       const computerName = item?.name || sel?.itemName
       setDialog({ type: 'assign', mode: 'create', zoneId, computerId: cid, computerName })
     }
+    else if (action === 'edit_assignment' && item) {
+      setDialog({ type: 'edit_assign', mode: 'edit', zoneId, item, computerId })
+    }
     else if (action === 'add_role') setDialog({ type: 'role', mode: 'create', zoneId })
     else if (action === 'new_command') setDialog({ type: 'command', mode: 'create', zoneId })
     else if (action === 'edit' && item) {
@@ -1779,14 +2398,13 @@ export default function CentrifyPage() {
     else if (action === 'delete' && item) {
       const confirmMsg = t('cz_confirm_delete')
       if (confirm(`${confirmMsg}\n\n${item.name}`)) {
-        fetch(api(nodeType === 'commands' ? '/commands/delete' : '/operations'), {
-          method: 'POST', headers: hdrs(),
-          body: JSON.stringify(
-            nodeType === 'commands'
-              ? { zone_id: zoneId, command_name: item.name, reason: `Delete ${item.name}` }
-              : { operation_type: 'delete_role', zone_id: zoneId, desired_state: { name: item.name }, reason: `Delete ${item.name}` }
-          ),
-        }).then(() => {
+        centrifyMutate(
+          nodeType === 'commands' ? '/commands/delete' : '/operations',
+          nodeType === 'commands'
+            ? { zone_id: zoneId, command_name: item.name, reason: `Delete ${item.name}` }
+            : { operation_type: 'delete_role', zone_id: zoneId, desired_state: { name: item.name }, reason: `Delete ${item.name}` },
+          `Sil: ${item.name}`,
+        ).then(() => {
           qc.invalidateQueries({ queryKey: nodeType === 'commands' ? ['centrify-commands', zoneId] : ['centrify-roles', zoneId] })
         })
       }
@@ -1797,6 +2415,16 @@ export default function CentrifyPage() {
       qc.invalidateQueries({ queryKey: ['centrify-assignments', zoneId] })
       qc.invalidateQueries({ queryKey: ['centrify-computers', zoneId] })
       qc.invalidateQueries({ queryKey: ['centrify-ops-pending'] })
+    }
+    else if (action === 'export_csv' || action === 'export_pdf') {
+      exportCentrifyList({
+        format: action === 'export_csv' ? 'csv' : 'pdf',
+        zoneId,
+        nodeType,
+        computerId,
+        zoneName: sel?.zoneName,
+        t,
+      }).catch(() => alert(t('cz_export_fail')))
     }
   }, [ctxMenu, qc, t, sel, clipboard])
 
@@ -1873,6 +2501,7 @@ export default function CentrifyPage() {
             zoneId={sel.zoneId} computerId={sel.itemId} computerName={sel.itemName}
             onAssign={() => setDialog({ type: 'assign', mode: 'create', zoneId: sel.zoneId, computerId: sel.itemId, computerName: sel.itemName })}
             onCtx={e => handleTreeCtx(e, sel.zoneId, 'role_assignments', undefined, sel.itemId)}
+            onRowCtx={(e, a) => handleTreeCtx(e, sel.zoneId, 'role_assignments', a, sel.itemId)}
           />
         )
       case 'computer_roles': return <GenericPanel zoneId={sel.zoneId} endpoint="computer-roles" />
@@ -1882,6 +2511,7 @@ export default function CentrifyPage() {
   }
 
   return (
+    <DraftPreviewCtx.Provider value={drafts}>
     <div className="flex flex-col flex-1 h-full min-h-0 overflow-hidden">
       {circuitStatus?.open && (
         <div className="bg-red-500/10 border-b border-red-500/30 px-4 py-2 flex items-center gap-2 text-sm text-red-300">
@@ -1898,6 +2528,9 @@ export default function CentrifyPage() {
                 <FolderTree size={15} className="text-slate-400" />
                 <span className="text-xs font-medium text-slate-300">{t('cz_tree_title')}</span>
                 <div className="ml-auto flex items-center gap-0.5">
+                  <button onClick={() => void runHygiene()} title={t('cz_hygiene_scan')} className="p-1 rounded hover:bg-slate-700/50 text-slate-500 hover:text-slate-300">
+                    <ScanSearch size={13} />
+                  </button>
                   <button onClick={triggerSync} disabled={syncing} title="Sync" className="p-1 rounded hover:bg-slate-700/50 text-slate-500 hover:text-slate-300 disabled:opacity-50">
                     <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
                   </button>
@@ -1963,23 +2596,86 @@ export default function CentrifyPage() {
       {/* Context menu */}
       {ctxMenu && <ContextMenu ctx={ctxMenu} t={t} clipboard={clipboard} onAction={handleCtxAction} onClose={() => setCtxMenu(null)} />}
 
+      {hygieneOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setHygieneOpen(false)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-slate-700 flex items-center gap-2">
+              <ScanSearch size={16} className="text-amber-400" />
+              <h3 className="text-sm font-semibold text-white">{t('cz_hygiene_title')}</h3>
+              <span className="text-xs text-slate-500 ml-2">{hygieneLoading ? '…' : t('cz_hygiene_count', { n: hygiene?.count ?? 0 })}</span>
+              <button type="button" className="ml-auto text-slate-400 hover:text-white" onClick={() => setHygieneOpen(false)}><XCircle size={16} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+              {hygieneLoading ? <Spin /> : !(hygiene?.items || []).length ? <Empty text={t('cz_hygiene_empty')} /> : (hygiene!.items.map((it, i) => (
+                <div key={i} className="rounded-lg border border-slate-700/60 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${it.severity === 'high' ? 'bg-red-500/20 text-red-400' : it.severity === 'medium' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-600/40 text-slate-300'}`}>{it.kind}</span>
+                    <span className="text-xs text-slate-100">{it.title}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">{it.detail}</p>
+                </div>
+              )))}
+            </div>
+            <p className="px-4 py-2 text-[10px] text-slate-600 border-t border-slate-800">{t('cz_hygiene_note')}</p>
+          </div>
+        </div>
+      )}
+
+      {saveOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setSaveOpen(false)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-slate-700">
+              <h3 className="text-sm font-semibold text-white">{t('cz_save_queue')}</h3>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-1">
+              {drafts.map(d => (
+                <div key={d.id} className="flex items-center gap-2 text-xs text-slate-200 px-2 py-1.5 rounded bg-slate-900/60">
+                  <span className="flex-1 truncate">{d.label}</span>
+                  <button type="button" className="text-slate-500 hover:text-red-400" onClick={() => setDrafts(prev => prev.filter(x => x.id !== d.id))}>
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-slate-700 space-y-3">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">{t('cz_talep_id')}</label>
+                <input value={talepId} onChange={e => setTalepId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200" placeholder="CHG0001234" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setSaveOpen(false)} className="px-3 py-2 text-xs text-slate-300">{t('cancel')}</button>
+                <button type="button" disabled={!talepId.trim() || savingDrafts || !drafts.length} onClick={() => void commitDrafts()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-xs text-white rounded-lg flex items-center gap-1.5">
+                  {savingDrafts ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} {t('cz_save_apply')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Diyaloglar */}
       {dialog?.type === 'role' && <RoleDialog zoneId={dialog.zoneId} role={dialog.item} mode={dialog.mode === 'copy' || dialog.mode === 'edit' || dialog.mode === 'create' ? dialog.mode : 'create'} onClose={() => setDialog(null)} onDone={handleDialogDone} />}
       {dialog?.type === 'command' && <CommandDialog zoneId={dialog.zoneId} cmd={dialog.item} mode={dialog.mode === 'copy' || dialog.mode === 'edit' || dialog.mode === 'create' ? dialog.mode : 'create'} onClose={() => setDialog(null)} onDone={handleDialogDone} />}
       {dialog?.type === 'assign' && <AssignRoleDialog zoneId={dialog.zoneId} computerId={dialog.computerId} computerName={dialog.computerName} onClose={() => setDialog(null)} onDone={handleDialogDone} />}
+      {dialog?.type === 'edit_assign' && dialog.item && (
+        <EditAssignmentDialog zoneId={dialog.zoneId} item={dialog.item} onClose={() => setDialog(null)} onDone={handleDialogDone} />
+      )}
       {dialog?.type === 'cmd_to_role' && dialog.item && (
         <CommandToRoleDialog zoneId={dialog.zoneId} cmd={dialog.item} mode={dialog.mode === 'remove' ? 'remove' : 'add'}
           onClose={() => setDialog(null)} onDone={handleDialogDone} />
       )}
 
       {/* AI */}
-      {chatOpen
-        ? <CentrifyAiDrawer zoneId={sel?.zoneId} onClose={() => setChatOpen(false)} />
-        : (
-          <button onClick={() => setChatOpen(true)}
-            className="fixed bottom-6 right-6 z-30 w-12 h-12 rounded-full bg-purple-600 hover:bg-purple-500 text-white shadow-lg flex items-center justify-center hover:scale-110 transition-transform"
-            title="Centrify AI"><KeyRound size={20} /></button>
-        )}
+      <CentrifyAiDock
+        zoneId={sel?.zoneId}
+        chatMode={chatMode}
+        setChatMode={setChatMode}
+        draftsCount={drafts.length}
+        onSaveClick={() => setSaveOpen(true)}
+      />
     </div>
+    </DraftPreviewCtx.Provider>
   )
 }

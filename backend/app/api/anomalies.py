@@ -102,27 +102,31 @@ async def get_anomalies(
 async def aiops_status(db: Session = Depends(get_db)):
     """AIOps kapalı-döngü sağlık durumu — frontend dashboard için."""
     from app.models.event import SystemEvent, Incident
+    from app.services.event_grouping import unique_events, unique_incidents
 
-    # Aktif metrik anomali event'leri (çözülmemiş)
-    active_metric = db.query(SystemEvent).filter(
-        SystemEvent.event_type == "metric_anomaly",
-        SystemEvent.resolved == False,  # noqa: E712
-    ).count()
-    active_metric_critical = db.query(SystemEvent).filter(
-        SystemEvent.event_type == "metric_anomaly",
-        SystemEvent.resolved == False,  # noqa: E712
-        SystemEvent.severity == "critical",
-    ).count()
+    since = datetime.utcnow() - timedelta(hours=24)
+    metric_rows = (
+        db.query(SystemEvent)
+        .filter(
+            SystemEvent.event_type == "metric_anomaly",
+            SystemEvent.resolved == False,  # noqa: E712
+            SystemEvent.last_seen >= since,
+        )
+        .order_by(SystemEvent.last_seen.desc().nullslast())
+        .limit(12000)
+        .all()
+    )
+    metric_uniq = unique_events(metric_rows)
+    active_metric = len(metric_uniq)
+    active_metric_critical = sum(1 for e in metric_uniq if e.severity == "critical")
 
-    # Otomatik açılan açık incident'lar
-    auto_open = db.query(Incident).filter(
-        Incident.status.in_(["open", "investigating"]),
-        Incident.source.ilike("auto_%"),
-    ).count()
-    # RCA'sı tamamlanan açık incident'lar
-    open_incidents = db.query(Incident).filter(
-        Incident.status.in_(["open", "investigating"]),
-    ).all()
+    open_incidents = unique_incidents(
+        db.query(Incident).filter(Incident.status.in_(["open", "investigating"])).all()
+    )
+    auto_open = len([
+        i for i in open_incidents
+        if (i.source or "").lower().startswith("auto_")
+    ])
     with_rca = sum(1 for i in open_incidents if i.rca_result and i.rca_result.get("analysis"))
 
     # İzlenen sunucular

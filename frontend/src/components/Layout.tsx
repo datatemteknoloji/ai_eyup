@@ -8,7 +8,8 @@ import {
   Bot, Zap, RefreshCw, Package, Database, Activity,
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
   BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
-  KeyRound, X, Check, AlertTriangle, Crown, Boxes, Moon, Sun, Languages,
+  KeyRound, X, Check, AlertTriangle, Crown, Boxes, Moon, Sun, Languages, Star,
+  Gauge, Recycle, ShieldCheck, GitCompare,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useTheme } from '../theme/ThemeProvider'
@@ -163,7 +164,7 @@ function childVisible(
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation()
-  const { user, logout, hasModule } = useAuth()
+  const { user, logout, hasModule, patchPreferences } = useAuth()
   const isAdmin = user?.role === 'admin' || !!user?.is_admin
   const { theme, toggleTheme } = useTheme()
   const { t, locale, setLocale } = useLocale()
@@ -237,8 +238,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const windowsAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('windows', windowsOpsSummary, t))
   const exadataAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('exadata', exadataOpsSummary, t))
 
-  const menuItems: MenuItem[] = [
-    { type: 'link', path: '/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={18} /> },
+  let menuItems: MenuItem[] = [
+    { type: 'link', path: '/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={18} />, adminOnly: true },
     {
       type: 'group', key: 'executive', name: t('nav_executive'), icon: <Crown size={18} />,
       moduleIds: ['executive', 'ai_automation'],
@@ -298,6 +299,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/virt/monitoring', name: t('nav_virt_monitoring'), icon: <Activity size={15} /> },
         { type: 'link', path: '/infra-reports', name: t('nav_infra_reports'), icon: <BarChart3 size={15} /> },
         {
+          type: 'subgroup', key: 'virt-insights', name: t('nav_insights_group'), icon: <Shield size={15} />,
+          moduleId: 'virtualization',
+          children: [
+            { type: 'link', path: '/virt/capacity', name: t('nav_virt_capacity'), icon: <Gauge size={15} /> },
+            { type: 'link', path: '/virt/reclaim', name: t('nav_virt_reclaim'), icon: <Recycle size={15} /> },
+            { type: 'link', path: '/virt/health', name: t('nav_virt_health'), icon: <ShieldCheck size={15} /> },
+            { type: 'link', path: '/virt/changes', name: t('nav_virt_changes'), icon: <GitCompare size={15} /> },
+          ],
+        },
+        {
           type: 'subgroup', key: 'virt-aiops', name: t(PLATFORM_AIOPS_LABEL_KEY.virt), icon: <Brain size={15} />,
           moduleId: 'virtualization',
           badge: aiopsTotalBadge(virtOpsSummary),
@@ -337,6 +348,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/openshift/vms', name: t('nav_virtual_machines'), icon: <Monitor size={15} /> },
         { type: 'link', path: '/openshift/monitoring', name: t('nav_ocp_monitoring'), icon: <Activity size={15} /> },
         { type: 'link', path: '/openshift/access', name: t('nav_ocp_access'), icon: <Users size={15} /> },
+        {
+          type: 'subgroup', key: 'openshift-insights', name: t('nav_insights_group'), icon: <Shield size={15} />,
+          moduleId: 'openshift',
+          children: [
+            { type: 'link', path: '/openshift/capacity', name: t('nav_ocp_capacity'), icon: <Gauge size={15} /> },
+            { type: 'link', path: '/openshift/reclaim', name: t('nav_ocp_reclaim'), icon: <Recycle size={15} /> },
+            { type: 'link', path: '/openshift/health', name: t('nav_ocp_health'), icon: <ShieldCheck size={15} /> },
+            { type: 'link', path: '/openshift/changes', name: t('nav_ocp_changes'), icon: <GitCompare size={15} /> },
+          ],
+        },
         {
           type: 'link', path: '/openshift/events', name: t('nav_events'), icon: <ClipboardList size={15} />,
           badge: () => {
@@ -394,8 +415,46 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { type: 'link', path: '/settings', name: t('nav_settings'), icon: <Settings size={18} /> },
   ]
 
+  const catalogLinks: LinkChild[] = menuItems.flatMap(item => {
+    if (item.type === 'link') {
+      return [{ type: 'link' as const, path: item.path, name: item.name, icon: item.icon, moduleId: item.moduleId, moduleIds: item.moduleIds, adminOnly: item.adminOnly }]
+    }
+    if (item.type === 'group') {
+      return item.children.flatMap(c => (c.type === 'link' ? [c] : c.children))
+    }
+    return []
+  })
+
+  const favoriteAllowed = (path: string) => {
+    if (!path.startsWith('/') || path === '/login') return false
+    const link = catalogLinks.find(l => l.path === path)
+    if (!link) return true
+    return childVisible(link, hasModule, isAdmin)
+  }
+
+  const favChildren: LinkChild[] = (user?.favorite_paths ?? [])
+    .filter(f => favoriteAllowed(f.path))
+    .map(f => {
+      const named = catalogLinks.find(l => l.path === f.path)?.name
+      return {
+        type: 'link' as const,
+        path: f.path,
+        name: (f.name && f.name !== f.path ? f.name : named) || f.path,
+        icon: <Star size={15} />,
+      }
+    })
+
+  menuItems.splice(1, 0, {
+    type: 'group',
+    key: 'favorites',
+    name: t('nav_favorites'),
+    icon: <Star size={18} />,
+    children: favChildren,
+  })
+
   // Flat link list for page title
   const allLinks: { path: string; name: string }[] = menuItems.flatMap(item => {
+    if (item.type === 'group' && item.key === 'favorites') return []
     if (item.type === 'link') return [{ path: item.path, name: item.name }]
     if (item.type === 'group') {
       return item.children.flatMap(c => {
@@ -406,7 +465,23 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     return []
   })
 
-  const pageTitle = allLinks.find(l => isActive(l.path))?.name || t('nav_dashboard')
+  const currentPath = location.pathname || '/'
+  const pageTitle = allLinks.find(l => isActive(l.path))?.name
+    || (currentPath !== '/' && currentPath !== '/dashboard' ? currentPath.replace(/^\//, '') : t('nav_dashboard'))
+  const isCurrentFavorite = (user?.favorite_paths ?? []).some(f => f.path === currentPath)
+
+  const toggleFavorite = async () => {
+    if (!user) return
+    const current = user.favorite_paths ?? []
+    const next = isCurrentFavorite
+      ? current.filter(f => f.path !== currentPath)
+      : [...current, { path: currentPath, name: pageTitle }]
+    try {
+      await patchPreferences({ favorite_paths: next })
+    } catch {
+      /* ignore */
+    }
+  }
 
   const renderLinkChild = (child: LinkChild, depth: 1 | 2 = 1) => {
     const childActive = isActive(child.path)
@@ -505,6 +580,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {sidebarOpen && isOpen && (
           <ul className="mt-0.5 ml-3 pl-3 border-l border-slate-700/60 space-y-0.5">
             {visibleChildren.map(child => renderGroupChild(child))}
+            {item.key === 'favorites' && visibleChildren.length === 0 && (
+              <li className="px-3 py-1.5 text-[11px] text-slate-500">{t('fav_empty')}</li>
+            )}
           </ul>
         )}
 
@@ -586,7 +664,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               if (item.type === 'link') {
                 // Kullanıcı Yönetimi ve Ayarlar sadece admin
-                if ((item.path === '/modules' || item.path === '/users' || item.path === '/settings' || item.path === '/audit') && user?.role !== 'admin') return null
+                if ((item.path === '/modules' || item.path === '/users' || item.path === '/settings' || item.path === '/audit' || item.path === '/dashboard') && user?.role !== 'admin') return null
                 {
                   const ids = item.moduleIds ?? (item.moduleId ? [item.moduleId] : undefined)
                   if (ids && !ids.some(id => hasModule(id))) return null
@@ -648,12 +726,41 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <Activity size={18} className="shrink-0 text-blue-400" aria-hidden />
             )}
             <h1 className="shrink-0 text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{pageTitle}</h1>
+            <button
+              type="button"
+              onClick={() => void toggleFavorite()}
+              title={isCurrentFavorite ? t('fav_remove') : t('fav_add')}
+              aria-label={isCurrentFavorite ? t('fav_remove') : t('fav_add')}
+              className={`shrink-0 rounded-lg p-1.5 transition-colors ${
+                isCurrentFavorite
+                  ? 'text-amber-400 hover:bg-amber-500/10'
+                  : 'text-slate-500 hover:text-amber-400 hover:bg-[var(--bg-hover)]'
+              }`}
+            >
+              <Star size={16} fill={isCurrentFavorite ? 'currentColor' : 'none'} />
+            </button>
             {(location.pathname === '/monitoring' || location.pathname === '/monitoring/') && (
               <div id="monitoring-arch-header-slot" className="flex shrink-0 items-center" />
             )}
             {/* Level 1 Operasyon Merkezi: Sunucular / envanter / yenile buraya portal ile gelir */}
             {(location.pathname === '/level1' || location.pathname === '/level1/') && (
               <div id="level1-ops-header-slot" className="flex min-w-0 flex-1 items-center gap-x-3 gap-y-1 overflow-hidden" />
+            )}
+            {location.pathname.startsWith('/level1/jobs') && (
+              <>
+                <p className="min-w-0 truncate text-sm" style={{ color: 'var(--text-secondary)' }}>
+                  {t('l1_jobs_header_sub')}
+                </p>
+                <div id="level1-jobs-actions-slot" className="ml-auto flex shrink-0 items-center gap-1" />
+              </>
+            )}
+            {location.pathname.startsWith('/level1/audit') && (
+              <>
+                <p className="min-w-0 truncate text-sm" style={{ color: 'var(--text-secondary)' }}>
+                  {t('l1_audit_header_sub')}
+                </p>
+                <div id="level1-audit-actions-slot" className="ml-auto flex shrink-0 items-center gap-1" />
+              </>
             )}
           </div>
           <div className="flex items-center space-x-4">

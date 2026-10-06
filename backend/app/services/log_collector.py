@@ -309,11 +309,10 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], sin
     if not logs:
         return 0
 
-    since = datetime.utcnow() - timedelta(hours=max(since_hours + 1, 25))
     existing_rows = db.query(SystemEvent.id, SystemEvent.title).filter(
         SystemEvent.server_id == server.id,
-        SystemEvent.created_at >= since,
-        SystemEvent.event_type == "log_entry"
+        SystemEvent.event_type == "log_entry",
+        SystemEvent.resolved == False,  # noqa: E712
     ).all()
     # norm_key -> event id mapping
     existing_map: dict = {_normalize_for_dedup(e[1])[:120]: e[0] for e in existing_rows}
