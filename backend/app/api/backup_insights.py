@@ -24,16 +24,23 @@ router = APIRouter()
 _module = require_module("virtualization")
 
 
+def _view_available() -> bool:
+    """Yedekleme ekranı: gerçek sağlayıcı ('backup') VEYA — yalnız açık bayrakla — demo."""
+    from app.services.backup.demo_gate import DEMO_CAPABILITY
+    caps = get_capabilities()
+    return "backup" in caps or DEMO_CAPABILITY in caps
+
+
 def _need_backup() -> None:
-    if "backup" not in get_capabilities():
+    if not _view_available():
         raise HTTPException(404, "Yedek sağlayıcısı yapılandırılmadı")
 
 
 @router.get("/summary")
 def backup_summary(db: Session = Depends(get_db), _u: User = Depends(_module)):
-    if "backup" not in get_capabilities():
+    if not _view_available():
         return {"enabled": False}
-    return {"enabled": True, **eng.summary(db)}
+    return {"enabled": True, **eng.summary(db, include_demo=True)}
 
 
 @router.get("/rpo")
@@ -42,7 +49,7 @@ def backup_rpo(state: Optional[str] = Query(None, description="protected|unprote
                q: Optional[str] = None, limit: int = Query(500, ge=1, le=5000),
                db: Session = Depends(get_db), _u: User = Depends(_module)):
     _need_backup()
-    rows = eng.vm_protection(db)
+    rows = eng.vm_protection(db, include_demo=True)
     if state:
         rows = [r for r in rows if r["state"] == state]
     if rpo_state:
@@ -57,7 +64,7 @@ def backup_rpo(state: Optional[str] = Query(None, description="protected|unprote
 @router.get("/jobs")
 def backup_jobs(db: Session = Depends(get_db), _u: User = Depends(_module)):
     _need_backup()
-    ids = [i.id for i in eng.backup_instances(db)]
+    ids = [i.id for i in eng.backup_instances(db, include_demo=True)]
     jobs = db.query(BkJob).filter(BkJob.instance_id.in_(ids or [-1])).order_by(BkJob.name).all()
     return {"jobs": [{
         "id": j.id, "name": j.name, "type": j.job_type, "enabled": j.enabled, "status": j.status,
@@ -70,7 +77,7 @@ def backup_jobs(db: Session = Depends(get_db), _u: User = Depends(_module)):
 @router.get("/repositories")
 def backup_repositories(db: Session = Depends(get_db), _u: User = Depends(_module)):
     _need_backup()
-    ids = [i.id for i in eng.backup_instances(db)]
+    ids = [i.id for i in eng.backup_instances(db, include_demo=True)]
     repos = db.query(BkRepository).filter(BkRepository.instance_id.in_(ids or [-1])).order_by(BkRepository.name).all()
     return {"repositories": [{
         "id": r.id, "name": r.name, "type": r.repo_type, "online": r.is_online,
@@ -84,7 +91,7 @@ def backup_repositories(db: Session = Depends(get_db), _u: User = Depends(_modul
 def backup_unmatched(db: Session = Depends(get_db), _u: User = Depends(_module)):
     """Yedekte görünen ama ainew VM'ine güvenle eşleşmeyen nesneler (inceleme listesi)."""
     _need_backup()
-    ids = [i.id for i in eng.backup_instances(db)]
+    ids = [i.id for i in eng.backup_instances(db, include_demo=True)]
     rows = (db.query(BkProtectedObject).filter(BkProtectedObject.instance_id.in_(ids or [-1]),
                                                BkProtectedObject.match_confidence.in_((CONF_LOW, CONF_NONE)))
             .order_by(BkProtectedObject.name).limit(1000).all())
@@ -153,7 +160,10 @@ def backup_findings_list(result: str = Query("fail"), limit: int = Query(500, ge
     """Yedek bulguları (platform=backup). Yalnız capability varken."""
     _need_backup()
     from app.services.findings.store import query_findings
-    rows = query_findings(db, platforms=["backup"], result=result, include_excepted=False, limit=limit)
+    from app.services.backup.demo_gate import DEMO_PLATFORM, backup_mode
+    plat = DEMO_PLATFORM if backup_mode(db) == "demo" else "backup"
+    rows = query_findings(db, platforms=[plat], result=result, include_excepted=False, limit=limit,
+                          include_demo=(plat == DEMO_PLATFORM))
     return {"findings": rows, "count": len(rows)}
 
 

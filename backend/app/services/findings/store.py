@@ -20,6 +20,7 @@ from app.models.infra_finding import (
     InfraFinding, InfraFindingException, VirtConfigSnapshot,
 )
 from app.services.findings.registry import (
+    PLATFORM_BACKUP_DEMO,
     RESULT_FAIL,
     RESULT_NOT_APPLICABLE,
     RESULT_NOT_MEASURABLE,
@@ -241,8 +242,11 @@ def query_findings(
     check_id: Optional[str] = None,
     limit: int = 1000,
     locale: str = "tr",
+    include_demo: bool = False,
 ) -> List[Dict[str, Any]]:
     q = db.query(InfraFinding)
+    if not include_demo:
+        q = q.filter(InfraFinding.platform != PLATFORM_BACKUP_DEMO)
     if not include_resolved:
         q = q.filter(InfraFinding.active.is_(True))
     if category:
@@ -283,9 +287,12 @@ def query_findings(
     return out
 
 
-def summarize_findings(db: Session, *, platforms: Optional[Sequence[str]] = None) -> Dict[str, Any]:
-    """Kategori × önem sayımı (istisnalı bulgular hariç)."""
+def summarize_findings(db: Session, *, platforms: Optional[Sequence[str]] = None,
+                       include_demo: bool = False) -> Dict[str, Any]:
+    """Kategori × önem sayımı (istisnalı bulgular hariç). DEMO bulguları varsayılan olarak dışlanır."""
     q = db.query(InfraFinding).filter(InfraFinding.active.is_(True))
+    if not include_demo:
+        q = q.filter(InfraFinding.platform != PLATFORM_BACKUP_DEMO)
     if platforms:
         q = q.filter(InfraFinding.platform.in_(list(platforms)))
     exc = exception_keys(db)

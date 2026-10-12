@@ -19,6 +19,7 @@ from app.models.integration_instance import IntegrationInstance
 from app.models.user import User
 from app.services.backup import registry as breg
 from app.services.backup.veeam_api_ref import DEFAULT_PORT, DEFAULT_REVISION, REVISIONS
+from app.services.backup.demo_gate import DISABLED_MSG_TR, demo_enabled
 from app.services.backup.veeam_provider import KIND_DEMO, KIND_REAL
 
 router = APIRouter()
@@ -58,7 +59,8 @@ def _user(row: IntegrationInstance) -> str:
 def _dict(row: IntegrationInstance) -> Dict[str, Any]:
     m = _meta(row)
     return {
-        "id": row.id, "kind": row.kind, "demo": row.kind == KIND_DEMO, "label": row.label, "endpoint": row.endpoint,
+        "id": row.id, "kind": row.kind, "demo": row.kind == KIND_DEMO,
+        "demo_inactive": row.kind == KIND_DEMO and not demo_enabled(), "label": row.label, "endpoint": row.endpoint,
         "port": m.get("port") or DEFAULT_PORT, "username": _user(row), "has_credentials": bool(row.credential_ref),
         "verify_ssl": row.verify_ssl, "ca_bundle_path": m.get("ca_bundle_path"),
         "api_revision": m.get("api_revision") or DEFAULT_REVISION, "lookback_days": m.get("lookback_days") or 30,
@@ -73,6 +75,8 @@ def _dict(row: IntegrationInstance) -> Dict[str, Any]:
 def _apply(row: IntegrationInstance, b: InstanceBody) -> None:
     if b.kind not in (KIND_REAL, KIND_DEMO):
         raise HTTPException(400, f"Desteklenmeyen sağlayıcı: {b.kind}")
+    if b.kind == KIND_DEMO and not demo_enabled():
+        raise HTTPException(403, DISABLED_MSG_TR)
     if b.api_revision not in REVISIONS:
         raise HTTPException(400, f"Desteklenmeyen API revizyonu: {b.api_revision}")
     if b.kind == KIND_REAL and not (b.endpoint or "").strip():
@@ -115,8 +119,9 @@ def list_instances(db: Session = Depends(get_db), _u: User = Depends(_admin)):
     rows = db.query(IntegrationInstance).filter(IntegrationInstance.category == CATEGORY).order_by(
         IntegrationInstance.id).all()
     return {"instances": [_dict(r) for r in rows],
-            "kinds": [{"kind": KIND_REAL, "label": "Veeam Backup & Replication (REST API)"},
-                      {"kind": KIND_DEMO, "label": "DEMO / fixture (gerçek Veeam değil)"}],
+            "kinds": [{"kind": KIND_REAL, "label": "Veeam Backup & Replication (REST API)"}]
+                     + ([{"kind": KIND_DEMO, "label": "DEMO / fixture (gerçek Veeam değil)"}] if demo_enabled() else []),
+            "demo_enabled": demo_enabled(),
             "revisions": [{"revision": k, "status": v[0], "build": v[1]} for k, v in REVISIONS.items()],
             "note": "Önerilen VBR rolü: Veeam Backup Viewer (salt okunur). serverInfo yalnız Backup Administrator "
                     "rolüne açıktır; Viewer ile VBR sürümü görüntülenemez."}
@@ -186,6 +191,8 @@ class EnableBody(BaseModel):
 def enable_instance(iid: int, body: EnableBody, db: Session = Depends(get_db), _u: User = Depends(_admin)):
     from app.services.backup.sync import sync_instance
     row = _get(db, iid)
+    if body.enabled and row.kind == KIND_DEMO and not demo_enabled():
+        raise HTTPException(403, DISABLED_MSG_TR)
     row.enabled = body.enabled
     db.commit()
     sync: Optional[Dict[str, Any]] = None

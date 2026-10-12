@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models.backup import BkJob, BkProtectedObject, BkRepository, BkRpoPolicy, BkSession
 from app.models.integration_instance import IntegrationInstance
+from app.services.backup.demo_gate import is_demo_kind
 from app.services.backup.matching import CONF_LOW, TRUSTED
 from app.services.backup.sync import data_age_sec, provider_stale
 from app.services.findings.registry import (
@@ -57,15 +58,18 @@ def resolve_target(policies: List[BkRpoPolicy], vm: Dict[str, Any]) -> Tuple[Opt
     return None, None, None
 
 
-def backup_instances(db: Session) -> List[IntegrationInstance]:
-    return (db.query(IntegrationInstance)
-            .filter(IntegrationInstance.category == "backup", IntegrationInstance.enabled.is_(True)).all())
+def backup_instances(db: Session, *, include_demo: bool = False) -> List[IntegrationInstance]:
+    """Etkin yedek instance'ları. Varsayılan YALNIZ gerçek sağlayıcılar; DEMO ancak
+    ``include_demo=True`` (Yedekleme ekranı / bulgu üreticisi) + açık bayrak + gerçek sağlayıcı yokken
+    döner (bkz. ``demo_gate``)."""
+    from app.services.backup.demo_gate import active_instances
+    return active_instances(db, include_demo=include_demo)
 
 
 def vm_protection(db: Session, *, now: Optional[datetime] = None,
-                  vms: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+                  vms: Optional[List[Dict[str, Any]]] = None, include_demo: bool = False) -> List[Dict[str, Any]]:
     now = now or datetime.now(timezone.utc)
-    insts = {i.id: i for i in backup_instances(db)}
+    insts = {i.id: i for i in backup_instances(db, include_demo=include_demo)}
     if not insts:
         return []
     vms = vms if vms is not None else _vms(db)
@@ -113,17 +117,17 @@ def vm_protection(db: Session, *, now: Optional[datetime] = None,
     return out
 
 
-def summary(db: Session, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+def summary(db: Session, *, now: Optional[datetime] = None, include_demo: bool = False) -> Dict[str, Any]:
     now = now or datetime.now(timezone.utc)
-    insts = backup_instances(db)
-    rows = vm_protection(db, now=now)
+    insts = backup_instances(db, include_demo=include_demo)
+    rows = vm_protection(db, now=now, include_demo=include_demo)
     on = [r for r in rows if r["powered_on"] and r["state"] != "low_match"]
     prot = [r for r in on if r["state"] == "protected"]
     jobs = db.query(BkJob).filter(BkJob.instance_id.in_([i.id for i in insts] or [-1])).all()
     repos = db.query(BkRepository).filter(BkRepository.instance_id.in_([i.id for i in insts] or [-1])).all()
     return {
         "providers": [{
-            "id": i.id, "label": i.label, "kind": i.kind, "demo": i.kind.endswith("_demo"),
+            "id": i.id, "label": i.label, "kind": i.kind, "demo": is_demo_kind(i.kind),
             "last_sync_at": i.last_sync_at.isoformat() if i.last_sync_at else None,
             "last_status": i.last_status, "last_error": i.last_error,
             "stale": provider_stale(i, now), "data_age_sec": data_age_sec(i, now),
@@ -135,6 +139,7 @@ def summary(db: Session, *, now: Optional[datetime] = None) -> Dict[str, Any]:
         "rpo_ok": len([r for r in prot if r["rpo_state"] == "ok"]),
         "rpo_breach": len([r for r in prot if r["rpo_state"] == "breach"]),
         "rpo_no_target": len([r for r in prot if r["rpo_state"] == "no_target"]),
+        "demo_active": any(is_demo_kind(i.kind) for i in insts),
         "jobs": len(jobs), "jobs_failed": len([j for j in jobs if j.last_result == "Failed"]),
         "repositories": len(repos),
     }
@@ -149,8 +154,9 @@ def repo_used_pct(r: BkRepository) -> Optional[float]:
 
 def backup_findings(db: Session, *, now: Optional[datetime] = None,
                     vms: Optional[List[Dict[str, Any]]] = None) -> List[FindingDraft]:
+    """Etkin kümenin (gerçek VEYA — bayrakla — demo; asla karışık) bulguları."""
     now = now or datetime.now(timezone.utc)
-    insts = {i.id: i for i in backup_instances(db)}
+    insts = {i.id: i for i in backup_instances(db, include_demo=True)}
     if not insts:
         return []
     out: List[FindingDraft] = []
@@ -163,7 +169,7 @@ def backup_findings(db: Session, *, now: Optional[datetime] = None,
         out.append(FindingDraft(
             "bk.provider.sync_failed", "provider", ref, i.label or f"{i.kind}#{i.id}",
             RESULT_FAIL if failed else RESULT_PASS,
-            evidence={"status": i.last_status, "error": (i.last_error or "")[:300], "demo": i.kind.endswith("_demo")},
+            evidence={"status": i.last_status, "error": (i.last_error or "")[:300], "demo": is_demo_kind(i.kind)},
             detail=(i.last_error or "")[:300]))
         if i.last_sync_at is not None:
             st = provider_stale(i, now)
@@ -173,7 +179,7 @@ def backup_findings(db: Session, *, now: Optional[datetime] = None,
                 evidence={"last_sync_at": i.last_sync_at.isoformat(), "interval_sec": i.sync_interval_sec},
                 detail=f"Veri yaşı {int(data_age_sec(i, now) or 0)} sn", data_age_sec=data_age_sec(i, now)))
 
-    for r in vm_protection(db, now=now, vms=vms):
+    for r in vm_protection(db, now=now, vms=vms, include_demo=True):
         vref = f"vm:{r['ref']}" if r.get("ref") else f"vm:srv-{r['server_id']}"
         common = dict(entity_kind="vm", entity_ref=vref, entity_name=str(r["name"]), cluster_name=r.get("cluster"),
                       stale=bool(r["stale"]), data_age_sec=age if r["stale"] else None)
@@ -251,12 +257,22 @@ def backup_findings(db: Session, *, now: Optional[datetime] = None,
 
 
 def persist_backup_findings(db: Session, *, now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Capability varken bulguları yazar; yoksa önceki backup bulgularını çözer (etkisiz hale getirir)."""
+    """Capability varken bulguları yazar; yoksa önceki backup bulgularını çözer (etkisiz hale getirir).
+
+    Gerçek sağlayıcı bulguları ``platform="backup"``; DEMO bulguları (yalnız açık bayrakla) ayrı
+    ``platform="backup_demo"`` altında yazılır ve varsayılan bulgu sorgularından dışlanır (F.0).
+    Mod değişince (bayrak kapandı / gerçek sağlayıcı eklendi) diğer taraftaki aktif bulgular çözülür."""
+    from app.services.backup.demo_gate import DEMO_CAPABILITY, DEMO_PLATFORM, backup_mode
     from app.services.capabilities import get_capabilities
     from app.services.findings import store
-    have = "backup" in get_capabilities(force_refresh=True)
-    drafts = backup_findings(db, now=now) if have else []
+    caps = get_capabilities(force_refresh=True)
+    mode = backup_mode(db)
+    have = "backup" in caps and mode == "real"
+    have_demo = DEMO_CAPABILITY in caps and mode == "demo"
+    drafts = backup_findings(db, now=now) if (have or have_demo) else []
     r = store.persist_findings(db, platform="backup", source_id=None, source_name="backup",
-                               categories=("backup",), drafts=drafts, now=now)
+                               categories=("backup",), drafts=drafts if have else [], now=now)
+    rd = store.persist_findings(db, platform=DEMO_PLATFORM, source_id=None, source_name="backup (DEMO)",
+                                categories=("backup",), drafts=drafts if have_demo else [], now=now)
     db.commit()
-    return {"capability": have, **r}
+    return {"capability": have, "demo": have_demo, **r, "demo_upserted": rd["upserted"], "demo_resolved": rd["resolved"]}

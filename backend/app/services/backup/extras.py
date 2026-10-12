@@ -43,8 +43,8 @@ def _ok(res: Optional[str]) -> bool:
     return (res or "").lower() in ("success", "warning")
 
 
-def _job_ids(db: Session) -> Dict[int, BkJob]:
-    ids = [i.id for i in eng.backup_instances(db)]
+def _job_ids(db: Session, *, include_demo: bool = False) -> Dict[int, BkJob]:
+    ids = [i.id for i in eng.backup_instances(db, include_demo=include_demo)]
     return {j.id: j for j in db.query(BkJob).filter(BkJob.instance_id.in_(ids or [-1])).all()}
 
 
@@ -54,7 +54,7 @@ def job_trend_findings(db: Session, *, now: Optional[datetime] = None) -> List[F
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(days=HISTORY_DAYS)
     out: List[FindingDraft] = []
-    for j in _job_ids(db).values():
+    for j in _job_ids(db, include_demo=True).values():
         if not j.enabled:
             continue
         ss = (db.query(BkSession).filter(BkSession.job_id == j.id, BkSession.started_at >= since)
@@ -106,14 +106,14 @@ def policy_findings(db: Session, *, now: Optional[datetime] = None,
                     vms: Optional[List[Dict[str, Any]]] = None) -> List[FindingDraft]:
     now = now or datetime.now(timezone.utc)
     out: List[FindingDraft] = []
-    insts = eng.backup_instances(db)
+    insts = eng.backup_instances(db, include_demo=True)
     # RTO doğrulanmamış: hedef RTO var + restore testi yok
     objs_by_vm: Dict[int, List[int]] = {}
     for o in db.query(BkProtectedObject).filter(BkProtectedObject.instance_id.in_([i.id for i in insts] or [-1]),
                                                  BkProtectedObject.match_confidence.in_(("exact", "high"))).all():
         if o.matched_vm_id is not None:
             objs_by_vm.setdefault(o.matched_vm_id, []).append(o.id)
-    for r in eng.vm_protection(db, now=now, vms=vms):
+    for r in eng.vm_protection(db, now=now, vms=vms, include_demo=True):
         if r["state"] != "protected":
             continue
         vref = f"vm:{r['ref']}" if r.get("ref") else f"vm:srv-{r['server_id']}"
@@ -162,6 +162,12 @@ def extra_findings(db: Session, *, now: Optional[datetime] = None) -> List[Findi
 
 def evidence(db: Session, *, now: Optional[datetime] = None, days: int = 30) -> Dict[str, Any]:
     now = now or datetime.now(timezone.utc)
+    from app.services.backup.demo_gate import BANNER_TR, backup_mode
+    if backup_mode(db) == "demo":
+        # F.0: DEMO veriden ISO A.8.13 kanıtı ÜRETİLMEZ (denetim belgesi gerçek veriye dayanmalı).
+        return {"generated_at": now.isoformat(), "window_days": days, "items": [], "jobs": [], "demo": True,
+                "blocked": True, "blocked_reason": f"{BANNER_TR}: ISO 27001 A.8.13 kanıtı demo veriden üretilmez.",
+                "not_checked": []}
     since = now - timedelta(days=days)
     jobs = _job_ids(db)
     rows = []
@@ -198,7 +204,7 @@ def evidence(db: Session, *, now: Optional[datetime] = None, days: int = 30) -> 
          "value": sum(1 for j in jobs.values() if j.job_type == "copy")},
     ]
     return {"generated_at": now.isoformat(), "window_days": days, "items": items, "jobs": rows,
-            "demo": any(i.kind.endswith("_demo") for i in eng.backup_instances(db)),
+            "demo": False, "blocked": False,
             "not_checked": ["Değişmezlik (immutability)", "Şifreleme", "VBR yapılandırma yedeği",
                             "CBT — Veeam alanları doğrulanmadı (veeam_api_ref belirsizlik listesi)"]}
 
@@ -210,7 +216,7 @@ def failure_after_change(db: Session, *, now: Optional[datetime] = None, hours: 
     from app.services.virt_incident_timeline import _config_changes
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(hours=hours)
-    jobs = _job_ids(db)
+    jobs = _job_ids(db, include_demo=True)
     out: List[Dict[str, Any]] = []
     for j in jobs.values():
         bad = (db.query(BkSession).filter(BkSession.job_id == j.id, BkSession.started_at >= since)
@@ -272,7 +278,7 @@ def repo_whatif(db: Session, *, add_vms: int = 0, avg_vm_gb: Optional[float] = N
                 now: Optional[datetime] = None) -> Dict[str, Any]:
     """Yeni VM eklenirse depo doluluğu. VM başına tahmin = mevcut kullanılan / korunan nesne sayısı
     (kullanıcı ``avg_vm_gb`` verirse o). Bu bir doğrusal projeksiyondur; sıkıştırma/dedupe/saklama etkisi modellenmez."""
-    ids = [i.id for i in eng.backup_instances(db)]
+    ids = [i.id for i in eng.backup_instances(db, include_demo=True)]
     repos = db.query(BkRepository).filter(BkRepository.instance_id.in_(ids or [-1])).all()
     cap = sum(r.capacity_bytes or 0 for r in repos)
     free = sum(r.free_bytes or 0 for r in repos if r.free_bytes is not None)

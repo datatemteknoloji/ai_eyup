@@ -46,7 +46,10 @@ def get_capabilities(*, force_refresh: bool = False) -> FrozenSet[str]:
 
 def capabilities_payload() -> Dict[str, Any]:
     caps = sorted(get_capabilities())
-    return {"ok": True, "capabilities": caps, "has_backup": "backup" in caps}
+    from app.services.backup.demo_gate import BANNER_TR, DEMO_CAPABILITY
+    demo = DEMO_CAPABILITY in caps
+    return {"ok": True, "capabilities": caps, "has_backup": "backup" in caps,
+            "demo_active": demo, "demo_banner": BANNER_TR if demo else None}
 
 
 def _collect() -> Set[str]:
@@ -63,7 +66,18 @@ def _collect() -> Set[str]:
                 .filter(IntegrationInstance.enabled.is_(True))
                 .all()
             )
+            from app.services.backup.demo_gate import (
+                DEMO_CAPABILITY, demo_enabled, is_demo_kind,
+            )
+            has_real = any(not is_demo_kind(r.kind) for r in rows)
             for row in rows:
+                if is_demo_kind(row.kind):
+                    # F.0: DEMO yalnız açık bayrakla ve gerçek sağlayıcı yokken görünür; "backup"
+                    # yeteneğini AÇMAZ (araç/bulgu/koruma kuralları demo'dan etkilenmez).
+                    if demo_enabled() and not has_real and (
+                            (row.last_status or "") == "ok" or row.last_sync_at is not None):
+                        out.add(DEMO_CAPABILITY)
+                    continue
                 # Hiç başarılı senkron yoksa (yanlış parola vb.) capability açılmaz;
                 # daha önce başarılı olmuş instance geçici hatada kaybolmaz — veri bayat
                 # işaretlenir (bk.provider.* bulguları görünür kalır).

@@ -184,6 +184,10 @@ def sync_instance(db: Session, row: IntegrationInstance, *, force: bool = False,
     """Tek instance senkronu. Hata yutulur; durum satıra yazılır. Commit çağıran yapar değil — burada yapılır."""
     from app.services.capabilities import invalidate_capabilities
     now = _now()
+    from app.services.backup.demo_gate import DISABLED_MSG_TR, demo_enabled, is_demo_kind
+    if is_demo_kind(row.kind) and not demo_enabled():
+        # F.0: DEMO kapalıyken senkron (force dahil) yok — veri üretilmez, satıra dokunulmaz.
+        return {"ok": False, "skipped": "demo_disabled", "error": DISABLED_MSG_TR}
     meta = parse_meta(row)
     if not force and _breaker_open(meta, now):
         return {"ok": False, "skipped": "circuit_open", "breaker_until": meta.get("breaker_until")}
@@ -235,8 +239,8 @@ def run_all_due(db: Session, *, force: bool = False) -> List[Dict[str, Any]]:
     """Fleet işi: enabled backup instance'ları (aralığı dolanlar) senkronlar."""
     now = _now()
     out = []
-    rows = (db.query(IntegrationInstance)
-            .filter(IntegrationInstance.category == "backup", IntegrationInstance.enabled.is_(True)).all())
+    from app.services.backup.demo_gate import active_instances
+    rows = active_instances(db, include_demo=True)   # DEMO kapalıyken senkron yok
     for row in rows:
         last = _aware(row.last_sync_at)
         due = force or last is None or (now - last).total_seconds() >= max(60, int(row.sync_interval_sec or 3600))
@@ -253,8 +257,8 @@ def has_enabled_backup_instance() -> bool:
         from app.core.database import SessionLocal
         db = SessionLocal()
         try:
-            return db.query(IntegrationInstance.id).filter(
-                IntegrationInstance.category == "backup", IntegrationInstance.enabled.is_(True)).first() is not None
+            from app.services.backup.demo_gate import active_instances
+            return bool(active_instances(db, include_demo=True))
         finally:
             db.close()
     except Exception:  # noqa: BLE001

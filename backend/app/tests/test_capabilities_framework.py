@@ -74,14 +74,11 @@ def test_invalidate_refreshes_capabilities(monkeypatch):
     assert "backup" in got
 
 
-def test_disable_instance_clears_capability(db_session=None):
-    """Enabled→disabled sonrası GET capabilities ve tool listesi güncellenir."""
-    from app.core.database import SessionLocal, Base, engine
+def test_disable_instance_clears_capability(isolated_db):
+    """Enabled→disabled sonrası GET capabilities ve tool listesi güncellenir (izole DB)."""
     from app.models.integration_instance import IntegrationInstance
-    import app.models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
+    db = isolated_db
     try:
         # demo kind capability kaydı
         class _P:
@@ -132,9 +129,6 @@ def test_disable_instance_clears_capability(db_session=None):
         names2 = {s["function"]["name"] for s in tool_specs_read_only(domains=frozenset({"vcenter"}))}
         assert "_test_backup_only_tool" not in names2
     finally:
-        db.query(IntegrationInstance).filter(IntegrationInstance.kind == "_test_bk_kind").delete()
-        db.commit()
-        db.close()
         TOOLS.pop("_test_backup_only_tool", None)
         cap_mod.invalidate_capabilities()
 

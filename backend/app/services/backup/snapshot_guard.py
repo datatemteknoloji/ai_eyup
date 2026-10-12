@@ -62,7 +62,10 @@ def _active_backup_sessions_for_vm(db: Session, *, vm_name: str, matched_vm_id: 
     try:
         from datetime import timedelta
         from app.models.backup import BkJob, BkProtectedObject, BkSession
-        objs = db.query(BkProtectedObject)
+        from app.services.backup.demo_gate import active_instances
+        # yalnız gerçek sağlayıcılar: DB'de kalmış demo/devre dışı satırlar gerçek snapshot kararını etkilemez (F.0)
+        real_ids = [i.id for i in active_instances(db)]
+        objs = db.query(BkProtectedObject).filter(BkProtectedObject.instance_id.in_(real_ids or [-1]))
         if matched_vm_id:
             objs = objs.filter(BkProtectedObject.matched_vm_id == matched_vm_id)
         else:

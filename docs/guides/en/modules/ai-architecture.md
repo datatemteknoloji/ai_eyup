@@ -402,7 +402,7 @@ Virt DB tool domain: **`vcenter` only** (no `infra`). Hidden on Linux/Windows-on
 | `virt_placement_recommend` | `virt_placement` | Filter (Memory/CPU/datastore/rules) + scored host candidates; rejected hosts carry a reason |
 | `virt_reclaim_summary` | `virt_reclaim` | Powered-off/idle/oversized VMs, snapshots, orphan disks, ISOs, unused datastores |
 | `virt_health_findings` | `infra_findings` | Health/compliance/drift/hardware/CVE findings (excepted rows flagged) |
-| `virt_backup_status` | `bk_*` tables (capability `backup`) | Provider/job/repository summary, protected vs unprotected VMs; `demo` flag when provider is DEMO |
+| `virt_backup_status` | `bk_*` tables (capability `backup`) | Provider/job/repository summary, protected vs unprotected VMs. Real provider only: the DEMO provider is OFF by default (`BACKUP_DEMO_ENABLED`), never grants capability `backup`, so chat tools never see demo data |
 | `virt_rpo_compliance` | `bk_*` + `bk_policies` | Per-VM RPO vs target (deterministic, `not_measurable`/`not_applicable` states) |
 | `virt_incident_timeline` | alarms + events + config changes + findings | Incident window timeline (`items` capped at 60) + candidate causes |
 | `virt_remediate` | vCenter SOAP (**separate write account**) | MUTATING, `llm_visible=False` — absent from LLM specs; only UI proposal → AgentAction approval |

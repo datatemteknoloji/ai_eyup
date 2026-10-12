@@ -15,6 +15,7 @@ import { API_BASE_URL } from '../config/api'
 import { useTheme } from '../theme/ThemeProvider'
 import { useLocale } from '../i18n/LocaleProvider'
 import { useCapabilities } from '../hooks/useCapabilities'
+import DemoBanner from './DemoBanner'
 import {
   buildPlatformAiopsChildren,
   PLATFORM_AIOPS_LABEL_KEY,
@@ -872,6 +873,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           style={{ background: 'var(--bg-base)' }}
         >
           {children}
+        {/* F.0: DEMO yedek verisi etkinken her ekranda uyarı bandı */}
+        <DemoBanner />
+
         </main>
       </div>
 

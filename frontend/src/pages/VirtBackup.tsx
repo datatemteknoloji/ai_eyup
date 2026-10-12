@@ -41,6 +41,9 @@ function Evidence({ syncAt }: { syncAt?: string | null }) {
     <div className="space-y-4">
       <Panel title={t('bk_ev_title')} method="bk.evidence" methodAt={syncAt}>
         <p className="text-xs text-slate-400 p-3">{t('bk_ev_hint')}</p>
+        {ev.data?.blocked && (
+          <div className="m-3 rounded border border-fuchsia-500/40 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-200">{t('bk_ev_demo_blocked')}</div>
+        )}
         <SimpleTable rows={ev.data?.items || []} cols={[
           { key: 'control', label: t('bk_ev_control') },
           { key: 'item', label: t('bk_ev_item'), render: (r: any) => <span className="text-white">{r.item}</span> },

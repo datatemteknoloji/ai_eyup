@@ -148,33 +148,12 @@ def test_matching_levels():
     assert exact == ["exact"]
 
 
-# ── demo provider + sync + RPO motoru (canlı DB; test verisi sonunda silinir) ─
-
-def _skip_if_user_has_backup(db):
-    from app.models.integration_instance import IntegrationInstance
-    if db.query(IntegrationInstance).filter(IntegrationInstance.category == "backup").count():
-        pytest.skip("Ortamda gerçek backup instance'ı var — canlı veriye dokunulmaz")
-
+# ── fixture sağlayıcı + sync + RPO motoru (İZOLE geçici DB — uygulama verisine dokunmaz) ─
 
 @pytest.fixture()
-def db():
-    from app.core.database import SessionLocal, Base, engine
-    import app.models  # noqa: F401
-    from app.services.findings.schema_ensure import ensure_backup_columns
-    Base.metadata.create_all(bind=engine)
-    ensure_backup_columns(engine)
-    s = SessionLocal()
-    _skip_if_user_has_backup(s)
-    yield s
-    from app.models.backup import BkRpoPolicy
-    from app.models.integration_instance import IntegrationInstance
-    s.rollback()
-    s.query(BkRpoPolicy).filter(BkRpoPolicy.label == "_t").delete()
-    s.query(IntegrationInstance).filter(IntegrationInstance.label == "_t_demo").delete()
-    s.commit()
-    from app.services.capabilities import invalidate_capabilities
-    invalidate_capabilities()
-    s.close()
+def db(isolated_db):
+    """İzole, boş DB oturumu (bkz. isolated_db.py). Koşullu skip yok."""
+    return isolated_db
 
 
 def _demo_vms(n=40):
@@ -182,9 +161,12 @@ def _demo_vms(n=40):
              "powered_on": True} for i in range(n)]
 
 
-def _make_instance(db, **kw):
+def _make_instance(db, kind="veeam_vbr", **kw):
+    """Varsayılan: GERÇEK-türde (veeam_vbr) satır + enjekte edilen fixture taşıyıcı (DemoTransport) —
+    gerçek sağlayıcı kuralları (capability 'backup', bulgular platform='backup') test edilir.
+    ``kind="veeam_demo"`` yalnız DEMO kapısı testleri içindir."""
     from app.models.integration_instance import IntegrationInstance
-    row = IntegrationInstance(category="backup", kind="veeam_demo", label="_t_demo", endpoint="demo", enabled=True,
+    row = IntegrationInstance(category="backup", kind=kind, label="_t_demo", endpoint="demo", enabled=True,
                               last_status="never", sync_interval_sec=3600, **kw)
     db.add(row)
     db.commit()
@@ -322,7 +304,7 @@ def test_backup_tools_visible_only_with_capability(db, monkeypatch):
         t = TOOLS[n]
         assert t.risk_level.name == "READ_ONLY" and t.requires_capability == frozenset({"backup"})
     out = TOOLS["virt_rpo_compliance"].direct_handler(db, {"filter": "unprotected"}, {})
-    assert out["ok"] and out["demo"] is True
+    assert out["ok"] and out["demo"] is False       # gerçek-türde satır; demo etiketi kind'dan gelir
 
 
 def test_credentials_never_returned(db):

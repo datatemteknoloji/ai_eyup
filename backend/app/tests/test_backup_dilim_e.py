@@ -101,7 +101,7 @@ def test_copy_job_and_api_revision(db, monkeypatch):
 def test_evidence_missing_restore_test_is_reported_eksik(db, monkeypatch):
     _synced(db, monkeypatch)
     ev = extras.evidence(db)
-    assert ev["demo"] is True
+    assert ev["demo"] is False and ev["blocked"] is False
     rt = next(i for i in ev["items"] if i["item"] == "Geri yükleme testi kaydı")
     assert rt["status"] == "eksik" and rt["value"] is None
     assert any("immutability" in x.lower() for x in ev["not_checked"])

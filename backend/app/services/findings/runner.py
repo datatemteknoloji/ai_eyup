@@ -219,8 +219,10 @@ def _refresh_backup_findings(db: Session) -> None:
     try:
         from app.models.infra_finding import InfraFinding
         from app.services.capabilities import get_capabilities
-        if "backup" not in get_capabilities() and not db.query(InfraFinding.id).filter(
-                InfraFinding.platform == "backup", InfraFinding.active.is_(True)).first():
+        from app.services.backup.demo_gate import DEMO_CAPABILITY
+        caps = get_capabilities()
+        if "backup" not in caps and DEMO_CAPABILITY not in caps and not db.query(InfraFinding.id).filter(
+                InfraFinding.platform.in_(("backup", "backup_demo")), InfraFinding.active.is_(True)).first():
             return
         from app.services.backup.rpo_engine import persist_backup_findings
         persist_backup_findings(db)

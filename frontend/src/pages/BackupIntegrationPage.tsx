@@ -65,6 +65,7 @@ export default function BackupIntegrationPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-white font-semibold">{i.label}</span>
                 {i.demo && <span className="px-1.5 text-[11px] rounded bg-fuchsia-500/20 text-fuchsia-300">DEMO</span>}
+                {i.demo_inactive && <span className="px-1.5 text-[11px] rounded bg-amber-500/15 text-amber-300">{t('bki_demo_inactive')}</span>}
                 <span className={`text-[11px] px-1.5 rounded ${i.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>{i.enabled ? t('bki_enabled') : t('bki_disabled')}</span>
                 <span className={`text-[11px] px-1.5 rounded ${i.last_status === 'ok' ? 'text-emerald-300' : i.last_status === 'never' ? 'text-slate-400' : 'bg-red-500/10 text-red-300'}`}>{i.last_status}</span>
               </div>
