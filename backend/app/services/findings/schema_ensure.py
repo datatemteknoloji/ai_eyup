@@ -22,6 +22,48 @@ def ensure_infra_finding_columns(engine) -> None:
         logger.warning("infra_findings kolon ensure: %s", e)
 
 
+def ensure_reference_columns(engine) -> None:
+    """G: infra_reference_data'ya üretim tarihi/sağlama toplamı kolonları (yalnız ekleme) ve
+    `upg:feed_stale` → `ref.feed.stale` yeniden adlandırması (veri silinmez; çakışan satır atlanır)."""
+    stmts = [
+        "ALTER TABLE infra_reference_data ADD COLUMN IF NOT EXISTS version varchar(64)",
+        "ALTER TABLE infra_reference_data ADD COLUMN IF NOT EXISTS generated_at timestamptz",
+        "ALTER TABLE infra_reference_data ADD COLUMN IF NOT EXISTS sha256 varchar(64)",
+        "ALTER TABLE infra_reference_data ADD COLUMN IF NOT EXISTS integrity varchar(16)",
+    ]
+    try:
+        with engine.begin() as conn:
+            for st in stmts:
+                conn.execute(text(st))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("infra_reference_data kolon ensure: %s", e)
+    migrate_check_aliases(engine)
+
+
+def migrate_check_aliases(engine) -> int:
+    """Eski check_id'leri güncel kimliğe taşır. İdempotent; hedef kimlikte aynı anahtarlı satır varsa
+    eski satır dokunulmadan kalır (silme yok). İstisna kayıtları (infra_finding_exceptions) da taşınır."""
+    from app.services.findings.registry import CHECK_ID_ALIASES
+    moved = 0
+    try:
+        with engine.begin() as conn:
+            for old, new in CHECK_ID_ALIASES.items():
+                r = conn.execute(text(
+                    "UPDATE infra_findings f SET check_id = :new WHERE f.check_id = :old AND NOT EXISTS ("
+                    " SELECT 1 FROM infra_findings g WHERE g.check_id = :new AND g.platform = f.platform"
+                    " AND g.entity_ref = f.entity_ref AND g.source_id IS NOT DISTINCT FROM f.source_id)"),
+                    {"old": old, "new": new})
+                moved += r.rowcount or 0
+                conn.execute(text(
+                    "UPDATE infra_finding_exceptions e SET check_id = :new WHERE e.check_id = :old AND NOT EXISTS ("
+                    " SELECT 1 FROM infra_finding_exceptions g WHERE g.check_id = :new AND g.platform = e.platform"
+                    " AND g.entity_ref = e.entity_ref AND g.source_id IS NOT DISTINCT FROM e.source_id)"),
+                    {"old": old, "new": new})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("check_id alias migrasyonu: %s", e)
+    return moved
+
+
 def ensure_backup_columns(engine) -> None:
     """bk_* tablolarına Dilim D kolonları (tablolar create_all ile, ALTER ile genişler)."""
     stmts = [

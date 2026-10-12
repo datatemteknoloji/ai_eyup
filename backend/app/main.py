@@ -219,8 +219,11 @@ async def startup_tasks():
         else:
             raise
     try:
-        from app.services.findings.schema_ensure import ensure_backup_columns, ensure_infra_finding_columns
+        from app.services.findings.schema_ensure import (
+            ensure_backup_columns, ensure_infra_finding_columns, ensure_reference_columns,
+        )
         ensure_infra_finding_columns(engine)
+        ensure_reference_columns(engine)
         ensure_backup_columns(engine)
     except Exception as e:
         logger.warning("findings schema ensure: %s", e)

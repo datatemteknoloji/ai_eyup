@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Cloud, Monitor, Server, Activity } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
+import { ReferencePacksCard } from '../components/insights/ReferencePacksCard'
 
 /** Sanallaştırma modülü dashboard — envanter yönetimi Entegrasyonlar altında. */
 export default function VirtOverviewPage() {
@@ -52,6 +53,8 @@ export default function VirtOverviewPage() {
           </div>
         ))}
       </div>
+
+      <ReferencePacksCard />
 
       <div className="flex flex-wrap gap-2">
         <Link to="/virt/ops" className="text-xs px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white">Komuta Merkezi</Link>

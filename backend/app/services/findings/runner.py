@@ -178,20 +178,9 @@ def run_for_hypervisor(db: Session, hv, *, file_scan: Optional[bool] = None,
             stats["drift"] = store.persist_findings(db, platform=platform, source_id=hv.id, source_name=hv.name,
                                                     categories=("drift",), drafts=ddrafts, run_id=run.id, now=now)
 
-            vdrafts = virt_reference_checks.vuln_findings(db, platform, col)
-            if vdrafts is not None:
-                stats["vuln"] = store.persist_findings(db, platform=platform, source_id=hv.id, source_name=hv.name,
-                                                       categories=("vuln",), drafts=vdrafts, run_id=run.id, now=now)
-            kdrafts = virt_reference_checks.known_issue_findings(db, platform, hv.id, col)
-            if kdrafts is not None:
-                stats["known_issue"] = store.persist_findings(
-                    db, platform=platform, source_id=hv.id, source_name=hv.name,
-                    categories=("known_issue",), drafts=kdrafts, run_id=run.id, now=now)
-            udrafts = virt_reference_checks.upgrade_findings(
-                platform, col, virt_reference_checks.get_ref(db, "upgrade_matrix"))
-            udrafts = list(udrafts) + virt_reference_checks.feed_age_findings(db, now=now)
-            stats["upgrade"] = store.persist_findings(db, platform=platform, source_id=hv.id, source_name=hv.name,
-                                                      categories=("upgrade",), drafts=udrafts, run_id=run.id, now=now)
+            # G.4: paket yokluğu HİÇBİR mevcut bulguyu kapatmaz (bkz. virt_reference_checks.persist_reference_findings)
+            stats.update(virt_reference_checks.persist_reference_findings(
+                db, platform=platform, source_id=hv.id, source_name=hv.name, col=col, run_id=run.id, now=now))
         # Kapasite DB'den hesaplanır — toplayıcı başarısız olsa da güncellenir
         if capacity is not None:
             from app.services.virt_capacity_planner import capacity_findings

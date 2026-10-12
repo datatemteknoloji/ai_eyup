@@ -1,10 +1,11 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, Upload } from 'lucide-react'
+import { Download, Trash2, Upload } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
-import { useT } from '../i18n/LocaleProvider'
+import { useLocale, useT } from '../i18n/LocaleProvider'
 import { GhostButton, NEON, PageHeader, Select, Tabs } from '../components/aiops/ui'
+import { MethodBadge } from '../components/insights/MethodBadge'
 import { FindingsTable, PageInfo, Panel, RunBar, SimpleTable, Stat, apiGet, apiSend, fmt, useInsights, useRole, type Finding } from '../components/insights/insightsKit'
 
 const CATS = ['health', 'hardware', 'vuln', 'known_issue', 'upgrade', 'compliance'] as const
@@ -23,7 +24,10 @@ function FindingsTab({ category }: { category: string }) {
   return (
     <div className="space-y-3">
       {kind && pkg && !pkg.loaded && (
-        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-2 text-xs text-blue-200">{t('vi_ref_missing', { kind })}</div>
+        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-2 text-xs text-blue-200">{t('vi_ref_missing', { kind })} {t('g_ref_absent_note')}</div>
+      )}
+      {kind && pkg?.loaded && pkg.state === 'stale' && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">{t('g_ref_st_stale', { d: Math.floor(pkg.age_days ?? 0), th: pkg.stale_threshold_days })}</div>
       )}
       {kind && pkg?.loaded && (
         <div className="text-xs text-slate-500">{t('vi_ref_loaded', { src: pkg.source || kind, n: pkg.item_count, at: pkg.uploaded_at ? new Date(pkg.uploaded_at).toLocaleString() : '—' })}</div>
@@ -126,6 +130,7 @@ function ComplianceTab() {
 
 function ReferencePackages() {
   const t = useT()
+  const { locale } = useLocale()
   const qc = useQueryClient()
   const q = useInsights<any>('virt-insights', '/reference')
   const fileRef = useRef<HTMLInputElement>(null)
@@ -140,7 +145,15 @@ function ReferencePackages() {
     try {
       const payload = JSON.parse(await f.text())
       const r = await apiSend<any>('virt-insights', `/reference/${kind}?ingest_rag=${kind === 'kb_feed' && rag}`, 'POST', payload)
-      setMsg(t('vi_ref_ok', { n: r.item_count }))
+      setMsg(t('vi_ref_ok', { n: r.item_count }) + (r.integrity === 'verified' ? ' ' + t('g_ref_integrity_verified') : ' ' + t('g_ref_integrity_computed')))
+      qc.invalidateQueries({ queryKey: ['virt-insights'] })
+    } catch (err: any) { setMsg(err.message) }
+  }
+  const del = async (k: string) => {
+    if (!window.confirm(t('g_ref_delete_confirm'))) return
+    try {
+      await apiSend('virt-insights', `/reference/${k}`, 'DELETE')
+      setMsg(t('g_ref_deleted'))
       qc.invalidateQueries({ queryKey: ['virt-insights'] })
     } catch (err: any) { setMsg(err.message) }
   }
@@ -153,19 +166,41 @@ function ReferencePackages() {
   }
   const label: Record<string, string> = { cve_feed: t('vi_ref_cve'), kb_feed: t('vi_ref_kb'), upgrade_matrix: t('vi_ref_upg') }
   return (
-    <Panel title={t('vi_ref_title')} method="upg:*">
+    <Panel title={t('vi_ref_title')}>
       <div className="p-4 space-y-3">
         <div className="text-xs text-slate-400">{t('vi_ref_hint')}</div>
+        <div className="text-[11px] text-slate-500">{t('g_ref_domains', { d: (q.data?.allowed_domains || []).join(', ') })}</div>
         <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={upload} />
         <SimpleTable rows={q.data?.packages || []} cols={[
-          { key: 'kind', label: t('vi_ref_kind'), render: r => <span className="text-white">{label[r.kind] || r.kind}</span> },
-          { key: 'loaded', label: t('vi_ref_state'), render: r => r.loaded ? <span className="text-emerald-400">{t('vi_ref_state_loaded', { n: r.item_count })}</span> : <span className="text-slate-500">{t('vi_ref_state_none')}</span> },
-          { key: 'source', label: t('vi_ref_source'), className: 'text-xs text-slate-400' },
+          { key: 'kind', label: t('vi_ref_kind'), render: r => <span className="text-white">{label[r.kind] || r.kind}<MethodBadge id={`ref.pack.${r.kind}`} at={r.generated_at || r.uploaded_at} className="ml-2" /></span> },
+          { key: 'loaded', label: t('vi_ref_state'), render: r => r.loaded
+            ? <span className={r.state === 'stale' ? 'text-amber-300' : r.state === 'ok' ? 'text-emerald-400' : 'text-amber-200'}>
+              {t('vi_ref_state_loaded', { n: r.item_count })}
+              <span className="block text-[11px]">{r.state === 'ok' ? t('g_ref_st_ok', { d: Math.floor(r.age_days ?? 0) }) : r.state === 'stale' ? t('g_ref_st_stale', { d: Math.floor(r.age_days ?? 0), th: r.stale_threshold_days }) : t('g_ref_st_unknown')}</span>
+            </span>
+            : <span className="text-slate-500">{t('vi_ref_state_none')}</span> },
+          { key: 'source', label: t('vi_ref_source'), className: 'text-xs text-slate-400', render: r => (
+            <div>
+              <div>{r.source || '—'}{r.version ? <span className="text-slate-500"> · v{r.version}</span> : null}</div>
+              {(r.sources || []).length > 0 && (
+                <div className="mt-1 flex flex-col gap-0.5">
+                  {(r.sources as any[]).map(s => (
+                    <a key={s.id} href={s.url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline" title={`${t('g_ref_verified_on')}: ${s.verified_on}`}>{locale === 'en' ? s.title_en : s.title_tr}</a>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) },
+          { key: 'generated_at', label: t('g_ref_generated'), render: r => r.generated_at ? new Date(r.generated_at).toLocaleDateString() : <span className="text-slate-600">—</span> },
+          { key: 'sha256', label: t('g_ref_integrity'), render: r => r.sha256
+            ? <span className="font-mono text-[11px]" title={r.sha256}>{String(r.sha256).slice(0, 12)}…<span className={`block ${r.integrity === 'verified' ? 'text-emerald-400' : 'text-amber-200'}`}>{r.integrity === 'verified' ? t('g_ref_integrity_verified') : t('g_ref_integrity_computed')}</span></span>
+            : <span className="text-slate-600">—</span> },
           { key: 'uploaded_at', label: t('vi_ref_uploaded'), render: r => r.uploaded_at ? `${new Date(r.uploaded_at).toLocaleString()} · ${r.uploaded_by}` : '—' },
           { key: 'act', label: '', render: r => (
             <div className="flex gap-2 justify-end">
               <GhostButton onClick={() => sample(r.kind)}>{t('vi_ref_sample')}</GhostButton>
               <GhostButton accent={NEON.blue} onClick={() => pick(r.kind)}><span className="inline-flex items-center gap-1.5"><Upload size={13} />{t('vi_ref_upload')}</span></GhostButton>
+              {r.loaded && <GhostButton onClick={() => del(r.kind)}><span className="inline-flex items-center gap-1.5"><Trash2 size={13} />{t('g_ref_delete')}</span></GhostButton>}
             </div>
           ) },
         ]} />
@@ -247,6 +282,9 @@ export default function VirtHealthChecks() {
         <Stat label={t('vi_res_nm')} value={sum.data?.findings?.not_measurable ?? 0} tone="text-amber-200/90" hint={t('vi_res_nm_hint')} method="findings.summary" methodAt={sum.data?.last_run?.finished_at} />
         <Stat label={t('vi_res_na')} value={sum.data?.findings?.not_applicable ?? 0} tone="text-slate-400" hint={t('vi_res_na_hint')} method="findings.summary" methodAt={sum.data?.last_run?.finished_at} />
         <Stat label={t('vi_excepted')} value={sum.data?.findings?.excepted ?? 0} tone="text-slate-300" />
+        {(sum.data?.findings?.unverifiable ?? 0) > 0 && (
+          <Stat label={t('g_ref_unverifiable')} value={sum.data?.findings?.unverifiable} tone="text-amber-200/90" hint={t('g_ref_unverifiable_hint')} method="ref.vuln.unassessed" methodAt={sum.data?.last_run?.finished_at} />
+        )}
       </div>
       <Tabs tabs={tabs} active={tab} onChange={id => setSp({ tab: id })} />
       {tab === 'compliance' ? <ComplianceTab />

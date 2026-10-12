@@ -458,11 +458,23 @@ _DEFS: List[CheckDef] = [
 
 CHECKS: Dict[str, CheckDef] = {d.id: d for d in _DEFS}
 
-_DYNAMIC_PREFIX_CATEGORY = {"vuln:": "vuln", "kb:": "known_issue", "upg:": "upgrade"}
+_DYNAMIC_PREFIX_CATEGORY = {
+    "vuln:": "vuln", "kb:": "known_issue", "upg:": "upgrade",
+    # G: referans paketi durumu kontrolleri
+    "ref.vuln.": "vuln", "ref.kb.": "known_issue", "ref.upgrade.": "upgrade", "ref.feed.": "upgrade",
+}
+
+# Eski check_id → güncel check_id (G.2). Eski kimlikle gelen sorgu/dışa aktarım çözümlenir;
+# mevcut DB satırları `migrate_check_aliases` ile (yalnız yeniden adlandırma) taşınır.
+CHECK_ID_ALIASES = {"upg:feed_stale": "ref.feed.stale"}
+
+
+def canonical_check_id(check_id: str) -> str:
+    return CHECK_ID_ALIASES.get(check_id, check_id)
 
 
 def get_check(check_id: str) -> Optional[CheckDef]:
-    return CHECKS.get(check_id)
+    return CHECKS.get(canonical_check_id(check_id))
 
 
 def is_valid_result(result: str) -> bool:

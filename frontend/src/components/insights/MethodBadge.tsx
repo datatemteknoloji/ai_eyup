@@ -29,6 +29,8 @@ export type MethodCatalog = {
   ai_note_tr: string; ai_note_en: string
   general_knowledge_tr: string; general_knowledge_en: string
   methods: MethodEntry[]
+  /** Eski kimlik → güncel kimlik (ör. upg:feed_stale → ref.feed.stale). */
+  aliases?: Record<string, string>
 }
 
 export const CLASS_STYLE: Record<MethodClass, string> = {
@@ -55,6 +57,7 @@ export function useMethodCatalog() {
 /** Tam kimlik, yoksa en uzun `önek*` deseni (backend `method_registry.resolve` ile aynı kural). */
 export function resolveMethod(cat: MethodCatalog | undefined, id: string): MethodEntry | undefined {
   if (!cat || !id) return undefined
+  id = cat.aliases?.[id] ?? id
   const exact = cat.methods.find(m => m.id === id)
   if (exact) return exact
   let best: MethodEntry | undefined

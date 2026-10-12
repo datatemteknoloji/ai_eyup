@@ -253,10 +253,45 @@ _METHODS: List[Method] = [
        ("Envanter sürümü ve olaylar, bilinen sorun paketindeki sürüm aralığı/olay kalıbıyla eşleştirilir.", "Inventory versions and events are matched against version ranges/event patterns in the known-issues package."),
        ("Yüklenen bilinen sorunlar paketi (kb_feed) + sürüm envanteri + olaylar.", "Loaded known-issues package (kb_feed) + version inventory + events."),
        ("Paket yoksa eşleştirme yapılamaz.", "Without a package no matching can be done.")),
-    _m("upg:feed_stale", CLASS_KURAL, "reference",
-       ("Yüklü referans paketinin yaşı 30 günle karşılaştırılır.", "The age of a loaded reference package is compared with 30 days."),
-       ("Paketin yükleme zamanı (ainew DB).", "Package upload time (ainew DB)."),
-       ("Yalnız yüklü paketler için çalışır.", "Only applies to loaded packages.")),
+    _m("ref.feed.stale", CLASS_KURAL, "reference",
+       ("Yüklü referans paketinin yaşı 30 günle karşılaştırılır; yaş, paketin üretim tarihinden (yoksa yükleme zamanından) hesaplanır.",
+        "The age of a loaded reference package is compared with 30 days; age is computed from the package generation date (upload time if absent)."),
+       ("Paketin üretim tarihi ve yükleme zamanı (ainew DB).", "Package generation date and upload time (ainew DB)."),
+       ("Paket yüklü değilse ya da tarihi belirlenemiyorsa sonuç 'ölçülemedi' olur; asla 'geçti' olmaz.",
+        "If no package is loaded or its date cannot be determined the result is 'not measurable'; never 'pass'.")),
+    _m("ref.vuln.unassessed", CLASS_KURAL, "reference",
+       ("Zafiyet paketi yüklü değilse zafiyet değerlendirmesi yapılamadığı kaydedilir.", "Records that vulnerability assessment could not be done because no vulnerability package is loaded."),
+       ("Paket durumu (ainew DB).", "Package state (ainew DB)."),
+       ("'Zafiyet yok' anlamına gelmez. Paket yokluğu mevcut hiçbir bulguyu kapatmaz; eski bulgular 'doğrulanamayan' olarak korunur.",
+        "Does not mean 'no vulnerabilities'. Absence of a package closes no existing finding; old findings are kept as 'unverifiable'.")),
+    _m("ref.kb.unassessed", CLASS_KURAL, "reference",
+       ("Bilinen sorunlar paketi yüklü değilse eşleştirmenin yapılamadığı kaydedilir.", "Records that matching could not be done because no known-issues package is loaded."),
+       ("Paket durumu (ainew DB).", "Package state (ainew DB)."),
+       ("'Bilinen sorun yok' anlamına gelmez. Paket yokluğu mevcut hiçbir bulguyu kapatmaz.", "Does not mean 'no known issues'. Absence of a package closes no existing finding.")),
+    _m("ref.upgrade.unassessed", CLASS_KURAL, "reference",
+       ("Yükseltme matrisi yüklü değilse EOL/hedef sürüm değerlendirmesinin yapılamadığı kaydedilir.", "Records that EOL/target-version assessment could not be done because no upgrade matrix is loaded."),
+       ("Paket durumu (ainew DB).", "Package state (ainew DB)."),
+       ("'Güncel' anlamına gelmez. Paket yokluğu mevcut hiçbir bulguyu kapatmaz.", "Does not mean 'up to date'. Absence of a package closes no existing finding.")),
+    _m("ref.pack.cve_feed", CLASS_VERI, "reference",
+       ("Operatörün yüklediği çevrimdışı zafiyet paketi (VMSA / RHSA / CVE kayıtları). Sistem internetten veri çekmez.",
+        "Offline vulnerability package (VMSA / RHSA / CVE records) uploaded by the operator. The system does not fetch anything from the internet."),
+       ("Operatör yüklemesi (infra_reference_data). Üretim tarihi, sağlama toplamı (SHA-256) ve kayıt başına kaynak bağlantısı pakette yer alır; bağlantılar yalnız resmi üretici alan adlarına izin verilir.",
+        "Operator upload (infra_reference_data). Generation date, SHA-256 checksum and per-record source link are part of the package; links are limited to official vendor domains."),
+       ("Yalnız paketin kapsadığı ürün/sürümler değerlendirilir. 30 günden eski paket 'güncel değil' sayılır. Paket silinirse mevcut bulgular kapanmaz, 'doğrulanamayan' olur.",
+        "Only products/versions covered by the package are assessed. A package older than 30 days is 'stale'. If a package is deleted existing findings do not close; they become 'unverifiable'.")),
+    _m("ref.pack.kb_feed", CLASS_VERI, "reference",
+       ("Operatörün yüklediği çevrimdışı bilinen sorunlar (KB) paketi.", "Offline known-issues (KB) package uploaded by the operator."),
+       ("Operatör yüklemesi (infra_reference_data). Üretim tarihi, sağlama toplamı ve kayıt başına kaynak bağlantısı pakette yer alır; yalnız resmi üretici alan adları.",
+        "Operator upload (infra_reference_data). Generation date, checksum and per-record source link are part of the package; official vendor domains only."),
+       ("Sürüm aralığı + olay kalıbı eşleştirmesi; paket kapsamı dışında değerlendirme yoktur. 30 günden eski paket 'güncel değil' sayılır.",
+        "Version range + event pattern matching; nothing outside the package scope is assessed. A package older than 30 days is 'stale'.")),
+    _m("ref.pack.upgrade_matrix", CLASS_VERI, "reference",
+       ("Operatörün yüklediği çevrimdışı yükseltme matrisi (hedef sürüm, EOL, yükseltme yolları, donanım sınırları).",
+        "Offline upgrade matrix (target version, EOL, upgrade paths, hardware limits) uploaded by the operator."),
+       ("Operatör yüklemesi (infra_reference_data). Üretim tarihi ve sağlama toplamı pakette yer alır; EOL/uyumluluk değerleri resmi üretici belgelerinden operatör tarafından derlenir.",
+        "Operator upload (infra_reference_data). Generation date and checksum are part of the package; EOL/compatibility values are compiled by the operator from official vendor documents."),
+       ("Matris yoksa yükseltme önerisi üretilemez; vLCM HCL kontrolü matristen bağımsızdır. 30 günden eski paket 'güncel değil' sayılır.",
+        "Without a matrix no upgrade advice is produced; the vLCM HCL check is independent. A package older than 30 days is 'stale'.")),
     _m("upg:*", CLASS_ESLESTIRME, "reference",
        ("Sürümler yükseltme matrisindeki hedef, EOL ve yükseltme yollarıyla eşleştirilir; vLCM HCL durumu okunur.", "Versions are matched against targets, EOL dates and upgrade paths in the upgrade matrix; vLCM HCL state is read."),
        ("Yüklenen yükseltme matrisi (upgrade_matrix) + sürüm envanteri; vCenter vLCM HCL.", "Loaded upgrade matrix (upgrade_matrix) + version inventory; vCenter vLCM HCL."),
@@ -498,6 +533,10 @@ _EXACT: Dict[str, Method] = {m.id: m for m in _METHODS if not m.id.endswith("*")
 _PATTERNS: List[Method] = sorted([m for m in _METHODS if m.id.endswith("*")], key=lambda m: -len(m.id))
 
 
+# Eski kimlik → güncel kimlik. Eski kimlikle kayıtlı bulgular/dışa aktarımlar çözümlenebilsin diye korunur.
+ALIASES: Dict[str, str] = {"upg:feed_stale": "ref.feed.stale"}
+
+
 def all_methods() -> List[Method]:
     return list(_METHODS)
 
@@ -510,6 +549,7 @@ def resolve(method_id: str) -> Optional[Method]:
     """Tam kimlik, yoksa en uzun `önek*` deseni; kayıt yoksa None."""
     if not method_id:
         return None
+    method_id = ALIASES.get(method_id, method_id)
     m = _EXACT.get(method_id)
     if m:
         return m
@@ -541,4 +581,5 @@ def catalog() -> Dict[str, object]:
         "ai_note_tr": AI_NOTE_TR, "ai_note_en": AI_NOTE_EN,
         "general_knowledge_tr": GENERAL_KNOWLEDGE_TR, "general_knowledge_en": GENERAL_KNOWLEDGE_EN,
         "methods": [to_dict(m) for m in _METHODS],
+        "aliases": dict(ALIASES),
     }

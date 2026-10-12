@@ -8,6 +8,8 @@ Sürüm aralığı sözdizimi: ">=7.0,<7.0.3" (virgül = VE); liste = VEYA.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -15,7 +17,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.infra_finding import InfraReferenceData
-from app.services.findings.registry import ISO_VULN, ISO_CONFIG, RESULT_FAIL, RESULT_PASS
+from app.services import reference_sources as rsrc
+from app.services.findings.registry import (
+    ISO_VULN, ISO_CONFIG, RESULT_FAIL, RESULT_NOT_MEASURABLE, RESULT_PASS,
+)
 from app.services.findings.store import FindingDraft
 
 KINDS = ("cve_feed", "kb_feed", "upgrade_matrix")
@@ -97,6 +102,53 @@ def get_ref(db: Session, kind: str) -> Optional[Dict[str, Any]]:
     return row.payload if row else None
 
 
+def canonical_json(payload: Dict[str, Any]) -> str:
+    """Sağlama toplamı için kanonik JSON: anahtarlar sıralı, boşluksuz; üst düzey `sha256` alanı hariç."""
+    body = {k: v for k, v in payload.items() if k != "sha256"}
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def compute_checksum(payload: Dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def parse_generated_at(value: Any) -> Optional[datetime]:
+    """'2026-10-01' veya ISO tarih-saat → UTC datetime; geçersizse None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    v = value.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(v) if len(v) > 10 else datetime.combine(date.fromisoformat(v), datetime.min.time())
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
+def validate_meta(payload: Dict[str, Any], *, now: Optional[datetime] = None) -> Tuple[bool, str]:
+    """Yeni yüklemelerde üretim tarihi zorunlu; sağlama toplamı varsa doğrulanır."""
+    now = now or datetime.now(timezone.utc)
+    gen = parse_generated_at(payload.get("generated_at"))
+    if gen is None:
+        return False, "'generated_at' (üretim tarihi, YYYY-AA-GG) zorunlu"
+    if gen > now + timedelta(days=1):
+        return False, "'generated_at' gelecekte olamaz"
+    claimed = payload.get("sha256")
+    if claimed not in (None, ""):
+        if not isinstance(claimed, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", claimed):
+            return False, "'sha256' 64 karakterlik onaltılık değer olmalı"
+        if claimed.lower() != compute_checksum(payload):
+            return False, "Paket bütünlük doğrulaması başarısız: 'sha256' içerikle eşleşmiyor"
+    return True, ""
+
+
+def _records(kind: str, payload: Dict[str, Any]) -> List[Any]:
+    if kind == "cve_feed":
+        return payload.get("advisories") or []
+    if kind == "kb_feed":
+        return payload.get("articles") or []
+    return []
+
+
 def validate_package(kind: str, payload: Any) -> Tuple[bool, str, int]:
     if not isinstance(payload, dict):
         return False, "JSON nesnesi bekleniyor", 0
@@ -107,24 +159,35 @@ def validate_package(kind: str, payload: Any) -> Tuple[bool, str, int]:
         for a in items:
             if not isinstance(a, dict) or not a.get("id") or not isinstance(a.get("products"), list):
                 return False, "Her advisory 'id' ve 'products' içermeli", 0
-        return True, "", len(items)
-    if kind == "kb_feed":
+        n = len(items)
+    elif kind == "kb_feed":
         items = payload.get("articles")
         if not isinstance(items, list):
             return False, "'articles' listesi zorunlu", 0
         for a in items:
             if not isinstance(a, dict) or not a.get("id") or not a.get("title"):
                 return False, "Her makale 'id' ve 'title' içermeli", 0
-        return True, "", len(items)
-    if kind == "upgrade_matrix":
+        n = len(items)
+    elif kind == "upgrade_matrix":
         if not isinstance(payload.get("products"), dict):
             return False, "'products' nesnesi zorunlu", 0
-        return True, "", len(payload["products"]) + len(payload.get("hardware") or [])
-    return False, f"Bilinmeyen paket türü: {kind}", 0
+        n = len(payload["products"]) + len(payload.get("hardware") or [])
+    else:
+        return False, f"Bilinmeyen paket türü: {kind}", 0
+    bad = rsrc.offenders(_records(kind, payload))
+    if bad:
+        shown = "; ".join(bad[:5]) + (f" … (+{len(bad) - 5})" if len(bad) > 5 else "")
+        return False, ("Kayıt bağlantıları yalnız resmi üretici alan adlarına (https) izin verir; "
+                       f"{len(bad)} kayıt reddedildi, paket yüklenmedi: {shown}"), 0
+    return True, "", n
 
 
-def save_package(db: Session, kind: str, payload: Dict[str, Any], *, user: str = "") -> Dict[str, Any]:
+def save_package(db: Session, kind: str, payload: Dict[str, Any], *, user: str = "",
+                 now: Optional[datetime] = None) -> Dict[str, Any]:
     ok, err, n = validate_package(kind, payload)
+    if not ok:
+        raise ValueError(err)
+    ok, err = validate_meta(payload, now=now)
     if not ok:
         raise ValueError(err)
     row = db.query(InfraReferenceData).filter(InfraReferenceData.kind == kind).first()
@@ -135,20 +198,85 @@ def save_package(db: Session, kind: str, payload: Dict[str, Any], *, user: str =
     row.item_count = n
     row.source_label = str(payload.get("source") or "")[:255]
     row.uploaded_by = user
-    row.uploaded_at = datetime.now(timezone.utc)
+    row.uploaded_at = now or datetime.now(timezone.utc)
+    row.version = (str(payload.get("version"))[:64] if payload.get("version") not in (None, "") else None)
+    row.generated_at = parse_generated_at(payload.get("generated_at"))
+    row.sha256 = compute_checksum(payload)
+    row.integrity = "verified" if payload.get("sha256") else "computed_only"
     db.flush()
-    return {"kind": kind, "item_count": n, "source": row.source_label}
+    return {"kind": kind, "item_count": n, "source": row.source_label,
+            "generated_at": row.generated_at.isoformat(), "sha256": row.sha256, "integrity": row.integrity}
 
 
-def package_status(db: Session) -> List[Dict[str, Any]]:
+def delete_package(db: Session, kind: str) -> bool:
+    """Paketi siler. Mevcut bulgulara DOKUNMAZ: bir sonraki turda 'doğrulanamayan' olarak korunurlar."""
+    row = db.query(InfraReferenceData).filter(InfraReferenceData.kind == kind).first()
+    if row is None:
+        return False
+    db.delete(row)
+    db.flush()
+    return True
+
+
+def _aware(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def pack_age(row: Any, now: Optional[datetime] = None) -> Tuple[Optional[float], Optional[str], Optional[datetime]]:
+    """(yaş_gün, temel, referans_zamanı). Temel: 'generated_at' (tercih) | 'uploaded_at' | None."""
+    now = now or datetime.now(timezone.utc)
+    ref, basis = _aware(getattr(row, "generated_at", None)), "generated_at"
+    if ref is None:
+        ref, basis = _aware(getattr(row, "uploaded_at", None)), "uploaded_at"
+    if ref is None:
+        return None, None, None
+    return max(0.0, (now - ref).total_seconds() / 86400.0), basis, ref
+
+
+def pack_info(db: Session, kind: str) -> Optional[Dict[str, Any]]:
+    """Bulgu kanıtına yazılan paket künyesi (paket sonradan silinse de 'son bilinen durum' etiketi için)."""
+    row = db.query(InfraReferenceData).filter(InfraReferenceData.kind == kind).first()
+    if row is None:
+        return None
+    gen = _aware(getattr(row, "generated_at", None))
+    return {"kind": kind, "version": getattr(row, "version", None),
+            "generated_at": gen.date().isoformat() if gen else None,
+            "uploaded_at": _aware(row.uploaded_at).date().isoformat() if row.uploaded_at else None,
+            "sha256": getattr(row, "sha256", None)}
+
+
+def package_status(db: Session, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    now = now or datetime.now(timezone.utc)
     rows = {r.kind: r for r in db.query(InfraReferenceData).all()}
-    return [{
-        "kind": k, "loaded": k in rows,
-        "item_count": rows[k].item_count if k in rows else 0,
-        "source": rows[k].source_label if k in rows else None,
-        "uploaded_by": rows[k].uploaded_by if k in rows else None,
-        "uploaded_at": rows[k].uploaded_at.isoformat() if k in rows and rows[k].uploaded_at else None,
-    } for k in KINDS]
+    out = []
+    for k in KINDS:
+        r = rows.get(k)
+        age, basis, _ = pack_age(r, now) if r else (None, None, None)
+        if r is None:
+            state = "missing"
+        elif age is None:
+            state = "unknown"
+        else:
+            state = "stale" if age > FEED_STALE_DAYS else "ok"
+        gen = _aware(getattr(r, "generated_at", None)) if r else None
+        out.append({
+            "kind": k, "loaded": r is not None, "state": state,
+            "item_count": r.item_count if r else 0,
+            "source": r.source_label if r else None,
+            "uploaded_by": r.uploaded_by if r else None,
+            "uploaded_at": r.uploaded_at.isoformat() if r and r.uploaded_at else None,
+            "version": getattr(r, "version", None) if r else None,
+            "generated_at": gen.isoformat() if gen else None,
+            "age_days": round(age, 1) if age is not None else None,
+            "age_basis": basis,
+            "stale_threshold_days": FEED_STALE_DAYS,
+            "sha256": getattr(r, "sha256", None) if r else None,
+            "integrity": getattr(r, "integrity", None) if r else None,
+            "sources": rsrc.verified_sources(k),
+        })
+    return out
 
 
 # ── Envanter → ürün sürümleri ────────────────────────────────────────────────
@@ -214,6 +342,7 @@ def vuln_findings(db: Session, platform: str, collected: Dict[str, Any]) -> Opti
     feed = get_ref(db, "cve_feed")
     if not feed:
         return None
+    pack = pack_info(db, "cve_feed")
     targets = product_targets(platform, collected)
     out: List[FindingDraft] = []
     for adv in feed.get("advisories") or []:
@@ -231,7 +360,9 @@ def vuln_findings(db: Session, platform: str, collected: Dict[str, Any]) -> Opti
                     evidence={"advisory": adv["id"], "cve": cves, "cvss": adv.get("cvss"),
                               "installed": t["version"], "build": t.get("build"),
                               "fixed": prod.get("fixed"), "fixed_build": prod.get("fixed_build"),
-                              "url": adv.get("url"), "workaround": adv.get("workaround")},
+                              "url": rsrc.safe_source_url(rsrc.record_url(adv)),
+                              "source_url": rsrc.safe_source_url(rsrc.record_url(adv)),
+                              "workaround": adv.get("workaround"), "pack": pack},
                     detail=(f"Kurulu {t['version']} ({t.get('build') or '-'}) → düzeltme {prod.get('fixed') or '?'}"
                             + (f" / build {prod.get('fixed_build')}" if prod.get("fixed_build") else "")),
                     cluster_name=t.get("cluster"),
@@ -249,6 +380,7 @@ def known_issue_findings(db: Session, platform: str, source_id: Optional[int],
     feed = get_ref(db, "kb_feed")
     if not feed:
         return None
+    pack = pack_info(db, "kb_feed")
     targets = product_targets(platform, collected)
     events = _event_text(db, source_id, platform)
     out: List[FindingDraft] = []
@@ -276,8 +408,9 @@ def known_issue_findings(db: Session, platform: str, source_id: Optional[int],
             sev = "high" if matched else _SEV.get(str(art.get("severity") or "").lower(), "low")
             out.append(FindingDraft(
                 f"kb:{art['id']}", t["entity_kind"], t["entity_ref"], t["entity_name"], "fail",
-                evidence={"article": art["id"], "url": art.get("url"), "installed": t["version"],
-                          "symptom_matches": matched, "symptom_matched": bool(matched)},
+                evidence={"article": art["id"], "url": rsrc.safe_source_url(rsrc.record_url(art)),
+                          "source_url": rsrc.safe_source_url(rsrc.record_url(art)), "installed": t["version"],
+                          "symptom_matches": matched, "symptom_matched": bool(matched), "pack": pack},
                 detail=("Belirti olaylarda görüldü" if matched else "Sürüm etkileniyor; belirti görülmedi"),
                 cluster_name=t.get("cluster"), severity=sev,
                 title=f"{art['id']}: {art['title']}"[:480],
@@ -286,7 +419,8 @@ def known_issue_findings(db: Session, platform: str, source_id: Optional[int],
     return out
 
 
-def upgrade_findings(platform: str, collected: Dict[str, Any], matrix: Optional[Dict[str, Any]]) -> List[FindingDraft]:
+def upgrade_findings(platform: str, collected: Dict[str, Any], matrix: Optional[Dict[str, Any]],
+                     pack: Optional[Dict[str, Any]] = None) -> List[FindingDraft]:
     out: List[FindingDraft] = []
     targets = product_targets(platform, collected)
     hcl = collected.get("hcl") or {}
@@ -312,7 +446,7 @@ def upgrade_findings(platform: str, collected: Dict[str, Any], matrix: Optional[
                     out.append(FindingDraft(
                         "upg:eol", t["entity_kind"], t["entity_ref"], t["entity_name"],
                         "fail" if days <= EOL_WARN_DAYS else "pass",
-                        evidence={"installed": t["version"], "eol_date": str(eol), "days_left": days},
+                        evidence={"installed": t["version"], "eol_date": str(eol), "days_left": days, "pack": pack},
                         detail=(f"Destek bitti ({eol})" if days < 0 else f"Destek bitişine {days} gün ({eol})"),
                         cluster_name=t.get("cluster"), severity="critical" if days < 0 else "high",
                         title=f"{t['product']} {t['version']} destek sonu", refs=[ISO_VULN],
@@ -340,7 +474,8 @@ def upgrade_findings(platform: str, collected: Dict[str, Any], matrix: Optional[
                 out.append(FindingDraft(
                     "upg:target", t["entity_kind"], t["entity_ref"], t["entity_name"],
                     "fail" if behind else "pass",
-                    evidence={"installed": t["version"], "target": target, "path": path, "hardware_blockers": blockers},
+                    evidence={"installed": t["version"], "target": target, "path": path, "hardware_blockers": blockers,
+                              "pack": pack},
                     detail=(f"{t['version']} → {target}" + (f" (ara: {path.get('via')})" if path and path.get("via") else "")
                             + (" · donanım engeli" if blockers else "")),
                     cluster_name=t.get("cluster"),
@@ -366,33 +501,148 @@ def upgrade_findings(platform: str, collected: Dict[str, Any], matrix: Optional[
     return out
 
 
-def feed_age_findings(db: Session, *, now: Optional[datetime] = None) -> List[FindingDraft]:
-    """Yüklü offline paketlerin yaşı: > FEED_STALE_DAYS gün → "güncel değil".
+# Paket yokluğunda "değerlendirilemedi" bulguları (asla pass değil).
+_UNASSESSED = {
+    "cve_feed": ("ref.vuln.unassessed", "Zafiyet değerlendirmesi yapılamadı: zafiyet paketi yüklü değil",
+                 "Zafiyet paketi (cve_feed) yüklenene kadar sürüm eşleştirmesi yapılamaz. Bu, 'zafiyet yok' anlamına gelmez."),
+    "kb_feed": ("ref.kb.unassessed", "Bilinen sorun eşleştirmesi yapılamadı: bilinen sorunlar paketi yüklü değil",
+                "Bilinen sorunlar paketi (kb_feed) yüklenene kadar eşleştirme yapılamaz. Bu, 'bilinen sorun yok' anlamına gelmez."),
+    "upgrade_matrix": ("ref.upgrade.unassessed", "Yükseltme değerlendirmesi yapılamadı: yükseltme matrisi yüklü değil",
+                       "Yükseltme matrisi (upgrade_matrix) yüklenene kadar EOL/hedef sürüm değerlendirilemez."),
+}
+# Paket yokluğunda KORUNAN (kapatılmayan) mevcut bulgu aileleri: kind → check_id önekleri
+PRESERVED_ON_MISSING = {"cve_feed": ("vuln:",), "kb_feed": ("kb:",), "upgrade_matrix": ("upg:eol", "upg:target")}
+STALE_KIND = "ref_pack_missing"
 
-    Yüklenmemiş paket için bulgu üretilmez (paket durumu UI'da ayrıca görünür);
-    eski bir CVE/KB listesi "zafiyet yok" yanılgısı yarattığı için uyarılır.
+
+def unassessed_findings(kind: str) -> List[FindingDraft]:
+    cid, title, rec = _UNASSESSED[kind]
+    return [FindingDraft(
+        cid, "cluster", f"feed:{kind}", kind, RESULT_NOT_MEASURABLE,
+        evidence={"kind": kind, "reason": "package_missing"},
+        detail="Paket yüklü değil — sonuç ölçülemedi (başarılı sayılmaz).",
+        title=title, recommendation=rec, refs=[ISO_VULN],
+    )]
+
+
+def mark_pack_missing(db: Session, *, platform: str, source_id: Optional[int], kind: str) -> int:
+    """Paket yokken mevcut aktif FAIL bulgularını 'son bilinen durum' olarak işaretler.
+
+    Bulgular KAPANMAZ, sayımdan ÇIKMAZ; yalnız `stale=True` + kanıta etiket yazılır.
+    Yeniden değerlendirme (yeni paket) `persist_findings` ile bayrağı ve etiketi temizler.
+    """
+    from app.models.infra_finding import InfraFinding
+    from sqlalchemy import or_
+    prefixes = PRESERVED_ON_MISSING[kind]
+    q = db.query(InfraFinding).filter(
+        InfraFinding.platform == platform, InfraFinding.active.is_(True), InfraFinding.result == RESULT_FAIL,
+        or_(*[InfraFinding.check_id.like(p + "%") for p in prefixes]),
+    )
+    q = q.filter(InfraFinding.source_id == source_id) if source_id is not None else q.filter(InfraFinding.source_id.is_(None))
+    n = 0
+    for r in q.all():
+        ev = dict(r.evidence or {})
+        pk = ev.get("pack") or {}
+        ver = pk.get("version") or "?"
+        when = pk.get("generated_at") or pk.get("uploaded_at") or "tarih bilinmiyor"
+        ev["stale_kind"] = STALE_KIND
+        ev["stale_note"] = (f"Son bilinen durum: paket v{ver} ({when}) ile tespit edildi, şu an doğrulanamıyor"
+                            if ver != "?" else
+                            f"Son bilinen durum: paket ({when}) ile tespit edildi, şu an doğrulanamıyor")
+        r.evidence = ev
+        r.stale = True
+        n += 1
+    return n
+
+
+def feed_age_findings(db: Session, *, now: Optional[datetime] = None) -> List[FindingDraft]:
+    """Referans paketlerinin yaşı (`ref.feed.stale`): > FEED_STALE_DAYS gün → "güncel değil".
+
+    Yaş, paketin ÜRETİM tarihinden hesaplanır (eski veriyi bugün yüklemek paketi taze göstermez);
+    üretim tarihi yoksa (eski yüklemeler) yükleme zamanı kullanılır ve kanıtta belirtilir.
+    Yüklü ama tarihi hiç belirlenemeyen paket ve YÜKLÜ OLMAYAN paket → not_measurable (asla pass değil).
     """
     now = now or datetime.now(timezone.utc)
     out: List[FindingDraft] = []
+    loaded = set()
     for row in db.query(InfraReferenceData).all():
         if row.kind not in KINDS:
             continue
-        up = row.uploaded_at
-        if up is None:
+        loaded.add(row.kind)
+        age_days, basis, ref = pack_age(row, now)
+        if age_days is None:
+            out.append(FindingDraft(
+                "ref.feed.stale", "cluster", f"feed:{row.kind}", row.kind, RESULT_NOT_MEASURABLE,
+                evidence={"kind": row.kind, "reason": "date_unknown", "source": row.source_label or None},
+                detail=f"{row.kind} paketinin tarihi belirlenemedi — yaş ölçülemedi",
+                title=f"Referans paketi yaşı ölçülemedi: {row.kind}",
+                recommendation="Üretim tarihi ('generated_at') içeren güncel paketi yükleyin.", refs=[ISO_VULN],
+            ))
             continue
-        if up.tzinfo is None:
-            up = up.replace(tzinfo=timezone.utc)
-        age_days = (now - up).total_seconds() / 86400.0
         stale = age_days > FEED_STALE_DAYS
+        what = "üretildi" if basis == "generated_at" else "yüklendi"
         out.append(FindingDraft(
-            "upg:feed_stale", "cluster", f"feed:{row.kind}", row.kind,
+            "ref.feed.stale", "cluster", f"feed:{row.kind}", row.kind,
             RESULT_FAIL if stale else RESULT_PASS,
-            evidence={"kind": row.kind, "uploaded_at": up.isoformat(), "age_days": round(age_days, 1),
-                      "threshold_days": FEED_STALE_DAYS, "source": row.source_label or None},
-            detail=f"{row.kind} paketi {int(age_days)} gün önce yüklendi (eşik {FEED_STALE_DAYS} gün)",
+            evidence={"kind": row.kind, "age_basis": basis, "reference_at": ref.isoformat(),
+                      "uploaded_at": _aware(row.uploaded_at).isoformat() if row.uploaded_at else None,
+                      "age_days": round(age_days, 1), "threshold_days": FEED_STALE_DAYS,
+                      "source": row.source_label or None},
+            detail=f"{row.kind} paketi {int(age_days)} gün önce {what} (eşik {FEED_STALE_DAYS} gün)",
             severity="medium" if stale else "info",
             title=f"Referans paketi güncel değil: {row.kind}",
             recommendation="Güncel CVE/KB/yükseltme paketini 'Paketler & hesaplar' sekmesinden yükleyin.",
             refs=[ISO_VULN],
         ))
+    for kind in KINDS:
+        if kind not in loaded:
+            out.append(FindingDraft(
+                "ref.feed.stale", "cluster", f"feed:{kind}", kind, RESULT_NOT_MEASURABLE,
+                evidence={"kind": kind, "reason": "package_missing"},
+                detail=f"{kind} paketi yüklü değil — yaş ölçülemedi",
+                title=f"Referans paketi yüklü değil: {kind}",
+                recommendation="İlgili referans paketini 'Paketler & hesaplar' sekmesinden yükleyin.", refs=[ISO_VULN],
+            ))
     return out
+
+
+def persist_reference_findings(db: Session, *, platform: str, source_id: Optional[int], source_name: str,
+                               col: Dict[str, Any], run_id: Optional[int] = None,
+                               now: Optional[datetime] = None) -> Dict[str, Any]:
+    """vuln / known_issue / upgrade kategorilerini yazar.
+
+    G.4 kuralı: paket yokluğu HİÇBİR mevcut bulguyu kapatmaz. Paket yoksa yalnız "ölçülemedi" kaydı yazılır
+    (çözüm kapsamı bu kaydın kimliğiyle sınırlı); eski FAIL bulgular "son bilinen durum" olarak işaretlenir,
+    sayımda KALIR. Yalnız yeni paketle yeniden değerlendirme (geçti) bulguyu çözer.
+    """
+    from app.services.findings import store
+    kw = dict(platform=platform, source_id=source_id, source_name=source_name, run_id=run_id, now=now)
+    stats: Dict[str, Any] = {}
+
+    vdrafts = vuln_findings(db, platform, col)
+    v_scope = None
+    if vdrafts is None:
+        vdrafts, v_scope = unassessed_findings("cve_feed"), ["ref.vuln.unassessed"]
+        stats["vuln_stale_marked"] = mark_pack_missing(db, platform=platform, source_id=source_id, kind="cve_feed")
+    stats["vuln"] = store.persist_findings(db, categories=("vuln",), drafts=vdrafts, resolve_checks=v_scope, **kw)
+
+    kdrafts = known_issue_findings(db, platform, source_id, col)
+    k_scope = None
+    if kdrafts is None:
+        kdrafts, k_scope = unassessed_findings("kb_feed"), ["ref.kb.unassessed"]
+        stats["known_issue_stale_marked"] = mark_pack_missing(db, platform=platform, source_id=source_id, kind="kb_feed")
+    stats["known_issue"] = store.persist_findings(db, categories=("known_issue",), drafts=kdrafts,
+                                                  resolve_checks=k_scope, **kw)
+
+    matrix = get_ref(db, "upgrade_matrix")
+    udrafts = list(upgrade_findings(platform, col, matrix, pack=pack_info(db, "upgrade_matrix")))
+    u_scope = None
+    if not matrix:
+        udrafts += unassessed_findings("upgrade_matrix")
+        u_scope = ["upg:vlcm_hcl", "ref.upgrade.unassessed", "ref.feed.stale"]
+        stats["upgrade_stale_marked"] = mark_pack_missing(db, platform=platform, source_id=source_id,
+                                                          kind="upgrade_matrix")
+    udrafts += feed_age_findings(db, now=now)
+    stats["upgrade"] = store.persist_findings(db, categories=("upgrade",), drafts=udrafts,
+                                              resolve_checks=u_scope, **kw)
+    return stats

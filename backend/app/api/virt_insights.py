@@ -411,16 +411,19 @@ def baseline(body: BaselineRequest, request: Request, db: Session = Depends(get_
 
 @router.get("/reference")
 def reference_status(db: Session = Depends(get_db), user: User = Depends(_module)):
-    from app.services.virt_reference_checks import package_status
-    return {"packages": package_status(db)}
+    from app.services.reference_sources import allowed_domains
+    from app.services.virt_reference_checks import FEED_STALE_DAYS, package_status
+    return {"packages": package_status(db), "allowed_domains": allowed_domains(),
+            "stale_threshold_days": FEED_STALE_DAYS}
 
 
 @router.get("/reference/{kind}/sample")
 def reference_sample(kind: str, user: User = Depends(_module)):
-    from app.services.virt_reference_samples import SAMPLES
-    if kind not in SAMPLES:
+    from app.services.virt_reference_samples import sample_with_meta
+    d = sample_with_meta(kind)
+    if d is None:
         raise HTTPException(status_code=404, detail="Örnek yok")
-    return SAMPLES[kind]
+    return d
 
 
 @router.post("/reference/{kind}")
@@ -451,8 +454,23 @@ async def reference_upload(kind: str, request: Request, payload: Dict[str, Any] 
             logger.warning("KB RAG ingest: %s", exc)
             rag = {"error": str(exc)}
     _audit(db, user, "virt_insights.reference_upload", f"Referans paketi yüklendi: {kind}", request,
-           kind=kind, items=res["item_count"], source=res["source"])
+           kind=kind, items=res["item_count"], source=res["source"], sha256=res["sha256"], integrity=res["integrity"])
     return {"ok": True, **res, "rag": rag}
+
+
+@router.delete("/reference/{kind}")
+def reference_delete(kind: str, request: Request, db: Session = Depends(get_db),
+                     user: User = Depends(require_role("admin"))):
+    """Paketi siler. Mevcut bulgular KAPANMAZ: sonraki turda "doğrulanamayan" olarak korunur."""
+    from app.services.virt_reference_checks import KINDS, delete_package
+    if kind not in KINDS:
+        raise HTTPException(status_code=400, detail=f"Geçersiz paket türü: {kind}")
+    if not delete_package(db, kind):
+        raise HTTPException(status_code=404, detail="Paket yüklü değil")
+    db.commit()
+    _audit(db, user, "virt_insights.reference_delete", f"Referans paketi silindi: {kind}", request, kind=kind)
+    return {"ok": True, "kind": kind,
+            "note": "Mevcut bulgular kapatılmadı; sonraki turda 'doğrulanamayan' olarak işaretlenecek."}
 
 
 # ── Denetim kanıtı ───────────────────────────────────────────────────────────

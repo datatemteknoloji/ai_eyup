@@ -1,0 +1,163 @@
+{
+ "_meta": {
+  "doc": "Referans paketleri için resmi kaynak bağlantıları ve izinli alan adları. Yalnız 'verified': true olan bağlantılar arayüzde gösterilir. Bağlantı uydurulmaz; doğrulanamayanlar listede kalır ama gizlenir.",
+  "verified_on": "2026-10-13",
+  "verification": "curl -sIL: HTTP 200 + son URL aynı kayıtlı alan adında (yetki/giriş yönlendirmesi yok) + sayfa <title> beklenen başlıkla eşleşiyor"
+ },
+ "allowed_domains": [
+  "broadcom.com",
+  "vmware.com",
+  "redhat.com",
+  "oracle.com",
+  "nist.gov",
+  "cve.org"
+ ],
+ "sources": [
+  {
+   "id": "vmsa",
+   "vendor": "Broadcom/VMware",
+   "packs": [
+    "cve_feed"
+   ],
+   "title_tr": "VMware Güvenlik Duyuruları (VMSA)",
+   "title_en": "VMware Security Advisories (VMSA)",
+   "url": "https://www.broadcom.com/support/vmware-security-advisories",
+   "expected_title": "VMware Security Advisories",
+   "verified": true,
+   "verified_on": "2026-10-13"
+  },
+  {
+   "id": "vmware_interop",
+   "vendor": "Broadcom/VMware",
+   "packs": [
+    "upgrade_matrix"
+   ],
+   "title_tr": "Ürün Birlikte Çalışabilirlik Matrisi",
+   "title_en": "Product Interoperability Matrix",
+   "url": "https://interopmatrix.broadcom.com/Interoperability",
+   "expected_title": "Product Interoperability Matrix",
+   "verified": true,
+   "verified_on": "2026-10-13"
+  },
+  {
+   "id": "vmware_hcl",
+   "vendor": "Broadcom/VMware",
+   "packs": [
+    "upgrade_matrix"
+   ],
+   "title_tr": "Donanım Uyumluluk Kılavuzu (HCL)",
+   "title_en": "Hardware Compatibility Guide",
+   "url": "https://compatibilityguide.broadcom.com/",
+   "expected_title": "Hardware Compatibility Guide",
+   "verified": true,
+   "verified_on": "2026-10-13"
+  },
+  {
+   "id": "redhat_security_updates",
+   "vendor": "Red Hat",
+   "packs": [
+    "cve_feed"
+   ],
+   "title_tr": "Red Hat Güvenlik Güncellemeleri",
+   "title_en": "Red Hat Security Updates",
+   "url": "https://access.redhat.com/security/security-updates",
+   "expected_title": "Security Updates",
+   "verified": true,
+   "verified_on": "2026-10-13"
+  },
+  {
+   "id": "ocp_lifecycle",
+   "vendor": "Red Hat",
+   "packs": [
+    "upgrade_matrix"
+   ],
+   "title_tr": "OpenShift Yaşam Döngüsü",
+   "title_en": "OpenShift Container Platform Life Cycle",
+   "url": "https://access.redhat.com/support/policy/updates/openshift",
+   "expected_title": "OpenShift Container Platform Life Cycle",
+   "verified": true,
+   "verified_on": "2026-10-13"
+  },
+  {
+   "id": "oracle_linux_security",
+   "vendor": "Oracle",
+   "packs": [
+    "cve_feed"
+   ],
+   "title_tr": "Oracle Linux Güvenlik",
+   "title_en": "Oracle Linux Security",
+   "url": "https://linux.oracle.com/security/",
+   "expected_title": "Oracle Linux Security",
+   "verified": true,
+   "verified_on": "2026-10-13"
+  },
+  {
+   "id": "olvm_docs",
+   "vendor": "Oracle",
+   "packs": [
+    "upgrade_matrix"
+   ],
+   "title_tr": "Oracle Linux Virtualization Manager belgeleri",
+   "title_en": "Oracle Linux Virtualization Manager documentation",
+   "url": "https://docs.oracle.com/en/virtualization/oracle-linux-virtualization-manager/",
+   "expected_title": "Oracle Linux Virtualization Manager",
+   "verified": true,
+   "verified_on": "2026-10-13"
+  },
+  {
+   "id": "oracle_cpu",
+   "vendor": "Oracle",
+   "packs": [
+    "cve_feed"
+   ],
+   "title_tr": "Oracle Güvenlik Uyarıları",
+   "title_en": "Oracle Security Alerts",
+   "url": "https://www.oracle.com/security-alerts/",
+   "expected_title": "Critical Patch Updates",
+   "verified": true,
+   "verified_on": "2026-10-13"
+  },
+  {
+   "id": "nvd",
+   "vendor": "NIST",
+   "packs": [
+    "cve_feed"
+   ],
+   "title_tr": "Ulusal Zafiyet Veritabanı (NVD)",
+   "title_en": "National Vulnerability Database (NVD)",
+   "url": "https://nvd.nist.gov/",
+   "expected_title": "NVD",
+   "verified": true,
+   "verified_on": "2026-10-13",
+   "note": "Kullanıcı-aracısız curl bazen Cloudflare \"Attention Required\" sayfası alır; tarayıcı UA ile HTTP 200 + \"NVD - Home\" doğrulandı."
+  },
+  {
+   "id": "broadcom_kb",
+   "vendor": "Broadcom/VMware",
+   "packs": [
+    "kb_feed"
+   ],
+   "title_tr": "Broadcom Bilgi Bankası",
+   "title_en": "Broadcom Knowledge Base",
+   "url": "https://knowledge.broadcom.com/",
+   "expected_title": "",
+   "verified": false,
+   "verified_on": "2026-10-13",
+   "reason": "knowledge.broadcom.com farklı alan adına (support.broadcom.com) yönlendiriyor; kayıtlı alan adında kalmıyor"
+  },
+  {
+   "id": "ocp_update_graph",
+   "vendor": "Red Hat",
+   "packs": [
+    "upgrade_matrix"
+   ],
+   "title_tr": "OpenShift yükseltme yolu aracı",
+   "title_en": "OpenShift upgrade path tool",
+   "url": "https://access.redhat.com/labs/ocpupgradegraph/update_path",
+   "expected_title": "",
+   "verified": false,
+   "verified_on": "2026-10-13",
+   "reason": "giriş sayfasına yönlendiriyor; herkese açık doğrulama yapılamadı"
+  }
+ ]
+}

@@ -169,3 +169,9 @@ class InfraReferenceData(Base):
     source_label = Column(String(255))
     uploaded_by = Column(String(100))
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    # G.4: paket üretim tarihi, sürüm etiketi ve bütünlük (SHA-256). Eski satırlarda NULL.
+    version = Column(String(64))
+    generated_at = Column(DateTime(timezone=True), nullable=True)
+    sha256 = Column(String(64))
+    # verified: pakette beyan edilen sha256 hesaplananla eşleşti; computed_only: pakette sağlama toplamı yok
+    integrity = Column(String(16))

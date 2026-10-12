@@ -15,7 +15,6 @@ SAMPLES = {
                 "severity": "critical",
                 "cvss": 9.8,
                 "title": "Örnek: vCenter Server heap-overflow",
-                "url": "https://support.broadcom.com/...",
                 "workaround": "Varsa geçici çözüm",
                 "products": [
                     {"product": "vcenter", "affected": [">=8.0,<8.0.3"], "fixed": "8.0 U3b", "fixed_build": "24262322"},
@@ -30,7 +29,6 @@ SAMPLES = {
             {
                 "id": "KB-ORNEK-1",
                 "title": "Örnek: Belirli sürümde HA ajanı yeniden başlıyor",
-                "url": "https://knowledge.broadcom.com/...",
                 "severity": "medium",
                 "products": [{"product": "esxi", "affected": [">=8.0.2,<8.0.3"]}],
                 "event_patterns": ["fdm.*restart", "HA agent.*unreachable"],
@@ -58,3 +56,24 @@ SAMPLES = {
         ],
     },
 }
+
+
+def sample_with_meta(kind: str):
+    """Örnek + zorunlu üstveri: sürüm, üretim tarihi (bugün) ve içerik SHA-256'sı.
+
+    Bağlantı (`source_url`) örneklere KONMAZ — uydurma bağlantı üretilmez; operatör yalnız resmi üretici
+    alan adlarındaki (https) gerçek bağlantıları ekleyebilir.
+    """
+    import copy
+    from datetime import date
+    if kind not in SAMPLES:
+        return None
+    from app.services.virt_reference_checks import compute_checksum
+    d = copy.deepcopy(SAMPLES[kind])
+    d["version"] = "ornek-1"
+    d["generated_at"] = date.today().isoformat()
+    d["_aciklama"] = ("Zorunlu: generated_at (YYYY-AA-GG). İsteğe bağlı: sha256 = bu dosyadan 'sha256' alanı çıkarılıp "
+                      "anahtarlar sıralı, boşluksuz (separators=(',',':')), ensure_ascii=False JSON'un SHA-256'sı. "
+                      "Kayıtlara 'source_url' yalnız resmi üretici alan adlarından (https) eklenebilir.")
+    d["sha256"] = compute_checksum(d)
+    return d

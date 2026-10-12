@@ -25,6 +25,9 @@ export type Finding = {
   title: string
   detail: string | null
   evidence: Record<string, unknown> | null
+  stale?: boolean
+  /** Referans paketi yokken korunan bulgu: "Son bilinen durum: paket vX (tarih) ile tespit edildi, şu an doğrulanamıyor". */
+  stale_note?: string | null
   recommendation: string | null
   refs: string[] | null
   first_seen: string | null
@@ -318,13 +321,17 @@ export function FindingsTable({ base, rows, showPlatform = true, emptyText }: {
                   <td className="px-3 py-2 font-mono text-xs text-slate-300">{f.entity_name}{f.cluster_name && f.cluster_name !== f.entity_name ? <span className="text-slate-500"> · {f.cluster_name}</span> : null}</td>
                   {showPlatform && <td className="px-3 py-2 text-xs text-slate-400">{f.source_name} <span className="text-slate-600">({f.platform})</span></td>}
                   <td className="px-3 py-2 text-xs text-slate-400 max-w-[28rem] truncate" title={f.detail || ''}>{f.detail || '—'}</td>
-                  <td className="px-3 py-2"><ResultBadge result={f.result} /></td>
+                  <td className="px-3 py-2"><ResultBadge result={f.result} />{f.stale && f.stale_note && <span className="ml-1.5 text-[10px] text-amber-200 border border-amber-500/30 bg-amber-500/10 rounded px-1 whitespace-nowrap" title={f.stale_note} data-unverifiable>{t('g_ref_unverifiable')}</span>}</td>
                 </tr>
                 {isOpen && (
                   <tr className="border-b border-white/[0.04] bg-black/20">
                     <td />
                     <td colSpan={showPlatform ? 6 : 5} className="px-3 py-3 space-y-2">
+                      {f.stale && f.stale_note && <div className="text-xs text-amber-200">{f.stale_note}</div>}
                       {f.recommendation && <div className="text-xs text-slate-300"><span className="text-slate-500">{t('vi_recommendation')}: </span>{f.recommendation}</div>}
+                      {typeof f.evidence?.source_url === 'string' && f.evidence.source_url && (
+                        <div className="text-xs"><span className="text-slate-500">{t('g_ref_source_link')}: </span><a href={f.evidence.source_url as string} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline break-all">{f.evidence.source_url as string}</a></div>
+                      )}
                       {f.refs && f.refs.length > 0 && <div className="text-[11px] text-slate-500">{f.refs.join(' · ')}</div>}
                       {f.evidence && Object.keys(f.evidence).length > 0 && (
                         <pre className="text-[11px] font-mono text-slate-400 bg-black/30 rounded p-2 max-h-56 overflow-auto whitespace-pre-wrap">{JSON.stringify(f.evidence, null, 2)}</pre>

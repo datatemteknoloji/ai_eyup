@@ -36,13 +36,17 @@ def test_feed_age_stale_and_fresh():
     by = {d.entity_name: d for d in drafts}
     assert by["cve_feed"].result == RESULT_FAIL
     assert by["kb_feed"].result == RESULT_PASS
-    assert by["cve_feed"].check_id.startswith("upg:")
+    assert by["cve_feed"].check_id == "ref.feed.stale"
+    # yüklü olmayan paket → ölçülemedi (asla pass değil)
+    assert by["upgrade_matrix"].result == "not_measurable"
 
 
-def test_feed_age_ignores_unknown_kind_and_missing_date():
+def test_feed_age_ignores_unknown_kind_and_unknown_date_is_not_measurable():
     rows = [SimpleNamespace(kind="other", uploaded_at=datetime.now(timezone.utc), source_label=""),
             SimpleNamespace(kind="cve_feed", uploaded_at=None, source_label="")]
-    assert vrc.feed_age_findings(_DB(rows)) == []
+    drafts = vrc.feed_age_findings(_DB(rows))
+    assert {d.entity_name for d in drafts} == {"cve_feed", "kb_feed", "upgrade_matrix"}
+    assert all(d.result == "not_measurable" for d in drafts)
 
 
 def test_consolidation_check_registered_and_emitted():

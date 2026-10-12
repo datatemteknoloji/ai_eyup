@@ -22,7 +22,7 @@ from sqlalchemy.orm import sessionmaker
 ROOT_TABLES = (
     "integration_instances", "bk_jobs", "bk_sessions", "bk_repositories", "bk_protected_objects",
     "bk_restore_points", "bk_proxies", "bk_rpo_policies", "bk_restore_tests", "servers", "infra_findings", "infra_finding_exceptions", "infra_check_runs",
-    "app_settings",
+    "app_settings", "infra_reference_data",
 )
 
 _STATE: dict = {}

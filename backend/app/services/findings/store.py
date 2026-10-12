@@ -186,6 +186,19 @@ def exception_keys(db: Session) -> Dict[Tuple[str, Optional[int], str, str], Inf
     return out
 
 
+def _safe_evidence(ev: Any) -> Dict[str, Any]:
+    """Gösterimde kanıt bağlantılarını süz: izinli resmi alan adı değilse (eski/yer tutucu) gizle."""
+    ev = dict(ev or {})
+    if ev.get("url") or ev.get("source_url"):
+        from app.services.reference_sources import safe_source_url
+        ok = safe_source_url(ev.get("source_url") or ev.get("url"))
+        if not ok:
+            ev["url_hidden"] = True
+        ev["url"] = ok
+        ev["source_url"] = ok
+    return ev
+
+
 def finding_to_dict(row: InfraFinding, exc: Optional[InfraFindingException] = None,
                     locale: str = "tr") -> Dict[str, Any]:
     cdef = get_check(row.check_id)
@@ -209,8 +222,9 @@ def finding_to_dict(row: InfraFinding, exc: Optional[InfraFindingException] = No
         "severity": row.severity,
         "title": title,
         "detail": row.detail,
-        "evidence": row.evidence or {},
+        "evidence": _safe_evidence(row.evidence),
         "stale": bool(getattr(row, "stale", False)),
+        "stale_note": (row.evidence or {}).get("stale_note") if getattr(row, "stale", False) else None,
         "data_age_sec": getattr(row, "data_age_sec", None),
         "recommendation": rec,
         "refs": row.refs or [],
@@ -269,7 +283,10 @@ def query_findings(
     if result and result != "all":
         q = q.filter(InfraFinding.result == result)
     if check_id:
-        q = q.filter(InfraFinding.check_id == check_id)
+        from app.services.findings.registry import CHECK_ID_ALIASES
+        ids = {check_id, CHECK_ID_ALIASES.get(check_id, check_id)}
+        ids |= {old for old, new in CHECK_ID_ALIASES.items() if new in ids}
+        q = q.filter(InfraFinding.check_id.in_(sorted(ids)))
     if entity:
         like = f"%{entity.strip()}%"
         q = q.filter(or_(InfraFinding.entity_name.ilike(like), InfraFinding.entity_ref.ilike(like)))
@@ -336,6 +353,7 @@ def summarize_findings(db: Session, *, platforms: Optional[Sequence[str]] = None
     not_measurable = 0
     not_applicable = 0
     passed = 0
+    unverifiable = 0
     last_seen: Optional[datetime] = None
     for r in q.all():
         if (r.platform, r.source_id, r.entity_ref, r.check_id) in exc:
@@ -356,12 +374,17 @@ def summarize_findings(db: Session, *, platforms: Optional[Sequence[str]] = None
         c = by_cat.setdefault(r.category, {"total": 0})
         c["total"] += 1
         c[r.severity] = c.get(r.severity, 0) + 1
+        # Referans paketi yokluğunda "son bilinen durum" olarak korunan bulgu: sayıma ve skora
+        # DAHİL kalır (paket yokluğu bulguyu kapatmaz); yalnız ayrıca "doğrulanamayan" diye sayılır.
+        if getattr(r, "stale", False) and (r.evidence or {}).get("stale_kind") == "ref_pack_missing":
+            unverifiable += 1
     return {
         "by_category": by_cat,
         "excepted": excepted,
         "not_measurable": not_measurable,
         "not_applicable": not_applicable,
         "passed": passed,
+        "unverifiable": unverifiable,
         "closure": closure_metrics(db, platforms=platforms),
         "as_of": last_seen.isoformat() if last_seen else None,
     }
