@@ -68,6 +68,7 @@ RULES: List[Rule] = [
     _ANY("/audit"), _ANY("/platform"), _ANY("/platform-update"), _ANY("/settings"),
     # Capability keşfi (backup vb.) — menü görünürlüğü; tüm kimlik doğrulanmış kullanıcılar
     _ANY("/capabilities"),
+    _ANY("/methods"),   # yöntem kaydı (Dilim T) — tüm kimlik doğrulanmış kullanıcılar
     # Yalnız admin sayfalarının kullandığı uçlar (AuditLog, Ayarlar)
     _ADMIN("/tasks"), _ADMIN("/rag"), _ADMIN("/mcp"),
 

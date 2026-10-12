@@ -111,6 +111,13 @@ try:
 except Exception as e:
     logger.error(f"Could not load capabilities router: {e}", exc_info=True)
 
+# Yöntem kaydı (Dilim T): rozet/(i) içeriği + "Nasıl hesaplıyoruz?" sayfası
+try:
+    from app.api import methods as methods_api
+    api_router.include_router(methods_api.router, prefix="/methods", tags=["methods"])
+except Exception as e:
+    logger.error(f"Could not load methods router: {e}", exc_info=True)
+
 # Opsiyonel yedekleme/DR sağlayıcı yapılandırması (modül: integrations, yalnız admin)
 try:
     from app.api import backup_integrations

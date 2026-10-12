@@ -15,7 +15,10 @@ def test_knowledge_and_chitchat_hidden():
     assert score_evidence_badge(kind="knowledge")["level"] == HIDDEN
     assert score_evidence_badge(kind="planning")["level"] == HIDDEN
     assert score_evidence_badge(kind="planning_clarify")["level"] == HIDDEN
-    assert evidence_sse_field(score_evidence_badge(kind="knowledge")) == {}
+    # Dilim T.3: kavramsal yanıtta rozet yok ama "AI genel bilgisi" işareti var; selamda hiçbiri
+    assert evidence_sse_field(score_evidence_badge(kind="chitchat")) == {}
+    ev = evidence_sse_field(score_evidence_badge(kind="knowledge"))["evidence"]
+    assert ev["level"] == HIDDEN and ev["general"] is True
 
 
 

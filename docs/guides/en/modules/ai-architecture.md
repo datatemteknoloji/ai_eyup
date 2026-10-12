@@ -47,6 +47,8 @@ Settings → About → **AI Architecture** prints this text as PDF. A stale rule
 
 **Centrify context/tools:** Context from Centrify Postgres. Sync prefers one WinRM `list_zone_inventory` call per zone (roles+rights+login, commands, assignments, computers, unix profiles, computer roles) with `sync_throttle` (min interval, zone delay, retry). Calculators in `query_service.py`: effective access, login diagnose, expiring assignments, `find_similar_roles`, `find_similar_commands`, `explain_role`, `explain_command`. Chat tools fence data as `<<<CENTRIFY_TOOL_DATA>>>`. REST `/centrify-mgmt/query/*`. Auth: `require_module("level1")`. UI: `CentrifyPage` FAB + markdown.
 
+
+**Method transparency (Slice T):** Every finding/card/metric/scenario result on screen carries a method-class badge (Data, Calculation, Forecast, Rule, Matching, AI) plus an (i); the content comes from a single source, `backend/app/services/method_registry.py` (`GET /api/v1/methods`; ids shared with findings `check_id`, chat tools as `tool:<name>`). AI-generated text (RCA, log analysis, event analysis, chat) is shown separately in the UI via `AiBlock` (“AI summary” label + different background; backend numbers are never mixed into the same box) with the note “The text was written by AI. Numbers and results come from the backend; AI does not change them.” The “How do we calculate?” page (`/methods`) is generated from the registry. An unregistered findings check, READ_ONLY chat tool or component id fails CI (`test_method_registry.py`, `methodRegistry.test.ts`). Forecasts are given as ranges; “AI predicted/detected” wording is forbidden for non-AI methods.
 ## 1.2 Decision / planning
 
 | Component | Dosya | Function | Görev | Input | Output | Karar yöntemi |
@@ -218,7 +220,7 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 - Çok adımlı planner (görev grafı) yok; “planner” keyword + max_steps
 - Tool sonucu için formal sufficiency checker yok (LLM “yeter” der veya max_steps biter)
 - Cross-domain otomatik correlation motoru yok (`virt_bottleneck`, `cross_entity_match`, join şartlı `linux_virt_io_correlate` hariç)
-- No model confidence score. Unified has an evidence badge (`chat_evidence_badge`: high/medium/low; hidden on conceptual)
+- No model confidence score. Unified has an evidence badge (`chat_evidence_badge`: high/medium/low; hidden on conceptual). The badge payload also carries `sources` (tools called this turn + `method_registry` method class + time → UI “Source: virt_capacity_simulate (Calculation), 23:31”) and `general` (no tool/evidence → “General AI knowledge — not taken from your environment”). The system prompt has a NUMBER RULE: the LLM never produces numbers/ratios/dates/RPO-RTO/forecasts/placements/scenario results, it only relays values from tool results, and says “no data” otherwise.
 - Hallucination için groundedness scorer yok
 - Rerank sonrası relevance eşiği ile “RAG kullanma” kararı yok
 
@@ -531,7 +533,7 @@ Canlı cellcli/ASMCMD yok. `connection_config` tool çıktısına girmez.
 
 **Tool fail:** `ok:false` + error JSON; LLM devam eder veya “canlı sorguda kayıt dönmedi”. Aynı çağrı 2 kez sonra blok.
 
-**No data:** `data_status` (SUCCESS / SUCCESS_EMPTY / FAILED / TIMEOUT / NOT_QUERIED / STALE); collection_summary `STATUS=`; prompt ban; nudge; virt+Unified final retry; coverage miss (Settings → About); Unified evidence badge (high/medium/low; hidden on conceptual — not model confidence).
+**No data:** `data_status` (SUCCESS / SUCCESS_EMPTY / FAILED / TIMEOUT / NOT_QUERIED / STALE); collection_summary `STATUS=`; prompt ban; nudge; virt+Unified final retry; coverage miss (Settings → About); Unified evidence badge (high/medium/low; hidden on conceptual — not model confidence; payload carries `sources` + `general`).
 
 **“Live data unavailable”:** İngilizce sabit string yok. Üretilen Türkçe kalıplar:
 
@@ -622,7 +624,7 @@ Prompt büyümesi: tool text 48k, OCP pod TSV şişebilir, multi-domain context 
 
 - Validation: NLQ schema; weak in chat; Unified evidence badge (not NLI/groundedness)
 - Hallucination: prompt bans + virt retry + sanitize; no groundedness scorer
-- Source/evidence: tool names on SSE; Unified badge (`meta.evidence`); in-text “vcenter/ssh/ocp” label request in prompt
+- Source/evidence: tool names on SSE; Unified badge (`meta.evidence`, `sources[{tool,class,at}]`, `general`); in-text “vcenter/ssh/ocp” label request in prompt
 - Timestamp: virt `as_of` on some handlers; no model confidence %
 
 ---

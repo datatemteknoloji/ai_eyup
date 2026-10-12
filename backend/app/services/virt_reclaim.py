@@ -333,6 +333,7 @@ def build_reclaim(db: Session, *, hypervisor_id: Optional[int] = None, platform:
                                         + summary["orphans"]["size_gb"] + summary["isos"]["size_gb"], 1)
     return {
         "ok": True,
+        "computed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # Dilim T: rozet (i) zamanı
         "summary": summary,
         **vm,
         "snapshots": snap_findings,

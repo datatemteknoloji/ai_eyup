@@ -47,6 +47,8 @@ Ayarlar → Hakkında → **AI Mimari** bu metni PDF yapar. Kural ile kod çeli�
 
 **Centrify context/tool özeti:** `_gather_centrify_context` zone başına roller (password/sso/mfa + komutlar), komutlar, computers, atamalar. Boş=0; parent miras yok. Sync: zone başına tek `list_zone_inventory` WinRM çağrısı (rol+rights+login, komut, atama, host, unix, computer role); `sync_throttle` (min aralık + zone delay + retry). Hesaplayıcılar `query_service.py`: `resolve_effective_access`, `diagnose_login_failure`, `find_expiring_assignments`, `find_similar_roles`, `find_similar_commands`, `explain_role`, `explain_command`. Chat tool → `<<<CENTRIFY_TOOL_DATA>>>`. REST `/centrify-mgmt/query/*`. Auth: `require_module("level1")`. Prompt: HTML yasak. UI: `CentrifyPage` FAB + markdown.
 
+
+**Yöntem şeffaflığı (Dilim T):** Ekrandaki her bulgu/kart/metrik/senaryo sonucu bir yöntem sınıfı rozeti (Veri, Hesap, Tahmin, Kural, Eşleştirme, AI) + (i) taşır; içerik tek kaynaktan `backend/app/services/method_registry.py` gelir (`GET /api/v1/methods`; findings `check_id` ile aynı kimlikler, sohbet tool’ları `tool:<ad>`). AI üretimli metinler (RCA, log analizi, olay analizi, sohbet) UI’da `AiBlock` ile ayrı gösterilir (“AI özeti” etiketi + farklı zemin; backend sayıları aynı kutuya karışmaz) ve “Metin AI tarafından yazıldı. Sayılar ve sonuç backend’den gelir; AI bunları değiştirmez.” notunu taşır. “Nasıl hesaplıyoruz?” sayfası (`/methods`) kayıttan otomatik üretilir. Kayıtsız findings check’i, READ_ONLY sohbet tool’u veya bileşen id’si CI’yi kırar (`test_method_registry.py`, `methodRegistry.test.ts`). Tahmin sonuçları aralık olarak verilir; AI olmayan yöntemlerde “AI öngördü/tespit etti” dili yasaktır.
 ## 1.2 Karar / planlama
 
 | Component | Dosya | Function | Görev | Input | Output | Karar yöntemi |
@@ -218,7 +220,7 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 - Çok adımlı planner (görev grafı) yok; “planner” keyword + max_steps
 - Tool sonucu için formal sufficiency checker yok (LLM “yeter” der veya max_steps biter)
 - Cross-domain otomatik correlation motoru yok (`virt_bottleneck`, `cross_entity_match`, join şartlı `linux_virt_io_correlate` hariç)
-- Model confidence skoru yok. Unified’da kanıt rozeti var (`chat_evidence_badge`: high/medium/low; kavramsal gizli)
+- Model confidence skoru yok. Unified’da kanıt rozeti var (`chat_evidence_badge`: high/medium/low; kavramsal gizli). Rozet payload’ı ayrıca `sources` (bu turda çağrılan araçlar + `method_registry` yöntem sınıfı + zaman → UI “Kaynak: virt_capacity_simulate (Hesap), 23:31”) ve `general` (araç/kanıt yok → “AI genel bilgisi — ortamınızdan alınmadı”) taşır. Sistem prompt’unda SAYI KURALI: LLM sayı/oran/tarih/RPO-RTO/tahmin/yerleşim/senaryo sonucu üretmez, yalnız araç sonucundaki değeri aktarır; yoksa “veri yok” der.
 - Hallucination için groundedness scorer yok
 - Rerank sonrası relevance eşiği ile “RAG kullanma” kararı yok
 
@@ -529,7 +531,7 @@ Canlı cellcli/ASMCMD yok. `connection_config` tool çıktısına girmez.
 
 **Tool fail:** `ok:false` + error JSON; LLM devam eder veya “canlı sorguda kayıt dönmedi”. Aynı çağrı 2 kez sonra blok.
 
-**Veri yok:** `data_status` (SUCCESS / SUCCESS_EMPTY / FAILED / TIMEOUT / NOT_QUERIED / STALE); collection_summary `STATUS=`; prompt yasağı; nudge; virt+Unified final retry; coverage miss (Ayarlar → Hakkında); Unified kanıt rozeti (high/medium/low; kavramsal gizli — model güveni değil).
+**Veri yok:** `data_status` (SUCCESS / SUCCESS_EMPTY / FAILED / TIMEOUT / NOT_QUERIED / STALE); collection_summary `STATUS=`; prompt yasağı; nudge; virt+Unified final retry; coverage miss (Ayarlar → Hakkında); Unified kanıt rozeti (high/medium/low; kavramsal gizli — model güveni değil; payload’da `sources` + `general`).
 
 **“Live data unavailable”:** İngilizce sabit string yok. Üretilen Türkçe kalıplar:
 
@@ -620,7 +622,7 @@ Prompt büyümesi: tool text 48k, OCP pod TSV şişebilir, multi-domain context 
 
 - Validation: NLQ şema; chat’te zayıf; Unified’da kanıt rozeti (NLI/groundedness değil)
 - Hallucination: prompt yasakları + virt retry + sanitize; groundedness yok
-- Source/evidence: tool adları SSE’de; Unified rozet (`meta.evidence`); metinde “vcenter/ssh/ocp” etiket isteği prompt’ta
+- Source/evidence: tool adları SSE’de; Unified rozet (`meta.evidence`, `sources[{tool,class,at}]`, `general`); metinde “vcenter/ssh/ocp” etiket isteği prompt’ta
 - Timestamp: virt `as_of` bazı handler’larda; model confidence % yok
 
 ---

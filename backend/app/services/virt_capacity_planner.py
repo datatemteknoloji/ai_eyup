@@ -308,8 +308,12 @@ def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster:
             continue
         hv = by_hv[hid]
         plat = vd.platform_of(hv) or "vmware"
-        clusters.append(_analyze_cluster(db, hv, plat, cname, hs, vms, vcs.get((hid, cname)), p95,
-                                         with_forecast=with_forecast))
+        c_new = _analyze_cluster(db, hv, plat, cname, hs, vms, vcs.get((hid, cname)), p95,
+                                 with_forecast=with_forecast)
+        # Dilim T: kartın veri zamanı = kümedeki host ölçümlerinin en yenisi (ek sorgu yok)
+        ts = [h.get("timestamp") for h in hs if h.get("timestamp")]
+        c_new["as_of"] = max(ts).isoformat() if ts else None
+        clusters.append(c_new)
     reclaim = _reclaim_by_cluster(db, hv_ids)
     for c in clusters:
         c["reclaim"] = reclaim.get((c["hypervisor_id"], c["cluster"]), {})
@@ -317,8 +321,10 @@ def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster:
     ds = _datastores(db, [h.id for h in hvs if vd.platform_of(h) in ("vmware", "olvm")], with_forecast)
     for d in ds:
         d["hypervisor"] = by_hv[d["hypervisor_id"]].name if d["hypervisor_id"] in by_hv else None
+    as_of_all = [c["as_of"] for c in clusters if c.get("as_of")]
     return {
         "ok": True,
+        "as_of": max(as_of_all) if as_of_all else None,
         "clusters": clusters,
         "datastores": ds,
         "thresholds": {"memory": T.mem, "cpu": T.cpu, "datastore": T.ds,
