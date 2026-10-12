@@ -178,6 +178,7 @@ function Security({ syncAt }: { syncAt?: string | null }) {
           { key: 'path', label: t('bk_f2_sec_endpoint'), render: (r: any) => <a className="font-mono text-xs text-blue-300 hover:text-blue-200" href={r.doc} target="_blank" rel="noreferrer">{r.path}</a> },
           { key: 'roles', label: t('bk_f2_sec_roles'), render: (r: any) => <span className="text-xs">{r.roles}</span> },
           { key: 'viewer_ok', label: t('bk_f2_sec_viewer'), render: (r: any) => r.viewer_ok ? <span className="text-emerald-300">✓</span> : <span className="text-amber-300">✗</span> },
+          { key: 'field_verified', label: t('bk_f4_col_field'), render: (r: any) => r.field_verified ? <span className="text-emerald-300 text-xs">{(r.verified_in || []).join(', ')}</span> : <span className="text-slate-400 text-xs" data-testid="bk-field-unverified">{t('bk_f4_unverified')}</span> },
           { key: 'states', label: t('bk_f2_sec_observed'), render: (r: any) => <div className="space-y-0.5 text-xs">{Object.entries(r.states || {}).map(([k, v]) => <div key={k}>{k}: {obs(v as string)}</div>)}</div> },
         ]} />
         <p className="text-[11px] text-slate-500 p-3">{d.field_note}</p>

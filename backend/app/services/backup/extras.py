@@ -155,9 +155,10 @@ def access_rows(db: Session, *, include_demo: bool = True) -> List[Dict[str, Any
     """Endpoint × sağlayıcı yetki durumu. Satır başına: dokümandaki 'Available to' (Viewer açık mı) + son senkronda
     gözlenen durum (ok | forbidden | error | unknown). 'unknown' = bu endpoint henüz okunmadı."""
     from app.services.backup.registry import parse_meta
-    from app.services.backup.veeam_api_ref import ENDPOINT_ROLE_ROWS, doc_url
+    from app.services.backup.veeam_api_ref import ENDPOINT_ROLE_ROWS, doc_url, field_verification
     skip = {"token", "logout", "server_time"}
     insts = eng.backup_instances(db, include_demo=include_demo)
+    fv = {r["key"]: r for r in field_verification()}
     out: List[Dict[str, Any]] = []
     for key, path, roles, viewer_ok in ENDPOINT_ROLE_ROWS:
         if key in skip:
@@ -167,7 +168,8 @@ def access_rows(db: Session, *, include_demo: bool = True) -> List[Dict[str, Any
             acc = (parse_meta(i).get("access") or {})
             states[i.label or f"#{i.id}"] = acc.get(key, "unknown")
         out.append({"key": key, "path": path, "roles": roles, "viewer_ok": viewer_ok, "doc": doc_url(key),
-                    "states": states})
+                    "states": states, "field_verified": fv.get(key, {}).get("field_verified", False),
+                    "verified_in": fv.get(key, {}).get("verified_in", [])})
     return out
 
 

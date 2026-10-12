@@ -86,6 +86,7 @@ describe('F.2 Yedek sekmeleri', () => {
     expect(screen.getByTestId('bk-sec-imm').textContent).toBe('bk_f2_sec_imm_nm')
     expect(screen.getByText('/api/v1/serverInfo')).toBeTruthy()
     expect(screen.getByText('bk_f2_nm_perm')).toBeTruthy()      // serverInfo forbidden
+    expect(screen.getAllByTestId('bk-field-unverified').length).toBe(2)   // F.4: sahada doğrulanmadı
   })
 
   it('F.3: RTO "doğrulanmadı" rozeti ve not; tahmin değeri gösterilmez', () => {

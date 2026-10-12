@@ -63,8 +63,10 @@ Belirsiz / kodlanmadı (kullanıcıya sorulacak):
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 REFERENCE_BASE = "https://helpcenter.veeam.com/references/vbr/13/rest/1.3-rev1/tag/"
 DOC_VERIFIED_REVISION = "1.3-rev1"   # dokümanın okunduğu revizyon (VBR 13.0.1.180)
@@ -177,3 +179,51 @@ AUTH_WRITE_PATHS = ("/api/oauth2/token", "/api/oauth2/logout")
 
 def doc_url(key: str) -> str:
     return f"{REFERENCE_BASE}{ENDPOINTS[key].doc_tag}/index.html"
+
+
+# ── Sahada doğrulama durumu (F.4) ────────────────────────────────────────────
+# Bir endpoint ancak ``tests/fixtures/veeam/<sürüm>/_manifest.json`` (source=real; backend/scripts/
+# veeam_collect_fixtures.py çıktısı) o endpoint için satır içeren başarılı bir yanıt kaydettiyse "sahada doğrulandı"
+# sayılır. Hiç gerçek fixture yoksa TÜM endpoint'ler "sahada doğrulanmadı"dır (doküman örneği ≠ saha).
+FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "veeam"
+
+
+def real_fixture_manifests() -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    if not FIXTURE_ROOT.is_dir():
+        return out
+    for m in sorted(FIXTURE_ROOT.glob("*/_manifest.json")):
+        try:
+            j = json.loads(m.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(j, dict) and j.get("source") == "real":
+            j.setdefault("version", m.parent.name)
+            out.append(j)
+    return out
+
+
+def field_verification() -> List[Dict[str, Any]]:
+    """Endpoint başına {key, path, field_verified, verified_in[]} — token/logout hariç."""
+    mans = real_fixture_manifests()
+    rows: List[Dict[str, Any]] = []
+    for e in ENDPOINTS.values():
+        if e.key in ("token", "logout"):
+            continue
+        vin = []
+        for m in mans:
+            st = (m.get("endpoints") or {}).get(e.key) or {}
+            if st.get("status") == "ok" and (st.get("rows") is None or st.get("rows", 0) > 0):
+                vin.append(str(m.get("version")))
+        rows.append({"key": e.key, "path": e.path, "field_verified": bool(vin), "verified_in": vin})
+    return rows
+
+
+def unverified_endpoints() -> List[str]:
+    """'Sahada doğrulanmadı' endpoint listesi (final raporda ve Güvenlik sekmesinde gösterilir)."""
+    return [r["key"] for r in field_verification() if not r["field_verified"]]
+
+
+if __name__ == "__main__":  # python -m app.services.backup.veeam_api_ref
+    for r in field_verification():
+        print(("✓ " if r["field_verified"] else "✗ ") + f'{r["key"]:<24} {r["path"]}  {",".join(r["verified_in"]) or "sahada doğrulanmadı"}')
