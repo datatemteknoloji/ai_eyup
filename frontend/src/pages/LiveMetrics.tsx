@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Maximize2, X } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { usePageVisible } from '../hooks/usePageVisible'
+import { MethodBadge } from '../components/insights/MethodBadge'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import type { TranslationKey } from '../i18n/messages'
 import {
@@ -1191,7 +1192,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
-          <div className="text-xs text-slate-400">{t('lm_cpu_avg', { range: timeRangeLabel })}</div>
+          <div className="text-xs text-slate-400 flex items-center justify-between gap-1"><span>{t('lm_cpu_avg', { range: timeRangeLabel })}</span><MethodBadge id={isWindows ? 'win.metrics' : 'linux.metrics'} /></div>
           <div className="flex items-center justify-between">
             <div className="text-2xl font-semibold text-white">
               {averageOfMap(cpuMap).toFixed(2)}%
@@ -1200,7 +1201,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
           </div>
         </div>
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
-          <div className="text-xs text-slate-400">{t('lm_mem_avg', { range: timeRangeLabel })}</div>
+          <div className="text-xs text-slate-400 flex items-center justify-between gap-1"><span>{t('lm_mem_avg', { range: timeRangeLabel })}</span><MethodBadge id={isWindows ? 'win.metrics' : 'linux.metrics'} /></div>
           <div className="flex items-center justify-between">
             <div className="text-2xl font-semibold text-white">
               {averageOfMap(memoryMap).toFixed(2)}%
@@ -1209,7 +1210,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
           </div>
         </div>
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] p-4">
-          <div className="text-xs text-slate-400">{t('lm_disk_root', { range: timeRangeLabel })}</div>
+          <div className="text-xs text-slate-400 flex items-center justify-between gap-1"><span>{t('lm_disk_root', { range: timeRangeLabel })}</span><MethodBadge id={isWindows ? 'win.metrics' : 'linux.metrics'} /></div>
           <div className="flex items-center justify-between">
             <div className="text-2xl font-semibold text-white">
               {averageOfMap(diskMap).toFixed(2)}%

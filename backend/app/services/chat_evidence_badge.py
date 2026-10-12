@@ -140,3 +140,32 @@ def evidence_sse_field(badge: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if _visible(badge):
         return {"evidence": _evidence_payload(badge)}  # type: ignore[arg-type]
     return {}
+
+
+def collect_sources_evidence(
+    *, ssh: bool = False, winrm: bool = False, prometheus: bool = False, inventory: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """T2: araç döngüsü olmayan eski sohbet akışları (Linux / Windows / Sanallaştırma) için kaynak satırı.
+
+    Yalnız bu turda GERÇEKTEN bağlama konan kaynaklar listelenir (SSH/WinRM/Prometheus canlı toplama,
+    ya da ainew DB envanteri). Hiç kaynak yoksa None döner: UI'da ne rozet ne "AI genel bilgisi" iddiası.
+    Seviye: canlı toplama → yüksek; yalnız DB envanteri → orta (canlı doğrulanmadı).
+    """
+    tools: List[str] = []
+    if ssh:
+        tools.append("collect_ssh")
+    if winrm:
+        tools.append("collect_winrm")
+    if prometheus:
+        tools.append("collect_prometheus")
+    live = bool(tools)
+    if inventory:
+        tools.append("collect_inventory")
+    if not tools:
+        return None
+    b: Dict[str, Any] = _badge(
+        HIGH if live else MEDIUM,
+        "bu turda canlı collect kanıtı var" if live else "ainew envanter verisi; bu turda canlı doğrulanmadı",
+    )
+    b["sources"] = _tool_sources(tools)
+    return b

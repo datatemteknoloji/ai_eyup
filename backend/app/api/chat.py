@@ -2426,10 +2426,28 @@ async def chat_stream(
                 # ── 7. Kaydet + Cache ─────────────────────────────────────────
                 from app.services.answer_sanitize import sanitize_llm_answer
                 full_response = sanitize_llm_answer(full_response or "")
+                # T2: kaynak satırı — yalnız bu turda bağlama GERÇEKTEN konan kaynaklar (yoksa iddia yok).
+                _evid_meta = None
+                _evid_sse = {}
+                try:
+                    from app.services.chat_evidence_badge import (
+                        collect_sources_evidence, evidence_sse_field, merge_evidence_meta,
+                    )
+                    _evb = collect_sources_evidence(
+                        ssh=bool(locals().get("ssh_ctx")),
+                        prometheus=bool(locals().get("prom_ctx")),
+                        inventory=bool(locals().get("server_context")) and not locals().get("ssh_ctx"),
+                    )
+                    if _evb and full_response and not full_response.startswith("(Hata:"):
+                        _evid_meta = merge_evidence_meta({}, _evb)
+                        _evid_sse = evidence_sse_field(_evb)
+                except Exception:
+                    pass
                 if not ephemeral:
                     db.add(ChatMessage(
                         session_id=session_id, role="assistant",
                         content=full_response or "(yanıt alınamadı)",
+                        meta=_evid_meta,
                     ))
                     s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
                     if s:
@@ -2453,7 +2471,7 @@ async def chat_stream(
                         "targets": len(selected_servers) if selected_servers else 0,
                     },
                 )
-                yield _sse({"done": True, "session_id": session_id})
+                yield _sse({"done": True, "session_id": session_id, **_evid_sse})
 
             except Exception as e:
                 logger.error(f"Stream error: {e}", exc_info=True)

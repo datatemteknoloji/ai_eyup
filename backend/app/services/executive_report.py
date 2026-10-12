@@ -159,6 +159,9 @@ def build_executive_report(summary: Dict[str, Any], exadata: Dict[str, Any]) -> 
         md.append("- Açık olay yok.")
     md.append("\n## Öneriler")
     md.extend(f"{n}. {r}" for n, r in enumerate(recs, 1))
+    # T2: "Yöntem notları" method_registry'den üretilir (elle yazılmaz).
+    from app.services.report_method_notes import method_notes_markdown
+    md.append(method_notes_markdown("executive", "executive"))
 
     return {
         "generated_at": summary.get("generated_at"),

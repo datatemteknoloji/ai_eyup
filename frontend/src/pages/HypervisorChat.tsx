@@ -13,6 +13,7 @@ import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { pairChatMessages, useChatPdfSelect } from '../lib/chatPdfSelect'
 import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import ChatFeedbackButtons from '../components/ChatFeedbackButtons'
+import { ChatSources, type ChatEvidence } from '../components/ChatEvidenceBadge'
 import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
@@ -35,6 +36,7 @@ interface Message {
   latency_ms?: number
   error?: string | null
   charts?: ChatChartPayload[]
+  evidence?: ChatEvidence | null
   timestamp: Date
 }
 
@@ -271,6 +273,7 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
         {!isUser && (
           <IntentBadges intents={msg.intents} reportType={msg.report_type} />
         )}
+        {!isUser && <div className="px-1"><ChatSources evidence={msg.evidence} /></div>}
         <div className="flex items-center gap-2 mt-1 px-1">
           <span className="text-[10px] text-slate-600">
             {msg.timestamp.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
@@ -450,6 +453,7 @@ export default function HypervisorChat({
       latency_ms: m.meta?.latency_ms,
       error: m.meta?.error,
       charts: Array.isArray(m.meta?.charts) ? m.meta.charts : undefined,
+      evidence: m.meta?.evidence ?? undefined,
       timestamp: new Date(m.created_at),
     })))
   }, [])

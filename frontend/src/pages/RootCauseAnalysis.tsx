@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react'
-import { AiBlock } from '../components/insights/MethodBadge'
+import { AiBlock, MethodBadge, useMethodCatalog } from '../components/insights/MethodBadge'
+import { methodNotesSection } from '../lib/methodNotes'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { API_BASE_URL } from '../config/api'
@@ -152,7 +153,8 @@ function AnalysisCard({ result }: { result: LogAnalysisResult }) {
   const hasApproval = result.requires_approval || result.recommendations.some(r => MUTATING_KW.some(k => r.toLowerCase().includes(k)))
 
   return (
-    <div className="space-y-3 mt-3">
+    <AiBlock method="ai.log_analyze" className="mt-3 p-1">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs" style={{ color: 'rgba(148,163,184,0.55)' }}>
         <ConfidenceBadge confidence={result.confidence} />
         <span>{t('ana_log_n', { n: result.log_lines_used })}</span>
@@ -210,6 +212,7 @@ function AnalysisCard({ result }: { result: LogAnalysisResult }) {
         </div>
       )}
     </div>
+    </AiBlock>
   )
 }
 
@@ -646,13 +649,18 @@ function AWRPanel() {
 
 function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
   const t = useT()
+  const { locale } = useLocale()
+  const methodCat = useMethodCatalog().data
   const r = result.report
   const llm = result.llm_analysis
   return (
     <div className="space-y-4">
       {/* DB bilgisi */}
       <div className="cyber-card p-4">
-        <div className="text-[11px] font-semibold uppercase tracking-wide mb-3" style={{ color: NEON.cyan }}>{t('ana_report_info')}</div>
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>{t('ana_report_info')}</div>
+          <MethodBadge id="awr.parse" />
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs" style={{ color: 'rgba(148,163,184,0.7)' }}>
           {[
             { label: 'DB', value: `${r.db_name} (${r.db_id})` },
@@ -708,9 +716,9 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
 
       {/* LLM analizi */}
       {(llm.summary || llm.bottlenecks?.length || llm.recommendations?.length) && (
-        <div className="cyber-card p-4 space-y-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>{t('ana_ai_perf')}</div>
+        <AiBlock method="ai.awr" title={t('ana_ai_perf')} className="p-1">
+         <div className="space-y-3">
+          <div className="flex items-center justify-end flex-wrap gap-2">
             <div className="flex items-center gap-2">
               {llm.severity && (
                 <span className="text-xs px-2 py-0.5 rounded-full"
@@ -753,6 +761,9 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
                       ),
                     })
                   }
+                  // T2: "Yöntem notları" method_registry kataloğundan üretilir (elle yazılmaz).
+                  const notes = methodNotesSection(methodCat, ['awr.parse', 'ai.awr'], locale === 'en', t('method_notes_heading'))
+                  if (notes) sections.push(notes)
                   exportRcaSectionsToPrintWindow(sections, {
                     title: `AWR RCA — ${r.db_name}`,
                     subtitle: result.model || undefined,
@@ -775,7 +786,8 @@ function AWRResultCard({ result }: { result: AWRAnalyzeResult }) {
               {llm.baseline_comparison}
             </div>
           )}
-        </div>
+         </div>
+        </AiBlock>
       )}
 
       {r.parse_errors.length > 0 && (

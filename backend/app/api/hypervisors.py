@@ -1503,6 +1503,7 @@ def ask_hypervisor_question(
                 live_hint = True
                 agentic_extra = ""
                 inventory_done = False
+                _hv_tools: list = []   # T2: kaynak satırı için bu turda çağrılan araçlar
                 rag_block = ""
                 try:
                     from app.services.virt_chat_rag import collect_virt_rag_block
@@ -1535,6 +1536,7 @@ def ask_hypervisor_question(
                             agentic_extra = ""
                         else:
                             agentic_extra = final.get("tool_text") or ""
+                        _hv_tools = [t for t in (final.get("tools_used") or []) if t]
                         det_inv = (final.get("deterministic_answer") or "").strip()
                         if det_inv:
                             result = {
@@ -1584,6 +1586,7 @@ def ask_hypervisor_question(
                             for item in gen:
                                 if item.get("type") == "final":
                                     agentic_extra = item.get("tool_text") or ""
+                                    _hv_tools = [t for t in (item.get("tools_used") or []) if t]
                                     det_inv = (item.get("deterministic_answer") or "").strip()
                                     if det_inv:
                                         result = {
@@ -1659,6 +1662,24 @@ def ask_hypervisor_question(
             "latency_ms": result.get("latency_ms"),
             "error": result.get("error"),
         }
+        # T2: kaynak satırı — araç çağrıldıysa araç adları; değilse yalnız bağlam satırı varsa ainew DB envanteri;
+        # hiç kaynak yoksa iddia yok.
+        try:
+            from app.services.chat_evidence_badge import (
+                _tool_sources, merge_evidence_meta, evidence_sse_field, collect_sources_evidence,
+            )
+            _hv_t = list(locals().get("_hv_tools") or [])
+            if _hv_t:
+                _evb = {"level": "high", "reason": "araç sonucu var", "sources": _tool_sources(_hv_t)}
+            elif result.get("answer") and (result.get("context_lines") or 0) > 0:
+                _evb = collect_sources_evidence(inventory=True)
+            else:
+                _evb = None
+            if _evb and not result.get("error"):
+                assistant_meta = merge_evidence_meta(assistant_meta, _evb)
+                result["evidence"] = evidence_sse_field(_evb).get("evidence")
+        except Exception:
+            pass
         db.add(ChatMessage(
             session_id=session_id,
             role="assistant",
@@ -1718,7 +1739,8 @@ async def ask_hypervisor_stream(
             yield _sse({"token": answer[i:i + 8]})
         if result.get("error") and not result.get("answer"):
             yield _sse({"error": result.get("error")})
-        yield _sse({"done": True, "session_id": sid})
+        _ev = result.get("evidence")
+        yield _sse({"done": True, "session_id": sid, **({"evidence": _ev} if _ev else {})})
 
     from app.services.chat_orchestrator.http_bridge import attach_and_stream
     return attach_and_stream(

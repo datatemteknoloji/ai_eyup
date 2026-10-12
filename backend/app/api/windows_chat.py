@@ -1192,7 +1192,25 @@ async def chat_stream(
                         if llm_err and not full_response:
                             full_response = f"(Hata: {llm_err})"
 
-                db.add(ChatMessage(session_id=session_id, role="assistant", content=full_response or "(yanıt alınamadı)"))
+                # T2: kaynak satırı — yalnız bu turda bağlama GERÇEKTEN konan kaynaklar (yoksa iddia yok).
+                _evid_meta = None
+                _evid_sse = {}
+                try:
+                    from app.services.chat_evidence_badge import (
+                        collect_sources_evidence, evidence_sse_field, merge_evidence_meta,
+                    )
+                    _evb = collect_sources_evidence(
+                        winrm=bool(locals().get("winrm_ctx")),
+                        prometheus=bool(locals().get("prom_ctx")),
+                        inventory=bool(locals().get("server_context")) and not locals().get("winrm_ctx"),
+                    )
+                    if _evb and full_response and not full_response.startswith("(Hata:"):
+                        _evid_meta = merge_evidence_meta({}, _evb)
+                        _evid_sse = evidence_sse_field(_evb)
+                except Exception:
+                    pass
+                db.add(ChatMessage(session_id=session_id, role="assistant", content=full_response or "(yanıt alınamadı)",
+                                   meta=_evid_meta))
                 s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
                 if s:
                     s.updated_at = datetime.now(timezone.utc)
@@ -1205,7 +1223,7 @@ async def chat_stream(
                     cache_hit=False,
                     extra={"path": getattr(_live_path, "reason", ""), "targets": len(selected_servers)},
                 )
-                yield _sse({"done": True, "session_id": session_id})
+                yield _sse({"done": True, "session_id": session_id, **_evid_sse})
 
             except Exception as e:
                 logger.error(f"Windows chat stream error: {e}", exc_info=True)

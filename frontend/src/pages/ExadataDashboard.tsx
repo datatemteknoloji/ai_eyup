@@ -11,6 +11,7 @@ import {
 import { API_BASE_URL } from '../config/api'
 import { inventoryHeaders } from '../lib/inventoryApi'
 import { useT, useLocale } from '../i18n/LocaleProvider'
+import { MethodBadge } from '../components/insights/MethodBadge'
 
 interface ExadataNode {
   id: number; rack_id: number; role: string; name: string
@@ -237,7 +238,7 @@ export default function ExadataDashboard({ allowInventoryEdit = false }: { allow
             <Database size={20} className="text-orange-400" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-white">{t('exa_title')}</h1>
+            <h1 className="text-2xl font-bold text-white flex items-center gap-2">{t('exa_title')}<MethodBadge id="exa.health" /></h1>
             <p className="text-slate-400 text-sm">
               {allowInventoryEdit
                 ? t('exa_sub_edit')

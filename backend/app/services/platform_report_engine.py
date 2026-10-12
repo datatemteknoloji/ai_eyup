@@ -960,4 +960,6 @@ def format_platform_report_markdown(platform: str, report_type: str, data: Dict[
     if note:
         lines.append(f"\n*{note}*")
 
-    return "\n".join(lines)
+    # T2: "Yöntem notları" method_registry'den üretilir (elle yazılmaz).
+    from app.services.report_method_notes import method_notes_markdown
+    return "\n".join(lines) + "\n" + method_notes_markdown(platform, report_type)

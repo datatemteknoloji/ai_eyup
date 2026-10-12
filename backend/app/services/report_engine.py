@@ -2202,4 +2202,6 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
         else:
             lines.append("*Bu rapor tipi için henüz veri bulunmuyor.*")
 
-    return "\n".join(lines)
+    # T2: "Yöntem notları" method_registry'den üretilir (elle yazılmaz).
+    from app.services.report_method_notes import method_notes_markdown
+    return "\n".join(lines) + "\n" + method_notes_markdown("virt", report_type)

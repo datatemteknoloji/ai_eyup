@@ -15,6 +15,7 @@ import { API_BASE_URL } from '../../config/api'
 import { useT } from '../../i18n/LocaleProvider'
 import WindowsLiveMetrics from '../../pages/WindowsLiveMetrics'
 
+import { MethodBadge } from '../insights/MethodBadge'
 const RANGES = ['15m', '30m', '1h', '2h', '8h', '24h', '7d', '30d'] as const
 const MAX_SEL = 8
 const COLORS = [
@@ -80,7 +81,7 @@ function WinChart({
   if (!series.length || !data.length) {
     return (
       <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 p-3" style={{ height }}>
-        <div className="text-xs text-slate-400 mb-2">{title}{unit ? ` (${unit})` : ''}</div>
+        <div className="text-xs text-slate-400 mb-2 flex items-center justify-between gap-2"><span>{title}{unit ? ` (${unit})` : ''}</span><MethodBadge id="win.metrics" /></div>
         <div className="h-[calc(100%-1.5rem)] flex items-center justify-center text-slate-600 text-sm">{empty}</div>
       </div>
     )
@@ -88,7 +89,7 @@ function WinChart({
 
   return (
     <div className="rounded-lg border border-white/[0.06] bg-cyber-deep/40 p-3">
-      <div className="text-xs text-slate-300 mb-2 font-medium">{title}{unit ? ` (${unit})` : ''}</div>
+      <div className="text-xs text-slate-300 mb-2 font-medium flex items-center justify-between gap-2"><span>{title}{unit ? ` (${unit})` : ''}</span><MethodBadge id="win.metrics" /></div>
       <ResponsiveContainer width="100%" height={height - 36}>
         <AreaChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />

@@ -10,6 +10,7 @@ import { pairChatMessages, useChatPdfSelect } from '../lib/chatPdfSelect'
 import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
+import { ChatSources, type ChatEvidence } from '../components/ChatEvidenceBadge'
 import ChatPinFact from '../components/ChatPinFact'
 import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
@@ -98,7 +99,7 @@ function getFirstMarkdownTable(content: string): string | null {
 }
 
 interface Server { id: number; name: string; ip_address: string; ai_ready: boolean; status: string; os_type?: string; connection_config?: any }
-interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string; meta?: { charts?: ChatChartPayload[] } | null }
+interface Message { id: number; role: 'user' | 'assistant'; content: string; created_at: string; meta?: { charts?: ChatChartPayload[]; evidence?: ChatEvidence | null } | null }
 interface ChatSession { id: number; title: string; server_ids: number[]; created_at: string; updated_at?: string; message_count: number }
 interface AIModel { name: string; size: number; parameter_size: string; family: string }
 
@@ -650,6 +651,7 @@ const WindowsChat: React.FC<{
                           )}
                         </div>
                       )}
+                      {msg.role === 'assistant' && <ChatSources evidence={msg.meta?.evidence} />}
                       <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-slate-500'}`}>
                         {formatDate(msg.created_at)}
                       </div>
@@ -711,6 +713,7 @@ const WindowsChat: React.FC<{
                       <div className={chatResponseBody}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{streamingText}</ReactMarkdown>
                       </div>
+                      <ChatSources evidence={stream.lastEvidence as ChatEvidence | null} />
                     </div>
                   </div>
                 )}
