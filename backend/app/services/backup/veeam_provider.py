@@ -99,13 +99,15 @@ def collect_snapshot(tp: VeeamTransport, cursor: Dict[str, Any], *, lookback_day
     now = now or datetime.now(timezone.utc)
     warnings: List[str] = []
     snap: Dict[str, Any] = {"server": None, "jobs": [], "repos": [], "sessions": [], "backup_job": {},
-                            "objects": [], "restore_points": [], "warnings": warnings}
+                            "objects": [], "restore_points": [], "warnings": warnings, "access": {}}
     try:
         si = tp.get_json("server_info")
         snap["server"] = {"name": si.get("name"), "build": si.get("buildVersion"), "platform": si.get("platform")}
+        snap["access"]["server_info"] = "ok"
     except VeeamApiError as e:
         if e.kind != "forbidden":
             raise
+        snap["access"]["server_info"] = "forbidden"
         warnings.append("serverInfo okunamadı (Backup Viewer rolü yetkisiz) — VBR sürümü tespit edilemedi.")
 
     for j in paged(tp, "jobs_states"):

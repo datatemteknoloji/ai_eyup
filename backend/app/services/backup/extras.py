@@ -151,6 +151,55 @@ def job_config_findings(db: Session) -> List[FindingDraft]:
     return out
 
 
+def access_rows(db: Session, *, include_demo: bool = True) -> List[Dict[str, Any]]:
+    """Endpoint × sağlayıcı yetki durumu. Satır başına: dokümandaki 'Available to' (Viewer açık mı) + son senkronda
+    gözlenen durum (ok | forbidden | error | unknown). 'unknown' = bu endpoint henüz okunmadı."""
+    from app.services.backup.registry import parse_meta
+    from app.services.backup.veeam_api_ref import ENDPOINT_ROLE_ROWS, doc_url
+    skip = {"token", "logout", "server_time"}
+    insts = eng.backup_instances(db, include_demo=include_demo)
+    out: List[Dict[str, Any]] = []
+    for key, path, roles, viewer_ok in ENDPOINT_ROLE_ROWS:
+        if key in skip:
+            continue
+        states = {}
+        for i in insts:
+            acc = (parse_meta(i).get("access") or {})
+            states[i.label or f"#{i.id}"] = acc.get(key, "unknown")
+        out.append({"key": key, "path": path, "roles": roles, "viewer_ok": viewer_ok, "doc": doc_url(key),
+                    "states": states})
+    return out
+
+
+def security_overview(db: Session) -> Dict[str, Any]:
+    """F.2 Güvenlik sekmesi: şifreleme (iş düzeyi), değişmezlik (daima ölçülemedi), yetki tablosu.
+    Tüm sayılar bk_* tablolarından; eksik alan 'ölçülemedi' (False sayılmaz)."""
+    jobs = [j for j in _job_ids(db, include_demo=True).values() if j.enabled]
+    enc_rows: List[Dict[str, Any]] = []
+    cnt = {"enabled": 0, "disabled": 0, "not_measurable": 0}
+    for j in sorted(jobs, key=lambda x: x.name or ""):
+        why = _cfg_unavailable(j)
+        if why or j.encryption_enabled is None:
+            st = "not_measurable"
+        else:
+            st = "enabled" if j.encryption_enabled else "disabled"
+        cnt[st] += 1
+        enc_rows.append({"job": j.name, "type": j.job_type, "encryption": st, "cbt": j.cbt_enabled,
+                         "reason": why if st == "not_measurable" else None})
+    ids = [i.id for i in eng.backup_instances(db, include_demo=True)]
+    repos = db.query(BkRepository).filter(BkRepository.instance_id.in_(ids or [-1])).order_by(BkRepository.name).all()
+    return {
+        "encryption": {"counts": cnt, "jobs": enc_rows,
+                       "note": "İş düzeyi şifreleme (storageData.encryption.isEnabled). Depo/donanım şifrelemesi okunmaz."},
+        "immutability": {"status": "not_measurable",
+                         "repositories": [{"name": r.name, "type": r.repo_type, "status": r.immutability_status or "not_measurable"}
+                                          for r in repos],
+                         "note": "Veeam REST 'Get All Repositories' şemasında değişmezlik alanı yok; depo türü yalnız bilgidir."},
+        "access": access_rows(db),
+        "field_note": "Alan adları Veeam REST 1.3-rev1 dokümanıyla uyumlu; gerçek VBR'de doğrulanmadı.",
+    }
+
+
 # ── Madde 12: RTO doğrulanmamış / 3-2-1 kopya / API revizyonu ────────────────
 
 def last_restore_test(db: Session, protected_object_ids: List[int]) -> Optional[BkRestoreTest]:

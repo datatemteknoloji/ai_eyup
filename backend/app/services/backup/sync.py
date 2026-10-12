@@ -266,6 +266,7 @@ def sync_instance(db: Session, row: IntegrationInstance, *, force: bool = False,
         meta.pop("breaker_until", None)
         meta["server"] = snap.get("server")
         meta["warnings"] = snap.get("warnings") or []
+        meta["access"] = snap.get("access") or {}     # F.2: endpoint başına ok | forbidden | error (Güvenlik sekmesi)
         meta["last_counts"] = counts
         row.last_sync_at, row.last_status, row.last_error = now, "ok", None
         row.meta_json = json.dumps(meta)

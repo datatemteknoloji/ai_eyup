@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import require_module, require_role
 from app.core.database import get_db
-from app.models.backup import BkJob, BkProtectedObject, BkRepository, BkRpoPolicy
+from app.models.backup import BkJob, BkProtectedObject, BkProxy, BkRepository, BkRpoPolicy
 from app.models.user import User
 from app.services.backup import rpo_engine as eng
 from app.services.backup.matching import CONF_LOW, CONF_NONE
@@ -34,6 +34,17 @@ def _view_available() -> bool:
 def _need_backup() -> None:
     if not _view_available():
         raise HTTPException(404, "Yedek sağlayıcısı yapılandırılmadı")
+
+
+_FIELD_NOTE = "Alanlar Veeam REST 1.3-rev1 dokümanıyla uyumlu; gerçek VBR'de doğrulanmadı. Boş (—) = ölçülemedi."
+
+
+def _cfg_json(j: BkJob) -> Dict[str, Any]:
+    import json
+    try:
+        return json.loads(j.config_json or "{}")
+    except ValueError:
+        return {}
 
 
 @router.get("/summary")
@@ -71,7 +82,14 @@ def backup_jobs(db: Session = Depends(get_db), _u: User = Depends(_module)):
         "last_result": j.last_result, "last_run_at": j.last_run_at.isoformat() if j.last_run_at else None,
         "next_run_at": j.next_run_at.isoformat() if j.next_run_at else None, "schedule": j.schedule,
         "repository": j.repository_name, "objects": j.objects_count,
-    } for j in jobs]}
+        # F.2: yapılandırma — None = ölçülemedi (alan yok / yetki); config_state forbidden|error|ok
+        "config_state": j.config_state, "schedule_summary": j.schedule_summary,
+        "retention_type": j.retention_type, "retention_quantity": j.retention_quantity, "gfs_enabled": j.gfs_enabled,
+        "gfs": (_cfg_json(j).get("gfs") or None), "backup_health": j.backup_health_enabled,
+        "encryption": j.encryption_enabled, "cbt": j.cbt_enabled, "app_aware": j.app_aware_enabled,
+        "retry_enabled": j.retry_enabled, "retry_count": j.retry_count, "retry_wait_min": j.retry_wait_min,
+        "window_enabled": j.window_enabled,
+    } for j in jobs], "field_note": _FIELD_NOTE}
 
 
 @router.get("/repositories")
@@ -84,7 +102,29 @@ def backup_repositories(db: Session = Depends(get_db), _u: User = Depends(_modul
         "capacity_gb": round(r.capacity_bytes / 1024 ** 3, 1) if r.capacity_bytes else None,
         "free_gb": round(r.free_bytes / 1024 ** 3, 1) if r.free_bytes is not None else None,
         "used_pct": eng.repo_used_pct(r), "warn_pct": eng.REPO_WARN_PCT,
-    } for r in repos]}
+        "immutability": r.immutability_status or "not_measurable",
+    } for r in repos], "immutability_note": "Değişmezlik REST şemasında yok → doğrulanamaz (depo türü yalnız bilgidir)."}
+
+
+@router.get("/proxies")
+def backup_proxies(db: Session = Depends(get_db), _u: User = Depends(_module)):
+    """Yedek proxy'leri (Get All Proxy States + Get All Proxies; Backup Viewer dahil)."""
+    _need_backup()
+    ids = [i.id for i in eng.backup_instances(db, include_demo=True)]
+    rows = db.query(BkProxy).filter(BkProxy.instance_id.in_(ids or [-1])).order_by(BkProxy.name).all()
+    return {"proxies": [{
+        "id": p.id, "name": p.name, "type": p.proxy_type, "host": p.host_name, "online": p.is_online,
+        "disabled": p.is_disabled, "out_of_date": p.is_out_of_date, "transport_mode": p.transport_mode,
+        "max_tasks": p.max_tasks,
+    } for p in rows], "field_note": _FIELD_NOTE}
+
+
+@router.get("/security")
+def backup_security(db: Session = Depends(get_db), _u: User = Depends(_module)):
+    """Güvenlik: iş düzeyi şifreleme, değişmezlik (daima ölçülemedi), endpoint yetki tablosu."""
+    _need_backup()
+    from app.services.backup import extras
+    return extras.security_overview(db)
 
 
 @router.get("/unmatched")

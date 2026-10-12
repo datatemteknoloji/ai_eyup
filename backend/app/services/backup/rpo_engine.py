@@ -82,6 +82,8 @@ def vm_protection(db: Session, *, now: Optional[datetime] = None,
         (by_vm if o.match_confidence in TRUSTED else low_by_vm if o.match_confidence == CONF_LOW else {}) \
             .setdefault(o.matched_vm_id, []).append(o)
     stale_any = any(provider_stale(i, now) for i in insts.values())
+    job_names = {(j.instance_id, j.provider_job_id): j.name
+                 for j in db.query(BkJob).filter(BkJob.instance_id.in_(list(insts))).all()}
     out: List[Dict[str, Any]] = []
     for v in vms:
         sid = v["id"]
@@ -112,6 +114,13 @@ def vm_protection(db: Session, *, now: Optional[datetime] = None,
             "target_rpo_min": rpo_t, "target_rto_min": rto_t, "policy_id": pol, "rpo_state": rpo_state,
             "stale": stale_any,
             "job_provider_ids": sorted({o.job_provider_id for o in trusted if o.job_provider_id}),
+            # F.2: Protection sekmesi — iş adı, nokta sayısı, eşleşme yöntemi/host doğrulaması
+            "job_names": sorted({job_names.get((o.instance_id, o.job_provider_id), o.job_provider_id)
+                                 for o in trusted if o.job_provider_id}),
+            "restore_points_count": (sum(o.restore_points_count or 0 for o in trusted)
+                                     if any(o.restore_points_count is not None for o in trusted) else None),
+            "match_method": (trusted[0].match_method if trusted else (low[0].match_method if low else None)),
+            "host_verified": any(o.host_verified for o in trusted),
         })
     return out
 

@@ -16,6 +16,29 @@ function ago(min?: number | null) {
   return `${(min / 1440).toFixed(1)} g`
 }
 
+/** Üçlü durum: true/false/None. None = ölçülemedi (alan yok); config_state forbidden → "ölçülemedi (yetki)". */
+function Tri({ v, state }: { v?: boolean | null; state?: string | null }) {
+  const t = useT()
+  if (state === 'forbidden') return <span className="text-amber-300 text-[11px]">{t('bk_f2_nm_perm')}</span>
+  if (state === 'error') return <span className="text-amber-300 text-[11px]">{t('bk_f2_nm_err')}</span>
+  if (v == null) return <span className="text-slate-500" title={t('bk_f2_nm')} data-testid="bk-nm">—</span>
+  return v ? <span className="text-emerald-300">✓ {t('bk_f2_on')}</span> : <span className="text-amber-300">✗ {t('bk_f2_off')}</span>
+}
+
+function retentionText(r: any, t: (k: any) => string) {
+  if (r.retention_quantity == null) return '—'
+  const unit = r.retention_type === 'Days' ? 'g' : r.retention_type === 'RestorePoints' ? 'nokta' : (r.retention_type || '')
+  return `${r.retention_quantity} ${unit}`.trim()
+}
+
+function gfsText(r: any) {
+  if (r.gfs_enabled == null) return '—'
+  if (!r.gfs_enabled) return '✗'
+  const g = r.gfs || {}
+  const parts = [g.weekly != null ? `${g.weekly} hafta` : null, g.monthly != null ? `${g.monthly} ay` : null, g.yearly != null ? `${g.yearly} yıl` : null].filter(Boolean)
+  return parts.length ? parts.join(' / ') : '✓'
+}
+
 function RpoBadge({ s }: { s: string }) {
   const t = useT()
   const map: Record<string, [string, string]> = {
@@ -74,6 +97,76 @@ function Evidence({ syncAt }: { syncAt?: string | null }) {
           { key: 'first_failed_at', label: t('bk_cor_failed'), render: (r: any) => new Date(r.first_failed_at).toLocaleString() },
           { key: 'changes', label: t('bk_cor_changes'), render: (r: any) => <div className="text-xs space-y-0.5">{(r.changes || []).slice(0, 3).map((c: any, i: number) => <div key={i}>{c.title}</div>)}</div> },
         ]} />
+      </Panel>
+    </div>
+  )
+}
+
+function Infra({ syncAt }: { syncAt?: string | null }) {
+  const t = useT()
+  const px = useInsights<any>(BASE, '/backup/proxies')
+  const stateOf = (r: any) => r.disabled ? ['text-slate-400', t('bk_f2_proxy_disabled')]
+    : r.online === false ? ['text-red-300', t('bk_f2_proxy_offline')]
+    : r.online ? ['text-emerald-300', t('bk_f2_proxy_online')] : ['text-slate-500', t('bk_f2_nm')]
+  return (
+    <Panel title={t('bk_f2_tab_infra')} method="bk.proxies" methodAt={syncAt}>
+      <p className="text-xs text-slate-400 p-3">{t('bk_f2_proxy_hint')}</p>
+      <SimpleTable rows={px.data?.proxies || []} empty={t('bk_f2_proxy_none')} cols={[
+        { key: 'name', label: t('bk_f2_col_proxy'), render: (r: any) => <span className="text-white">{r.name}</span> },
+        { key: 'type', label: t('vi_col_type') },
+        { key: 'host', label: t('bk_f2_col_host'), render: (r: any) => r.host || '—' },
+        { key: 'online', label: t('bk_f2_col_state'), render: (r: any) => {
+          const [c, label] = stateOf(r)
+          return <span className="flex flex-wrap gap-1 items-center"><span className={c}>{label}</span>
+            {r.out_of_date ? <span className="text-amber-300 text-[11px]">· {t('bk_f2_proxy_outdated')}</span> : null}</span>
+        } },
+        { key: 'transport_mode', label: t('bk_f2_col_transport'), render: (r: any) => r.transport_mode || '—' },
+        { key: 'max_tasks', label: t('bk_f2_col_tasks'), className: 'font-mono', render: (r: any) => r.max_tasks ?? '—' },
+      ]} />
+      <p className="text-[11px] text-slate-500 p-3">{t('bk_f2_field_note')}</p>
+    </Panel>
+  )
+}
+
+function Security({ syncAt }: { syncAt?: string | null }) {
+  const t = useT()
+  const q = useInsights<any>(BASE, '/backup/security')
+  const d = q.data || {}
+  const c = d.encryption?.counts || {}
+  const obs = (st: string) => st === 'ok' ? <span className="text-emerald-300">ok</span>
+    : st === 'forbidden' ? <span className="text-amber-300">{t('bk_f2_nm_perm')}</span>
+    : st === 'error' ? <span className="text-amber-300">{t('bk_f2_nm_err')}</span>
+    : <span className="text-slate-500">{t('bk_f2_nm_unread')}</span>
+  return (
+    <div className="space-y-4">
+      <Panel title={t('bk_f2_sec_enc')} method="bk.security" methodAt={syncAt}>
+        <p className="text-xs text-slate-300 p-3" data-testid="bk-sec-enc-counts">{t('bk_f2_sec_enc_counts', { on: c.enabled ?? 0, off: c.disabled ?? 0, nm: c.not_measurable ?? 0 })}</p>
+        <SimpleTable rows={d.encryption?.jobs || []} cols={[
+          { key: 'job', label: t('bk_col_job'), render: (r: any) => <span className="text-white">{r.job}</span> },
+          { key: 'encryption', label: t('bk_f2_col_enc'), render: (r: any) => r.encryption === 'not_measurable'
+            ? <span className="text-slate-400" title={r.reason || ''}>{t('bk_f2_nm')}</span>
+            : <Tri v={r.encryption === 'enabled'} /> },
+          { key: 'cbt', label: t('bk_f2_col_cbt'), render: (r: any) => <Tri v={r.cbt} /> },
+        ]} />
+        <p className="text-[11px] text-slate-500 p-3">{d.encryption?.note}</p>
+      </Panel>
+      <Panel title={t('bk_f2_sec_imm')} method="bk.security" methodAt={syncAt}>
+        <p className="text-xs text-slate-300 p-3" data-testid="bk-sec-imm">{t('bk_f2_sec_imm_nm')}</p>
+        <SimpleTable rows={d.immutability?.repositories || []} cols={[
+          { key: 'name', label: t('bk_col_repo'), render: (r: any) => <span className="text-white">{r.name}</span> },
+          { key: 'type', label: t('vi_col_type') },
+          { key: 'status', label: t('bk_f2_col_immut'), render: () => <span className="text-slate-400">{t('bk_f2_nm')}</span> },
+        ]} />
+      </Panel>
+      <Panel title={t('bk_f2_sec_access')} method="bk.security" methodAt={syncAt}>
+        <p className="text-xs text-slate-400 p-3">{t('bk_f2_sec_access_hint')}</p>
+        <SimpleTable rows={d.access || []} cols={[
+          { key: 'path', label: t('bk_f2_sec_endpoint'), render: (r: any) => <a className="font-mono text-xs text-blue-300 hover:text-blue-200" href={r.doc} target="_blank" rel="noreferrer">{r.path}</a> },
+          { key: 'roles', label: t('bk_f2_sec_roles'), render: (r: any) => <span className="text-xs">{r.roles}</span> },
+          { key: 'viewer_ok', label: t('bk_f2_sec_viewer'), render: (r: any) => r.viewer_ok ? <span className="text-emerald-300">✓</span> : <span className="text-amber-300">✗</span> },
+          { key: 'states', label: t('bk_f2_sec_observed'), render: (r: any) => <div className="space-y-0.5 text-xs">{Object.entries(r.states || {}).map(([k, v]) => <div key={k}>{k}: {obs(v as string)}</div>)}</div> },
+        ]} />
+        <p className="text-[11px] text-slate-500 p-3">{d.field_note}</p>
       </Panel>
     </div>
   )
@@ -202,6 +295,7 @@ export default function VirtBackup() {
       <Tabs active={tab} onChange={setTab} tabs={[
         { id: 'rpo', label: t('bk_tab_rpo') }, { id: 'jobs', label: t('bk_tab_jobs'), count: s.jobs },
         { id: 'repos', label: t('bk_tab_repos'), count: s.repositories }, { id: 'unmatched', label: t('bk_tab_unmatched'), count: s.low_match },
+        { id: 'infra', label: t('bk_f2_tab_infra') }, { id: 'security', label: t('bk_f2_tab_security') },
         { id: 'policies', label: t('bk_tab_policies') }, { id: 'evidence', label: t('bk_tab_evidence') },
       ]} />
       {tab === 'rpo' && (
@@ -223,7 +317,9 @@ export default function VirtBackup() {
             { key: 'rpo_age_min', label: t('bk_col_age'), render: (r: any) => <span className="font-mono">{ago(r.rpo_age_min)}</span> },
             { key: 'target_rpo_min', label: t('bk_col_target'), render: (r: any) => r.target_rpo_min ? <span className="font-mono">{ago(r.target_rpo_min)}</span> : <span className="text-slate-500">—</span> },
             { key: 'rpo_state', label: 'RPO', render: (r: any) => <RpoBadge s={r.rpo_state} /> },
-            { key: 'match_confidence', label: t('bk_col_match') },
+            { key: 'job_names', label: t('bk_f2_col_jobnames'), render: (r: any) => (r.job_names || []).join(', ') || '—' },
+            { key: 'restore_points_count', label: t('bk_f2_col_rpcount'), className: 'font-mono', render: (r: any) => r.restore_points_count ?? '—' },
+            { key: 'match_confidence', label: t('bk_col_match'), render: (r: any) => <span>{r.match_confidence}{r.host_verified ? <span className="ml-1 text-emerald-300" title={t('bk_f2_host_ok')}>⌂</span> : null}</span> },
           ]} />
         </Panel>
       )}
@@ -235,7 +331,16 @@ export default function VirtBackup() {
           { key: 'last_run_at', label: t('bk_col_last_run'), render: (r: any) => r.last_run_at ? new Date(r.last_run_at).toLocaleString() : '—' },
           { key: 'repository', label: t('bk_col_repo') },
           { key: 'objects', label: t('bk_col_objects'), className: 'font-mono' },
-        ]} /></Panel>
+          { key: 'schedule_summary', label: t('bk_f2_col_schedule'), render: (r: any) => r.config_state === 'forbidden' ? <Tri state="forbidden" /> : (r.schedule_summary || r.schedule || '—') },
+          { key: 'retention_quantity', label: t('bk_f2_col_retention'), render: (r: any) => r.config_state === 'forbidden' ? <Tri state="forbidden" /> : retentionText(r, t as any) },
+          { key: 'gfs_enabled', label: t('bk_f2_col_gfs'), render: (r: any) => r.config_state === 'forbidden' ? <Tri state="forbidden" /> : gfsText(r) },
+          { key: 'encryption', label: t('bk_f2_col_enc'), render: (r: any) => <Tri v={r.encryption} state={r.config_state === 'ok' ? null : r.config_state} /> },
+          { key: 'cbt', label: t('bk_f2_col_cbt'), render: (r: any) => <Tri v={r.cbt} state={r.config_state === 'ok' ? null : r.config_state} /> },
+          { key: 'app_aware', label: t('bk_f2_col_appaware'), render: (r: any) => <Tri v={r.app_aware} state={r.config_state === 'ok' ? null : r.config_state} /> },
+          { key: 'retry_enabled', label: t('bk_f2_col_retry'), render: (r: any) => r.retry_enabled && r.retry_count != null ? `${r.retry_count}× / ${r.retry_wait_min ?? '?'} dk` : <Tri v={r.retry_enabled} state={r.config_state === 'ok' ? null : r.config_state} /> },
+          { key: 'window_enabled', label: t('bk_f2_col_window'), render: (r: any) => <Tri v={r.window_enabled} state={r.config_state === 'ok' ? null : r.config_state} /> },
+          { key: 'backup_health', label: t('bk_f2_col_health'), render: (r: any) => <Tri v={r.backup_health} state={r.config_state === 'ok' ? null : r.config_state} /> },
+        ]} /><p className="text-[11px] text-slate-500 p-3" data-testid="bk-field-note">{t('bk_f2_field_note')}</p></Panel>
       )}
       {tab === 'repos' && (
         <Panel method="bk.repos" methodAt={syncAt}><SimpleTable rows={repos.data?.repositories || []} cols={[
@@ -244,8 +349,11 @@ export default function VirtBackup() {
           { key: 'used_pct', label: t('bk_col_used'), render: (r: any) => <div className="w-40"><Bar pct={r.used_pct} warn={r.warn_pct} crit={95} /></div> },
           { key: 'free_gb', label: t('bk_col_free'), render: (r: any) => r.free_gb != null ? `${fmt(r.free_gb, 0)} GB` : '—' },
           { key: 'online', label: t('bk_col_online'), render: (r: any) => r.online === false ? <span className="text-red-300">✗</span> : <span className="text-emerald-300">✓</span> },
+          { key: 'immutability', label: t('bk_f2_col_immut'), render: () => <span className="text-slate-400" title={t('bk_f2_immut_tip')} data-testid="bk-immut-nm">{t('bk_f2_nm')}</span> },
         ]} /></Panel>
       )}
+      {tab === 'infra' && <Infra syncAt={syncAt} />}
+      {tab === 'security' && <Security syncAt={syncAt} />}
       {tab === 'unmatched' && (
         <Panel method="bk.match" methodAt={syncAt}>
           <p className="text-xs text-slate-400 p-3">{t('bk_unmatched_hint')}</p>

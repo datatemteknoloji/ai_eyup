@@ -220,3 +220,51 @@ def test_evidence_item_for_encryption_and_not_checked_list(db, monkeypatch):
     it = [i for i in ev["items"] if i["item"] == "Yedek işlerinde şifreleme"][0]
     assert it["status"] == "eksik"           # DEMO Daily şifresiz
     assert any("immutability" in x for x in ev["not_checked"])
+
+
+# ── F.2: API yüzeyi ──────────────────────────────────────────────────────────
+
+def _api(monkeypatch):
+    from app.api import backup_insights as api
+    monkeypatch.setattr(api, "_view_available", lambda: True)
+    return api
+
+
+def test_api_jobs_proxies_repos_expose_config_and_not_measurable(db, monkeypatch):
+    api = _api(monkeypatch)
+    _sync(db, monkeypatch)
+    jobs = {j["name"]: j for j in api.backup_jobs(db=db, _u=None)["jobs"]}
+    d = jobs["DEMO Daily VMs"]
+    assert d["encryption"] is False and d["cbt"] is True and d["retention_quantity"] == 14 and d["config_state"] == "ok"
+    assert jobs["DEMO Copy to DR"]["encryption"] is None                      # None → UI "—" (kapalı değil)
+    px = api.backup_proxies(db=db, _u=None)["proxies"]
+    assert {p["name"] for p in px} == {"DEMO Proxy 1", "DEMO Proxy 2"}
+    assert [p for p in px if p["name"] == "DEMO Proxy 2"][0]["out_of_date"] is True
+    repos = api.backup_repositories(db=db, _u=None)
+    assert all(r["immutability"] == "not_measurable" for r in repos["repositories"]) and repos["immutability_note"]
+
+
+def test_api_security_overview_and_access_states(db, monkeypatch):
+    api = _api(monkeypatch)
+    row = _sync(db, monkeypatch)
+    sec = api.backup_security(db=db, _u=None)
+    assert sec["encryption"]["counts"] == {"enabled": 2, "disabled": 1, "not_measurable": 1}
+    assert sec["immutability"]["status"] == "not_measurable"
+    acc = {a["key"]: a for a in sec["access"]}
+    assert acc["server_info"]["viewer_ok"] is False and acc["jobs"]["viewer_ok"] is True
+    assert acc["jobs"]["states"]["_t_demo"] == "ok"
+    assert "token" not in acc and "logout" not in acc
+    # sunucu sürümü/403 gözlemi
+    from app.services.backup.registry import parse_meta
+    assert "access" in parse_meta(row)
+
+
+def test_api_protection_rows_have_job_names_and_host_flag(db, monkeypatch):
+    api = _api(monkeypatch)
+    _sync(db, monkeypatch)
+    vms = _demo_vms(40)
+    from app.services.backup import rpo_engine
+    monkeypatch.setattr(rpo_engine, "_vms", lambda _db: vms)
+    rows = api.backup_rpo(state="protected", rpo_state=None, q=None, limit=500, db=db, _u=None)["vms"]
+    assert rows and all("job_names" in r and "host_verified" in r and "restore_points_count" in r for r in rows)
+    assert any(r["job_names"] for r in rows)
