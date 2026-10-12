@@ -151,6 +151,29 @@ class SimulateRequest(BaseModel):
     cpu_util_assumption: float = Field(0.5, ge=0.05, le=1.0)
 
 
+@router.get("/capacity/policy")
+def capacity_policy_get(db: Session = Depends(get_db), user: User = Depends(_module)):
+    from app.services import capacity_policy
+    return {"ok": True, **capacity_policy.payload(db)}
+
+
+class CapacityPolicyBody(BaseModel):
+    values: Dict[str, float]
+
+
+@router.put("/capacity/policy")
+def capacity_policy_put(body: CapacityPolicyBody, request: Request, db: Session = Depends(get_db),
+                        user: User = Depends(require_role("admin"))):
+    """Kapasite eşiklerini günceller (yalnız admin). Varsayılana eşit değer satırı siler."""
+    from app.services import capacity_policy
+    try:
+        capacity_policy.save(db, body.values, user=getattr(user, "username", "") or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit(db, user, "capacity_policy_update", "Kapasite eşikleri güncellendi", request, values=body.values)
+    return {"ok": True, **capacity_policy.payload(db)}
+
+
 @router.post("/capacity/simulate")
 def capacity_simulate(body: SimulateRequest, db: Session = Depends(get_db), user: User = Depends(_module)):
     from app.services.virt_capacity_planner import simulate
@@ -175,6 +198,42 @@ def placement(body: PlacementRequest, db: Session = Depends(get_db), user: User 
     if not body.vm_name and not (body.vcpu and body.memory_gb is not None):
         raise HTTPException(status_code=400, detail="vm_name veya vcpu + memory_gb gerekli")
     return recommend_placement(db, **body.model_dump())
+
+
+@router.get("/vms")
+def list_vms_for_placement(
+    q: str = "",
+    limit: int = 40,
+    db: Session = Depends(get_db),
+    user: User = Depends(_module),
+):
+    """Yerleşim sekmesi için aranabilir VM listesi (envanter)."""
+    from app.services import virt_insights_data as vd
+    lim = max(1, min(int(limit or 40), 100))
+    needle = (q or "").strip().lower()
+    hvs = vd.virt_hypervisors(db)
+    hv_ids = [h.id for h in hvs]
+    hv_name = {h.id: h.name for h in hvs}
+    rows = []
+    for v in vd.vm_allocations(db, hv_ids):
+        name = v.get("name") or ""
+        if needle and needle not in name.lower():
+            continue
+        rows.append({
+            "name": name,
+            "hypervisor_id": v.get("hypervisor_id"),
+            "hypervisor": hv_name.get(v.get("hypervisor_id")),
+            "cluster": v.get("cluster"),
+            "host": v.get("host"),
+            "vcpu": v.get("vcpu"),
+            "memory_gb": v.get("memory_gb"),
+            "disk_gb": v.get("disk_gb"),
+            "powered_on": v.get("powered_on"),
+        })
+        if len(rows) >= lim:
+            break
+    rows.sort(key=lambda r: (r["name"] or "").lower())
+    return {"ok": True, "items": rows}
 
 
 # ── Geri kazanım ─────────────────────────────────────────────────────────────
@@ -298,7 +357,32 @@ def changes(days: int = 30, platform: Optional[str] = None, hypervisor_id: Optio
     rows = list_changes(db, days=days, platform=platform, source_id=hypervisor_id,
                         entity_kind=entity_kind, entity=entity, limit=limit)
     rows = [r for r in rows if r["platform"] in VIRT_PLATFORMS]
-    return {"changes": rows, "count": len(rows)}
+    from app.models.infra_finding import VirtConfigSnapshot
+    from sqlalchemy import func
+    bq = db.query(func.count(VirtConfigSnapshot.id)).filter(
+        VirtConfigSnapshot.is_baseline.is_(True),
+        VirtConfigSnapshot.platform.in_(list(VIRT_PLATFORMS)),
+    )
+    baseline_count = int(bq.scalar() or 0)
+    suggested = []
+    if baseline_count == 0:
+        # İlk senkron / baseline yok: kullanıcıya önerilen türler
+        suggested = [
+            {"entity_kind": "host", "note": "Önerilen: host baseline"},
+            {"entity_kind": "cluster", "note": "Önerilen: cluster baseline"},
+            {"entity_kind": "datastore", "note": "Önerilen: datastore baseline"},
+            {"entity_kind": "platform", "note": "Önerilen: platform baseline"},
+        ]
+    return {
+        "changes": rows,
+        "count": len(rows),
+        "baseline_count": baseline_count,
+        "suggested_baseline": suggested,
+        "empty_reason": None if rows or baseline_count else (
+            "Henüz değişiklik yok. İlk taramada kayıtlar değişiklik sayılmaz; "
+            "baseline işaretleyerek sapma izlemeyi başlatın."
+        ),
+    }
 
 
 class BaselineRequest(BaseModel):

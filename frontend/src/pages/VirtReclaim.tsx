@@ -69,6 +69,8 @@ export default function VirtReclaim() {
         {tab === 'oversized' && <SimpleTable rows={d.oversized || []} cols={[...vmCols,
           { key: 'avg_cpu_pct', label: 'CPU avg %', className: 'font-mono text-slate-300' },
           { key: 'p95_cpu_pct', label: 'CPU p95 %', className: 'font-mono text-slate-300' },
+          { key: 'confidence', label: t('vi_rc_conf'), render: (r: any) => <span className={r.confidence === 'high' ? 'text-emerald-300' : r.confidence === 'medium' ? 'text-amber-300' : 'text-slate-400'} title={r.reason}>{t(('vi_rc_conf_' + (r.confidence || 'low')) as any)}</span> },
+          { key: 'reason', label: t('vi_rc_why'), className: 'text-xs text-slate-400', render: (r: any) => r.reason || '—' },
           { key: 'suggest', label: t('vi_rc_suggest'), render: (r: any) => <span className="font-mono text-blue-300" title={r.rightsize?.basis}>{fmt(r.rightsize?.vcpu ?? r.vcpu)} vCPU · {fmt(r.rightsize?.memory_gb ?? r.memory_gb)} GB</span> },
         ]} />}
         {tab === 'snapshots' && <FindingsTable base="virt-insights" rows={d.snapshots || []} />}
@@ -79,6 +81,9 @@ export default function VirtReclaim() {
           { key: 'size_gb', label: 'GB', className: 'font-mono text-slate-300' },
           { key: 'modified_at', label: t('vi_rc_modified'), render: (r: any) => r.modified_at ? new Date(r.modified_at).toLocaleDateString() : '—' },
           { key: 'flags', label: t('vi_rc_flags'), className: 'text-xs text-amber-300', render: (r: any) => fileFlags(r, t) },
+          ...(tab === 'orphans' ? [{ key: 'evidence', label: t('vi_rc_why'), className: 'text-xs text-slate-400', render: (r: any) => r.evidence
+            ? <span title={r.evidence.reason}><span className={(r.evidence.class === 'vm_gone' || r.evidence.class === 'detached_from_vm' || r.evidence.class === 'api_verified') ? 'text-emerald-300' : 'text-amber-300'}>{t(('vi_rc_oc_' + r.evidence.class) as any)}</span> — {r.evidence.reason}</span>
+            : '—' }] : []),
         ]} />}
         {tab === 'unused_datastores' && <SimpleTable rows={d.unused_datastores || []} cols={[
           { key: 'name', label: 'Datastore', render: (r: any) => <span className="font-mono text-white">{r.name}</span> },

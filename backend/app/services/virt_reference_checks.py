@@ -15,11 +15,12 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.infra_finding import InfraReferenceData
-from app.services.findings.registry import ISO_VULN, ISO_CONFIG
+from app.services.findings.registry import ISO_VULN, ISO_CONFIG, RESULT_FAIL, RESULT_PASS
 from app.services.findings.store import FindingDraft
 
 KINDS = ("cve_feed", "kb_feed", "upgrade_matrix")
 EOL_WARN_DAYS = 180
+FEED_STALE_DAYS = 30
 _SEV = {"critical": "critical", "important": "high", "high": "high", "moderate": "medium",
         "medium": "medium", "low": "low"}
 
@@ -361,5 +362,37 @@ def upgrade_findings(platform: str, collected: Dict[str, Any], matrix: Optional[
             title="vLCM donanım uyumluluk (HCL) raporu",
             recommendation="Uyumsuz bileşen için firmware/driver güncelleyin veya hedef sürümü yeniden değerlendirin.",
             severity="high" if st == "INCOMPATIBLE" else None,
+        ))
+    return out
+
+
+def feed_age_findings(db: Session, *, now: Optional[datetime] = None) -> List[FindingDraft]:
+    """Yüklü offline paketlerin yaşı: > FEED_STALE_DAYS gün → "güncel değil".
+
+    Yüklenmemiş paket için bulgu üretilmez (paket durumu UI'da ayrıca görünür);
+    eski bir CVE/KB listesi "zafiyet yok" yanılgısı yarattığı için uyarılır.
+    """
+    now = now or datetime.now(timezone.utc)
+    out: List[FindingDraft] = []
+    for row in db.query(InfraReferenceData).all():
+        if row.kind not in KINDS:
+            continue
+        up = row.uploaded_at
+        if up is None:
+            continue
+        if up.tzinfo is None:
+            up = up.replace(tzinfo=timezone.utc)
+        age_days = (now - up).total_seconds() / 86400.0
+        stale = age_days > FEED_STALE_DAYS
+        out.append(FindingDraft(
+            "upg:feed_stale", "cluster", f"feed:{row.kind}", row.kind,
+            RESULT_FAIL if stale else RESULT_PASS,
+            evidence={"kind": row.kind, "uploaded_at": up.isoformat(), "age_days": round(age_days, 1),
+                      "threshold_days": FEED_STALE_DAYS, "source": row.source_label or None},
+            detail=f"{row.kind} paketi {int(age_days)} gün önce yüklendi (eşik {FEED_STALE_DAYS} gün)",
+            severity="medium" if stale else "info",
+            title=f"Referans paketi güncel değil: {row.kind}",
+            recommendation="Güncel CVE/KB/yükseltme paketini 'Paketler & hesaplar' sekmesinden yükleyin.",
+            refs=[ISO_VULN],
         ))
     return out

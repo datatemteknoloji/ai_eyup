@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.services import virt_insights_data as vd
+from app.services import capacity_policy, virt_insights_data as vd
 from app.services.report_analytics import (
     compute_trend_from_series, days_to_threshold_range, horizon_uncertainty_label,
 )
@@ -29,6 +29,19 @@ DS_RESERVE_PCT = 15.0
 DEFAULT_CPU_ASSUMPTION = 0.5
 RUNWAY_DAYS_ALERT = 90
 DS_RUNWAY_DAYS_ALERT = 60
+
+
+class _Thr:
+    """Aktif eşikler (capacity_policies → ContextVar); modül sabitleri yalnız varsayılandır."""
+    mem = property(lambda self: capacity_policy.active()["memory"])
+    cpu = property(lambda self: capacity_policy.active()["cpu"])
+    ds = property(lambda self: capacity_policy.active()["datastore"])
+    n1_warn = property(lambda self: capacity_policy.active()["n1_warn"])
+    vcpu_ratio = property(lambda self: capacity_policy.active()["vcpu_ratio"])
+    ds_reserve = property(lambda self: capacity_policy.active()["ds_reserve"])
+
+
+T = _Thr()
 
 
 def _r(v: Optional[float], n: int = 1) -> Optional[float]:
@@ -118,7 +131,7 @@ def _analyze_cluster(db: Session, hv, platform: str, cluster: str, hosts: List[D
             "cpu_after_pct": _r(100.0 * cpu_used / rem_cpu) if rem_cpu > 0 else None,
         })
         m = n1["mem_after_pct"]
-        n1["status"] = "fail" if m is None or m > 100 else ("warn" if m > N1_WARN_PCT else "ok")
+        n1["status"] = "fail" if m is None or m > 100 else ("warn" if m > T.n1_warn else "ok")
         n1["cpu_warning"] = bool(n1["cpu_after_pct"] and n1["cpu_after_pct"] > 100)
     else:
         n1["status"] = "single_host" if len(usable) == 1 else "no_data"
@@ -164,8 +177,8 @@ def _analyze_cluster(db: Session, hv, platform: str, cluster: str, hosts: List[D
     if with_forecast:
         series = vd.daily_cluster_series(db, hv.id, cluster, [h["host_name"] for h in usable])
         out["forecast"] = {
-            "memory": _runway(series["mem_pct"], out["memory"]["used_pct"], MEM_THRESHOLD),
-            "cpu": _runway(series["cpu_pct"], out["cpu"]["used_pct"], CPU_THRESHOLD),
+            "memory": _runway(series["mem_pct"], out["memory"]["used_pct"], T.mem),
+            "cpu": _runway(series["cpu_pct"], out["cpu"]["used_pct"], T.cpu),
         }
     return out
 
@@ -202,7 +215,7 @@ def _datastores(db: Session, hv_ids: List[int], with_forecast: bool = True) -> L
         )
         if with_forecast:
             row["forecast"] = _runway(vd.daily_datastore_series(db, d["hypervisor_id"], d["name"]),
-                                      d.get("usage_pct"), DS_THRESHOLD)
+                                      d.get("usage_pct"), T.ds)
         out.append(row)
     out.sort(key=lambda r: (r.get("usage_pct") or 0), reverse=True)
     return out
@@ -215,7 +228,7 @@ def _actions(c: Dict[str, Any], reclaim: Dict[str, Any], others: List[Dict[str, 
     need_gb = 0.0
     n1 = c["n_plus_one"]
     if n1.get("remaining_mem_gb"):
-        target = n1["remaining_mem_gb"] * (N1_WARN_PCT / 100.0)
+        target = n1["remaining_mem_gb"] * (T.n1_warn / 100.0)
         need_gb = max(0.0, (mem["used_gb"] or 0) - target)
     rc = reclaim or {}
     rec_off = float(rc.get("powered_off_memory_gb") or 0)
@@ -251,7 +264,7 @@ def _actions(c: Dict[str, Any], reclaim: Dict[str, Any], others: List[Dict[str, 
     remaining = max(0.0, need_gb - freed)
     host_gb = c.get("typical_host_mem_gb") or 0
     if remaining > 0 and host_gb:
-        hosts_needed = math.ceil(remaining / (host_gb * N1_WARN_PCT / 100.0))
+        hosts_needed = math.ceil(remaining / (host_gb * T.n1_warn / 100.0))
         acts.append({
             "step": 4, "kind": "invest", "title": "Yatırım",
             "detail": (f"Geri kazanım ve right-size sonrası N+1 için ~{remaining:.0f} GB Memory açığı kalıyor: "
@@ -275,6 +288,7 @@ def _reclaim_by_cluster(db: Session, hv_ids: List[int]) -> Dict[Tuple[int, str],
 
 def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster: Optional[str] = None,
                    platform: Optional[str] = None, with_forecast: bool = True) -> Dict[str, Any]:
+    capacity_policy.activate(db)
     hvs = vd.virt_hypervisors(db, platform=platform, hypervisor_id=hypervisor_id)
     hv_ids = [h.id for h in hvs]
     hosts = vd.latest_hosts(db, hv_ids)
@@ -307,8 +321,8 @@ def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster:
         "ok": True,
         "clusters": clusters,
         "datastores": ds,
-        "thresholds": {"memory": MEM_THRESHOLD, "cpu": CPU_THRESHOLD, "datastore": DS_THRESHOLD,
-                       "n1_warn": N1_WARN_PCT, "vcpu_ratio": VCPU_RATIO_WARN},
+        "thresholds": {"memory": T.mem, "cpu": T.cpu, "datastore": T.ds,
+                       "n1_warn": T.n1_warn, "vcpu_ratio": T.vcpu_ratio, "ds_reserve": T.ds_reserve},
         "method": ("Memory birincil kısıt (N+1 kararı); CPU çekirdek-eşdeğeri, uyarı amaçlı. "
                    "Tükenme tahmini: 90 günlük günlük ortalama, Theil–Sen eğimi, aralık (hızlı/tipik/yavaş)."),
     }
@@ -344,17 +358,17 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
         n1_after = (100.0 * mem_used / n1["remaining_mem_gb"]) if n1.get("remaining_mem_gb") else None
         ratio_after = ((cpu["vcpu_allocated"] or 0) + add_vcpu) / cpu["total_cores"] if cpu["total_cores"] else None
         fits = True
-        if eff_mem_pct is None or eff_mem_pct > MEM_THRESHOLD:
+        if eff_mem_pct is None or eff_mem_pct > T.mem:
             fits = False
-            reasons.append(f"Effective Memory %{_r(eff_mem_pct)} > %{MEM_THRESHOLD:.0f}")
+            reasons.append(f"Effective Memory %{_r(eff_mem_pct)} > %{T.mem:.0f}")
         if n1_after is not None and n1_after > 100:
             fits = False
             reasons.append(f"N+1 bozulur (en büyük host düşünce Memory %{_r(n1_after)})")
-        elif n1_after is not None and n1_after > N1_WARN_PCT:
+        elif n1_after is not None and n1_after > T.n1_warn:
             reasons.append(f"N+1 sınırda (%{_r(n1_after)})")
-        if eff_cpu_pct is not None and eff_cpu_pct > CPU_THRESHOLD:
+        if eff_cpu_pct is not None and eff_cpu_pct > T.cpu:
             reasons.append(f"CPU effective %{_r(eff_cpu_pct)} — performans riski (uyarı)")
-        if ratio_after and ratio_after > VCPU_RATIO_WARN:
+        if ratio_after and ratio_after > T.vcpu_ratio:
             reasons.append(f"vCPU:çekirdek {ratio_after:.1f}:1 (uyarı)")
         if c["hosts_usable"] == 0:
             fits = False
@@ -369,7 +383,7 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
             for d in cands:
                 capg = d.get("capacity_gb") or 0
                 free_after = (d.get("free_gb") or 0) - add_disk
-                if capg and free_after >= capg * DS_RESERVE_PCT / 100.0:
+                if capg and free_after >= capg * T.ds_reserve / 100.0:
                     if best is None or free_after > best[1]:
                         best = (d, free_after)
             if best:
@@ -377,7 +391,7 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
                            "usage_after_pct": _r(100.0 - 100.0 * best[1] / best[0]["capacity_gb"])}
             else:
                 fits = False
-                reasons.append(f"%{DS_RESERVE_PCT:.0f} rezerv korunarak {add_disk:.0f} GB alacak datastore yok")
+                reasons.append(f"%{T.ds_reserve:.0f} rezerv korunarak {add_disk:.0f} GB alacak datastore yok")
         score = None
         if eff_mem_pct is not None:
             score = round(100 - eff_mem_pct * 0.6 - (eff_cpu_pct or 0) * 0.3 - (n1_after or 0) * 0.1, 1)
@@ -402,7 +416,7 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
         "assumptions": [
             "Yeni VM'in Memory'si tamamen kullanılıyor kabul edilir (en kötü durum).",
             f"CPU kullanımı vCPU başına %{cpu_util_assumption * 100:.0f} varsayılır.",
-            f"Datastore'da %{DS_RESERVE_PCT:.0f} boş alan rezervi korunur.",
+            f"Datastore'da %{T.ds_reserve:.0f} boş alan rezervi korunur.",
             "HA rezervi cluster politikasından; okunamıyorsa 1 host varsayılır.",
         ],
         "results": results,
@@ -429,22 +443,35 @@ def _cluster_datastore_names(db: Session, clusters: List[Dict[str, Any]]) -> Dic
 
 def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
     """Kapasite sonucu → (platform, hypervisor_id) başına bulgu taslakları."""
+    th = cap.get("thresholds") or {}
+    capacity_policy.activate(values={"memory": th.get("memory"), "cpu": th.get("cpu"), "datastore": th.get("datastore"),
+                                     "n1_warn": th.get("n1_warn"), "vcpu_ratio": th.get("vcpu_ratio"),
+                                     "ds_reserve": th.get("ds_reserve")})
     from app.services.findings.store import FindingDraft
     out: Dict[Tuple[str, int], List[FindingDraft]] = defaultdict(list)
     for c in cap["clusters"]:
         key = (c["platform"], c["hypervisor_id"])
         ref = f"cluster:{c['cluster']}"
         n1 = c["n_plus_one"]
+        from app.services.findings.registry import RESULT_FAIL, RESULT_NOT_APPLICABLE, RESULT_PASS
+        st = n1.get("status")
         if n1.get("evaluable"):
-            st = n1.get("status")
             out[key].append(FindingDraft(
                 "cap.cluster.n_plus_one", "cluster", ref, c["cluster"],
-                "fail" if st in ("fail", "warn") else "pass",
+                RESULT_FAIL if st in ("fail", "warn") else RESULT_PASS,
                 evidence={k: n1.get(k) for k in ("largest_host", "largest_host_mem_gb", "remaining_mem_gb",
                                                  "mem_after_pct", "cpu_after_pct")},
                 detail=(f"En büyük host ({n1.get('largest_host')}) düşünce Memory %{n1.get('mem_after_pct')}"
                         + (" — sığmıyor" if st == "fail" else " — sınırda" if st == "warn" else "")),
                 cluster_name=c["cluster"], severity="critical" if st == "fail" else ("high" if st == "warn" else None),
+            ))
+        elif st == "single_host":
+            out[key].append(FindingDraft(
+                "cap.cluster.n_plus_one", "cluster", ref, c["cluster"],
+                RESULT_NOT_APPLICABLE,
+                evidence={"status": st, "hosts_usable": c.get("hosts_usable")},
+                detail="Tek host — N+1 (failover) uygulanamaz",
+                cluster_name=c["cluster"],
             ))
         fm = (c.get("forecast") or {}).get("memory") or {}
         days = (fm.get("days") or {}).get("typical") if fm.get("days") else None
@@ -454,8 +481,8 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
                 "fail" if days is not None and days < RUNWAY_DAYS_ALERT else
                 ("pass" if fm.get("confidence") not in ("none",) else "not_measurable"),
                 evidence={"used_pct": c["memory"]["used_pct"], **fm},
-                detail=(f"Memory %{MEM_THRESHOLD:.0f} eşiği aşılmış (%{c['memory']['used_pct']})" if days == 0
-                        else f"Memory %{MEM_THRESHOLD:.0f} eşiğine ~{days} gün" if days is not None
+                detail=(f"Memory %{T.mem:.0f} eşiği aşılmış (%{c['memory']['used_pct']})" if days == 0
+                        else f"Memory %{T.mem:.0f} eşiğine ~{days} gün" if days is not None
                         else "Eşiğe ulaşma öngörülmüyor / veri yetersiz"),
                 cluster_name=c["cluster"], severity="critical" if days == 0 else None,
             ))
@@ -467,8 +494,8 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
                 "fail" if cdays is not None and cdays < RUNWAY_DAYS_ALERT else
                 ("pass" if fc.get("confidence") != "none" else "not_measurable"),
                 evidence={"used_pct": c["cpu"]["used_pct"], **fc},
-                detail=(f"CPU %{CPU_THRESHOLD:.0f} eşiği aşılmış (%{c['cpu']['used_pct']})" if cdays == 0
-                        else f"CPU %{CPU_THRESHOLD:.0f} eşiğine ~{cdays} gün" if cdays is not None
+                detail=(f"CPU %{T.cpu:.0f} eşiği aşılmış (%{c['cpu']['used_pct']})" if cdays == 0
+                        else f"CPU %{T.cpu:.0f} eşiğine ~{cdays} gün" if cdays is not None
                         else "Eşiğe ulaşma öngörülmüyor / veri yetersiz"),
                 cluster_name=c["cluster"],
             ))
@@ -476,7 +503,7 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
         if ratio is not None:
             out[key].append(FindingDraft(
                 "cap.cluster.vcpu_ratio", "cluster", ref, c["cluster"],
-                "fail" if ratio > VCPU_RATIO_WARN else "pass",
+                "fail" if ratio > T.vcpu_ratio else "pass",
                 evidence={"vcpu": c["cpu"]["vcpu_allocated"], "cores": c["cpu"]["total_cores"], "ratio": ratio},
                 detail=f"vCPU:çekirdek = {ratio}:1", cluster_name=c["cluster"],
             ))
@@ -491,17 +518,17 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
         u = d.get("usage_pct")
         if u is not None:
             out[key].append(FindingDraft(
-                "cap.datastore.usage", "datastore", ref, d["name"], "fail" if u >= DS_THRESHOLD else "pass",
+                "cap.datastore.usage", "datastore", ref, d["name"], "fail" if u >= T.ds else "pass",
                 evidence={"usage_pct": u, "free_gb": d.get("free_gb"), "capacity_gb": d.get("capacity_gb")},
                 detail=f"Doluluk %{u}", severity="critical" if u >= 95 else None,
             ))
         f = d.get("forecast") or {}
         dd = (f.get("days") or {}).get("typical") if f.get("days") else None
-        if f and u is not None and u < DS_THRESHOLD:
+        if f and u is not None and u < T.ds:
             out[key].append(FindingDraft(
                 "cap.datastore.runway", "datastore", ref, d["name"],
                 "fail" if dd is not None and dd < DS_RUNWAY_DAYS_ALERT else
                 ("pass" if f.get("confidence") != "none" else "not_measurable"),
-                evidence=f, detail=(f"%{DS_THRESHOLD:.0f} eşiğine ~{dd} gün" if dd is not None else "Trend yok"),
+                evidence=f, detail=(f"%{T.ds:.0f} eşiğine ~{dd} gün" if dd is not None else "Trend yok"),
             ))
     return out

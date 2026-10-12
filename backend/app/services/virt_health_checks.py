@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 from app.services.findings.store import FindingDraft
 
 LONG_MAINTENANCE_DAYS = 7
+SENSOR_REPEAT_WINDOW_DAYS = 30
+SENSOR_REPEAT_MIN_DAYS = 3
 OVERCOMMIT_PCT = 150.0
 HW_EVENT_RE = re.compile(
     r"(hardware|sensor|ecc|memory error|dimm|psu|power supply|fan|temperature|raid|disk fail|"
@@ -203,6 +205,13 @@ def _vmware(col: Dict[str, Any], since: Since, hw: Dict[str, Any]) -> List[Findi
                                     "fail" if prov > OVERCOMMIT_PCT else "pass",
                                     evidence={"provisioned_pct": round(prov, 1), "capacity_gb": cap,
                                               "uncommitted_gb": unc}, detail=f"Provisioned %{prov:.0f}"))
+    # Konsolidasyon gerekli VM'ler yalnız fail üretir; sorun giderilince bulgu otomatik çözülür.
+    for vm in col.get("vms") or []:
+        if vm.get("consolidation_needed") and not vm.get("template"):
+            out.append(FindingDraft("vmw.vm.consolidation_needed", "vm", f"vm:{vm['ref']}", vm.get("name") or vm["ref"],
+                                    "fail", evidence={"snapshots": len(vm.get("snapshots") or [])},
+                                    detail="runtime.consolidationNeeded=true",
+                                    cluster_name=None))
     return out
 
 
@@ -222,6 +231,18 @@ def _hardware_host(platform: str, h: Dict[str, Any], cl: Optional[str], hw: Dict
                                           "bios": h["config"].get("bios")},
                                 detail=", ".join(str(s.get("name")) for s in sensors[:5]), cluster_name=cl))
         issues = [i for i in (inv.get("config_issues") or []) if i]
+        sd = (hw.get("sensor_days") or {}).get(name)
+        if sd is None or not sd.get("observed_days"):
+            out.append(FindingDraft("hw.host.sensor_repeat", "host", ref, name, "not_measurable",
+                                    detail="Son 30 günde sensör metrik geçmişi yok", cluster_name=cl))
+        else:
+            n = int(sd["bad_days"])
+            out.append(FindingDraft("hw.host.sensor_repeat", "host", ref, name,
+                                    "fail" if n >= SENSOR_REPEAT_MIN_DAYS else "pass",
+                                    evidence={"bad_days": n, "observed_days": sd["observed_days"],
+                                              "window_days": SENSOR_REPEAT_WINDOW_DAYS},
+                                    detail=f"{SENSOR_REPEAT_WINDOW_DAYS} günün {n} gününde sensör alarmı "
+                                           f"({sd['observed_days']} gün gözlendi)", cluster_name=cl))
         out.append(FindingDraft("hw.host.config_issue", "host", ref, name, "fail" if issues else "pass",
                                 evidence={"issues": issues[:20]},
                                 detail="; ".join(str(i.get("message") if isinstance(i, dict) else i)[:120] for i in issues[:3]),
@@ -377,7 +398,29 @@ def hardware_context(db: Session, hv_id: int) -> Dict[str, Any]:
         if host:
             events[host].append({"title": (e.title or "")[:200], "at": e.created_at.isoformat() if e.created_at else None,
                                  "severity": e.severity, "count": e.occurrence_count})
-    return {"metrics": metrics, "inventory": inv, "events": events}
+    return {"metrics": metrics, "inventory": inv, "events": events,
+            "sensor_days": sensor_history(db, hv_id)}
+
+
+def sensor_history(db: Session, hv_id: int, days: int = SENSOR_REPEAT_WINDOW_DAYS) -> Dict[str, Dict[str, int]]:
+    """Host başına: gözlenen gün sayısı ve sensör alarmı (sensor_bad_count>0) görülen gün sayısı."""
+    from sqlalchemy import text
+    try:
+        rows = db.execute(text("""
+            SELECT host_name,
+                   count(DISTINCT date_trunc('day', timestamp)) AS observed_days,
+                   count(DISTINCT date_trunc('day', timestamp)) FILTER (WHERE COALESCE(sensor_bad_count, 0) > 0) AS bad_days
+              FROM hypervisor_host_metrics
+             WHERE hypervisor_id = :hv AND sensor_bad_count IS NOT NULL
+               AND timestamp > now() - make_interval(days => :d)
+             GROUP BY host_name
+        """), {"hv": int(hv_id), "d": int(days)}).mappings().all()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        return {}
+    return {r["host_name"]: {"observed_days": min(int(r["observed_days"] or 0), days),
+                                   "bad_days": min(int(r["bad_days"] or 0), days)}
+            for r in rows}
 
 
 def evaluate(platform: str, collected: Dict[str, Any], *, since: Optional[Since] = None,

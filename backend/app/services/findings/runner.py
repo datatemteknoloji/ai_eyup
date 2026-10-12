@@ -189,6 +189,7 @@ def run_for_hypervisor(db: Session, hv, *, file_scan: Optional[bool] = None,
                     categories=("known_issue",), drafts=kdrafts, run_id=run.id, now=now)
             udrafts = virt_reference_checks.upgrade_findings(
                 platform, col, virt_reference_checks.get_ref(db, "upgrade_matrix"))
+            udrafts = list(udrafts) + virt_reference_checks.feed_age_findings(db, now=now)
             stats["upgrade"] = store.persist_findings(db, platform=platform, source_id=hv.id, source_name=hv.name,
                                                       categories=("upgrade",), drafts=udrafts, run_id=run.id, now=now)
         # Kapasite DB'den hesaplanır — toplayıcı başarısız olsa da güncellenir

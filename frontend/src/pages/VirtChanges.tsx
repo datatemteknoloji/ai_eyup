@@ -160,7 +160,10 @@ export function ChangesView({ base }: { base: InsightsBase }) {
           </div>
           <Panel>
             {q.isLoading ? <div className="p-6 text-sm text-slate-400">{t('loading')}</div> : rows.length === 0 ? (
-              <div className="py-10 text-center text-sm text-slate-500">{t('vi_ch_none')}</div>
+              <div className="py-10 text-center text-sm text-slate-500 space-y-1">
+                <div>{t('vi_ch_none')}</div>
+                {q.data?.empty_reason && <div className="text-xs text-slate-400">{t('vi_ch_empty_baseline')}</div>}
+              </div>
             ) : (
               <table className="w-full text-sm">
                 <thead>

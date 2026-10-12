@@ -1,13 +1,18 @@
-import React, { useState } from 'react'
-import { Gauge } from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { Gauge, Info } from 'lucide-react'
 import { useT } from '../i18n/LocaleProvider'
 import { GhostButton, NEON, PageHeader, Tabs } from '../components/aiops/ui'
-import { Bar, PageInfo, Panel, RunBar, SimpleTable, Stat, apiSend, fmt, pctTone, useInsights } from '../components/insights/insightsKit'
+import { Bar, PageInfo, Panel, RunBar, SimpleTable, Stat, apiGet, apiSend, fmt, pctTone, useInsights } from '../components/insights/insightsKit'
 
 type Cluster = any
 
 function n1Tone(s?: string) {
   return s === 'fail' ? 'text-red-400' : s === 'warn' ? 'text-amber-400' : s === 'ok' ? 'text-emerald-400' : 'text-slate-400'
+}
+
+/** Tek host / veri yok: "N+1 uygulanamaz" (ölçülemedi değil). */
+function n1IsNotApplicable(s?: string) {
+  return s === 'single_host'
 }
 
 function runwayTxt(f: any, t: (k: any, v?: any) => string) {
@@ -25,7 +30,9 @@ function ClusterCard({ c }: { c: Cluster }) {
   }
   return (
     <Panel title={<span>{c.cluster} <span className="text-xs text-slate-500 font-normal">· {c.hypervisor} ({c.platform})</span></span>}
-      right={<span className={`text-xs font-semibold ${n1Tone(n1.status)}`}>N+1: {n1Label[n1.status] || n1.status}{n1.mem_after_pct != null ? ` (%${fmt(n1.mem_after_pct)})` : ''}</span>}>
+      right={n1IsNotApplicable(n1.status)
+        ? <span title={t('vi_n1_single_hint')} className="text-xs font-semibold text-slate-400 border border-dashed border-slate-500/40 rounded px-1.5 py-0.5">N+1: {t('vi_res_na')}</span>
+        : <span className={`text-xs font-semibold ${n1Tone(n1.status)}`}>N+1: {n1Label[n1.status] || n1.status}{n1.mem_after_pct != null ? ` (%${fmt(n1.mem_after_pct)})` : ''}</span>}>
       <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
         <div className="space-y-1.5">
           <div className="flex justify-between text-slate-400"><span>{t('vi_cap_eff_mem')}</span><span className={`font-mono ${pctTone(c.memory?.effective_used_pct, 75, 85)}`}>%{fmt(c.memory?.effective_used_pct)}</span></div>
@@ -68,6 +75,40 @@ function Num({ label, value, onChange, step = '1' }: { label: string; value: str
   )
 }
 
+type VmOpt = { name: string; hypervisor?: string; cluster?: string; vcpu?: number; memory_gb?: number; disk_gb?: number }
+
+/** Aranabilir VM seçici (envanterden; elle yazım yok — yalnız listeden eşleşen ad geçerli sayılır). */
+function VmPicker({ label, placeholder, onPick, listId }: { label: string; placeholder: string; onPick: (vm: VmOpt | null) => void; listId: string }) {
+  const [q, setQ] = useState('')
+  const [opts, setOpts] = useState<VmOpt[]>([])
+  useEffect(() => {
+    let cancelled = false
+    const tmr = setTimeout(async () => {
+      try {
+        const r = await apiGet<any>('virt-insights', `/vms?q=${encodeURIComponent(q.trim())}&limit=40`)
+        if (!cancelled) setOpts(r.items || [])
+      } catch { if (!cancelled) setOpts([]) }
+    }, 250)
+    return () => { cancelled = true; clearTimeout(tmr) }
+  }, [q])
+  return (
+    <label className="flex flex-col gap-1 text-xs text-slate-400">{label}
+      <input list={listId} value={q} placeholder={placeholder}
+        onChange={e => {
+          const v = e.target.value
+          setQ(v)
+          onPick(opts.find(o => o.name === v) || null)
+        }}
+        className="w-64 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white" />
+      <datalist id={listId}>
+        {opts.map(o => (
+          <option key={`${o.name}-${o.hypervisor}-${o.cluster}`} value={o.name}>{[o.hypervisor, o.cluster].filter(Boolean).join(' · ')}</option>
+        ))}
+      </datalist>
+    </label>
+  )
+}
+
 function WhatIf() {
   const t = useT()
   const [vcpu, setVcpu] = useState('8')
@@ -76,6 +117,7 @@ function WhatIf() {
   const [count, setCount] = useState('1')
   const [res, setRes] = useState<any>(null)
   const [err, setErr] = useState('')
+  const [cloned, setCloned] = useState<VmOpt | null>(null)
   const run = async () => {
     setErr('')
     try {
@@ -86,12 +128,21 @@ function WhatIf() {
     <Panel title={t('vi_whatif_title')}>
       <div className="p-4 space-y-4">
         <div className="flex flex-wrap items-end gap-3">
+          <VmPicker label={t('vi_whatif_clone')} placeholder={t('vi_whatif_clone_ph')} listId="vi-whatif-vm-list"
+            onPick={vm => {
+              setCloned(vm)
+              if (vm) {
+                setVcpu(String(vm.vcpu || 1)); setMem(String(vm.memory_gb ?? 0)); setDisk(String(Math.round(vm.disk_gb || 0)))
+              }
+            }} />
+          <span className="text-xs text-slate-500 pb-2">{t('vi_or')}</span>
           <Num label="vCPU" value={vcpu} onChange={setVcpu} />
           <Num label="Memory (GB)" value={mem} onChange={setMem} />
           <Num label="Disk (GB)" value={disk} onChange={setDisk} />
           <Num label={t('vi_whatif_count')} value={count} onChange={setCount} />
           <GhostButton accent={NEON.blue} onClick={run}>{t('vi_whatif_run')}</GhostButton>
         </div>
+        {cloned && <div className="text-[11px] text-blue-300">{t('vi_whatif_cloned', { name: cloned.name, vcpu: cloned.vcpu ?? 0, mem: cloned.memory_gb ?? 0, disk: Math.round(cloned.disk_gb || 0) })}</div>}
         {err && <div className="text-red-300 text-xs">{err}</div>}
         {res && (
           <>
@@ -113,7 +164,7 @@ function WhatIf() {
 
 function Placement() {
   const t = useT()
-  const [vm, setVm] = useState('')
+  const [vm, setVm] = useState<VmOpt | null>(null)
   const [vcpu, setVcpu] = useState('4')
   const [mem, setMem] = useState('16')
   const [res, setRes] = useState<any>(null)
@@ -121,7 +172,7 @@ function Placement() {
   const run = async () => {
     setErr('')
     try {
-      const body = vm.trim() ? { vm_name: vm.trim() } : { vcpu: Number(vcpu), memory_gb: Number(mem) }
+      const body = vm ? { vm_name: vm.name } : { vcpu: Number(vcpu), memory_gb: Number(mem) }
       setRes(await apiSend('virt-insights', '/placement', 'POST', body))
     } catch (e: any) { setErr(e.message) }
   }
@@ -129,10 +180,7 @@ function Placement() {
     <Panel title={t('vi_place_title')}>
       <div className="p-4 space-y-4">
         <div className="flex flex-wrap items-end gap-3">
-          <label className="flex flex-col gap-1 text-xs text-slate-400">{t('vi_place_vm')}
-            <input value={vm} onChange={e => setVm(e.target.value)} placeholder={t('vi_place_vm_ph')}
-              className="w-56 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white" />
-          </label>
+          <VmPicker label={t('vi_place_vm')} placeholder={t('vi_place_vm_ph')} listId="vi-place-vm-list" onPick={setVm} />
           <span className="text-xs text-slate-500 pb-2">{t('vi_or')}</span>
           <Num label="vCPU" value={vcpu} onChange={setVcpu} />
           <Num label="Memory (GB)" value={mem} onChange={setMem} />
@@ -164,6 +212,79 @@ function Placement() {
   )
 }
 
+/** (i) bilgi balonu — tıklayınca açılır, dışarı tıklayınca/Esc ile kapanır. */
+function InfoDot({ text, label }: { text: string; label: string }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLSpanElement | null>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [open])
+  return (
+    <span ref={ref} className="relative inline-flex align-middle ml-1.5">
+      <button type="button" aria-label={label} title={label} onClick={() => setOpen(o => !o)}
+        className="text-slate-400 hover:text-blue-300"><Info size={14} /></button>
+      {open && (
+        <span role="tooltip" className="absolute left-0 top-5 z-30 w-72 rounded-lg border border-white/[0.12] bg-slate-900 p-3 text-[11px] leading-snug text-slate-200 shadow-xl font-normal">
+          {text}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function PolicyPanel({ onSaved }: { onSaved: () => void }) {
+  const t = useT()
+  const [spec, setSpec] = useState<Record<string, any>>({})
+  const [vals, setVals] = useState<Record<string, string>>({})
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const load = async () => {
+    const r = await apiGet<any>('virt-insights', '/capacity/policy')
+    setSpec(r.spec || {})
+    setVals(Object.fromEntries(Object.entries(r.values || {}).map(([k, v]) => [k, String(v)])))
+  }
+  useEffect(() => { load().catch(e => setMsg({ ok: false, text: e.message })) }, [])
+  const save = async () => {
+    setMsg(null)
+    try {
+      const r = await apiSend<any>('virt-insights', '/capacity/policy', 'PUT',
+        { values: Object.fromEntries(Object.entries(vals).map(([k, v]) => [k, Number(v)])) })
+      setSpec(r.spec || {})
+      setMsg({ ok: true, text: t('vi_policy_saved') })
+      onSaved()
+    } catch (e: any) { setMsg({ ok: false, text: e.message }) }
+  }
+  const reset = () => setVals(Object.fromEntries(Object.entries(spec).map(([k, s]: any) => [k, String(s.default)])))
+  return (
+    <Panel title={t('vi_policy_title')}>
+      <div className="p-4 space-y-4">
+        <div className="text-xs text-slate-400">{t('vi_policy_intro')}</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {Object.entries(spec).map(([k, s]: any) => (
+            <label key={k} className="flex flex-col gap-1 text-xs text-slate-400" data-testid={`policy-${k}`}>
+              <span className="text-slate-200 flex items-center">{s.label}<InfoDot label={s.label} text={t(('vi_policy_help_' + k) as any)} />{s.overridden && <span className="ml-2 text-amber-300">{t('vi_policy_changed', { d: s.default })}</span>}</span>
+              <input type="number" min={s.min} max={s.max} step="1" value={vals[k] ?? ''}
+                onChange={e => setVals(v => ({ ...v, [k]: e.target.value }))}
+                className="w-32 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
+              <span className="text-slate-500">{t('vi_policy_range', { a: s.min, b: s.max, d: s.default })}</span>
+            </label>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <GhostButton accent={NEON.blue} onClick={save}>{t('vi_policy_save')}</GhostButton>
+          <GhostButton accent={NEON.blue} onClick={reset}>{t('vi_policy_reset')}</GhostButton>
+        </div>
+        {msg && <div className={`text-xs ${msg.ok ? 'text-emerald-300' : 'text-red-300'}`}>{msg.text}</div>}
+        <div className="text-[11px] text-slate-500">{t('vi_policy_note')}</div>
+      </div>
+    </Panel>
+  )
+}
+
 export default function VirtCapacity() {
   const t = useT()
   const [tab, setTab] = useState('clusters')
@@ -188,6 +309,7 @@ export default function VirtCapacity() {
         { id: 'datastores', label: 'Datastore', count: ds.length },
         { id: 'whatif', label: t('vi_whatif_tab') },
         { id: 'placement', label: t('vi_place_tab') },
+        { id: 'policy', label: t('vi_policy_tab') },
       ]} />
       {q.isLoading && <div className="text-sm text-slate-400">{t('loading')}</div>}
       {q.error && <div className="text-sm text-red-300">{(q.error as Error).message}</div>}
@@ -213,6 +335,7 @@ export default function VirtCapacity() {
       )}
       {tab === 'whatif' && <WhatIf />}
       {tab === 'placement' && <Placement />}
+      {tab === 'policy' && <PolicyPanel onSaved={() => q.refetch?.()} />}
     </div>
   )
 }

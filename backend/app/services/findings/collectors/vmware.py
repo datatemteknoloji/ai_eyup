@@ -44,7 +44,8 @@ DS_PATHS = [
     "summary.capacity", "summary.freeSpace", "summary.uncommitted",
     "summary.maintenanceMode", "host", "browser",
 ]
-VM_PATHS = ["name", "runtime.host", "runtime.powerState", "config.template", "snapshot.rootSnapshotList"]
+VM_PATHS = ["name", "runtime.host", "runtime.powerState", "config.template", "snapshot.rootSnapshotList",
+            "runtime.consolidationNeeded"]
 VM_FILE_PATHS = VM_PATHS + ["layoutEx.file", "config.hardware.device"]
 
 SAN_TRANSPORTS = (
@@ -395,6 +396,7 @@ def _parse_vm(row: Dict[str, Any], with_files: bool) -> Dict[str, Any]:
         "power": row.get("runtime.powerState"),
         "template": bool(as_bool(row.get("config.template"))),
         "snapshots": snaps,
+        "consolidation_needed": as_bool(row.get("runtime.consolidationNeeded")) is True,
     }
     if with_files:
         files = []
