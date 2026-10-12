@@ -31,6 +31,21 @@ class BkJob(Base):
     repository_provider_id = Column(String(128), nullable=True)
     repository_name = Column(String(512), nullable=True)
     objects_count = Column(Integer, nullable=True)
+    # F.1: iş yapılandırması (Get All Jobs). NULL = ölçülemedi (yanıtta yok / yetki) — False DEĞİL.
+    encryption_enabled = Column(Boolean, nullable=True)
+    cbt_enabled = Column(Boolean, nullable=True)
+    app_aware_enabled = Column(Boolean, nullable=True)
+    backup_health_enabled = Column(Boolean, nullable=True)
+    retention_type = Column(String(32), nullable=True)
+    retention_quantity = Column(Integer, nullable=True)
+    gfs_enabled = Column(Boolean, nullable=True)
+    retry_enabled = Column(Boolean, nullable=True)
+    retry_count = Column(Integer, nullable=True)
+    retry_wait_min = Column(Integer, nullable=True)
+    window_enabled = Column(Boolean, nullable=True)
+    schedule_summary = Column(String(255), nullable=True)
+    config_state = Column(String(16), nullable=True)   # ok | forbidden | error | NULL (hiç okunmadı)
+    config_json = Column(Text, nullable=True)          # GFS ayrıntısı, proxy seçimi, dahil edilen VM'ler (özet)
 
 
 class BkSession(Base):
@@ -61,6 +76,9 @@ class BkRepository(Base):
     used_bytes = Column(BigInteger, nullable=True)
     is_online = Column(Boolean, nullable=True)
     repo_type = Column(String(64), nullable=True)
+    # F.1: değişmezlik DOĞRULANAMAZ (Get All Repositories şemasında alan yok) → daima 'not_measurable'.
+    # `immutable` (Dilim A, varsayılan False) yanıltıcıdır; okunmaz.
+    immutability_status = Column(String(24), nullable=False, default="not_measurable", server_default="not_measurable")
 
 
 class BkProtectedObject(Base):
@@ -80,6 +98,27 @@ class BkProtectedObject(Base):
     last_restore_point_at = Column(DateTime(timezone=True), nullable=True, index=True)
     restore_points_count = Column(Integer, nullable=True)
     job_provider_id = Column(String(128), nullable=True)  # restorePoint.backupId → backups.jobId
+    # F.1: eşleşme anahtarı = normalize(vCenter hostName) + moref. Doküman örneğiyle uyumlu, sahada doğrulanmadı.
+    host_name = Column(String(255), nullable=True)
+    host_verified = Column(Boolean, nullable=False, default=False, server_default="false")
+
+
+class BkProxy(Base):
+    """F.1: yedek proxy'leri (Get All Proxy States + Get All Proxies; Viewer dahil)."""
+    __tablename__ = "bk_proxies"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instance_id = Column(Integer, ForeignKey("integration_instances.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_proxy_id = Column(String(128), nullable=False)
+    name = Column(String(512), nullable=False, default="")
+    proxy_type = Column(String(32), nullable=True)
+    host_name = Column(String(512), nullable=True)      # ham değer ("This server" olabilir — api_ref #9)
+    is_online = Column(Boolean, nullable=True)
+    is_disabled = Column(Boolean, nullable=True)
+    is_out_of_date = Column(Boolean, nullable=True)
+    transport_mode = Column(String(32), nullable=True)
+    max_tasks = Column(Integer, nullable=True)
+    synced_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class BkRestorePoint(Base):

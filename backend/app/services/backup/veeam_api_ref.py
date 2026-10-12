@@ -28,18 +28,38 @@ Belirsiz / kodlanmadı (kullanıcıya sorulacak):
      hesaplanır; ``usedSpaceGB`` kullanılmaz. GB'nin GiB/GB olduğu belirtilmemiş —
      yüzde birimden bağımsız olduğu için sorun değil, bayt değerleri 1024^3 ile
      yaklaşık çevrilir.
-  4. Immutability (hardened repository / object lock): ``repositories/states``
-     yanıtında yok; ``GET /backupInfrastructure/repositories/{id}`` alanları
-     okunmadı → ``BkRepository.immutable`` Dilim D'de DOLDURULMAZ.
-  5. ``sessions`` (liste) yanıtında işlenen/aktarılan bayt yok; ``jobs/states``
-     ``sessionProgress.processedSize`` birimi (bayt?) belirtilmemiş → değişim
-     hızı (change_rate) bulgusu Dilim E'ye bırakıldı.
+  4. Immutability (hardened repository / object lock): F.1'de ``GET
+     /backupInfrastructure/repositories`` yanıt şeması okundu: ``type`` enum'unda
+     ``LinuxHardened`` ve nesne depolama türleri var, ama immutability
+     **açık mı / süre kaç gün** alanı örneklerde YOK → durum daima
+     ``not_measurable`` (``BkRepository.immutable`` kullanılmaz; yanıltıcı
+     varsayılanı False'tur). ``type`` yalnız bilgi olarak gösterilir.
+  5. ``sessions`` (liste) yanıtında işlenen/aktarılan bayt yok;
+     ``jobs/states.sessionProgress`` ve ``taskSessions[].progress``
+     ``processedSize/readSize/transferredSize`` alanlarının BİRİMİ dokümanda
+     yazmıyor (F.1'de yeniden okundu; örnek değerler 21474836480 = 20 GiB gibi
+     bayt çağrışımlı ama doğrulanmadı) → ``BkSession.processed_bytes /
+     transferred_bytes`` DOLDURULMAZ, change_rate daima ``not_measurable``.
   6. ``serverInfo`` yalnız "Veeam Backup Administrator" rolüne açık
      (Backup Viewer 403 alır): sürüm tespiti Viewer ile yapılamaz; kullanıcı
      ``api_revision`` seçer. Revizyon uyumsuzluğunda VBR'nin hangi HTTP kodunu
      döndüğü dokümanda yazmıyor → otomatik revizyon müzakeresi KODLANMADI.
   7. Naive (saat dilimi yok) zaman damgaları (ör. SureBackup örnekleri) için
      saat dilimi belirtilmemiş; UTC varsayılır.
+  8. (F.1) ``jobs[].virtualMachines.includes[]`` ve ``backupObjects[].path``:
+     ``hostName`` (vCenter) + ``objectId`` ("vm-45006" biçimi) doküman
+     örneğiyle uyumlu; GERÇEK VBR'de hostName'in vCenter FQDN'i mi IP mi
+     döndüğü doğrulanmadı → eşleşme anahtarı ``normalize_host(hostName) +
+     moref``, "doküman örneğiyle uyumlu, sahada doğrulanmadı" bayrağıyla.
+  9. (F.1) ``backupInfrastructure/proxies/states[].hostName`` örnekte "This
+     server" (anlamı: backup sunucusunun kendisi) — ham değer gösterilir,
+     yorumlanmaz.
+ 10. (F.1) ``jobs[]`` yanıtında CBT ``vSphere.changedBlockTracking.isEnabled``
+     yalnız VMware işlerinde vardır; şifreleme ``storage.storageData.encryption
+     .isEnabled``. Alan yoksa/None ise ``not_measurable`` (False sayılmaz).
+ 11. (F.1) ``backupObjects/{id}/restorePoints``: ``orderColumn`` /
+     ``createdAfterFilter`` desteği Backup-Objects sayfasından alındı; sürüm
+     1.3-rev1 dışında doğrulanmadı.
 """
 from __future__ import annotations
 
@@ -73,6 +93,7 @@ class Endpoint:
     roles_ok: str         # dokümandaki "Available to" (Viewer dahil mi)
     verified: str         # doğrulama durumu
     fields_used: Tuple[str, ...]
+    viewer_ok: bool = True   # dokümandaki "Available to" listesinde Backup Viewer var mı (F.1)
 
 
 _V = "doküman 1.3-rev1 okundu; gerçek VBR yanıtı doğrulanmadı"
@@ -87,7 +108,7 @@ ENDPOINTS: Dict[str, Endpoint] = {e.key: e for e in (
     Endpoint("server_time", "GET", "/api/v1/serverTime", "Service", "Anyone", _V, ("serverTime",)),
     # Get Backup Server Information — Service tag; YALNIZ Veeam Backup Administrator
     Endpoint("server_info", "GET", "/api/v1/serverInfo", "Service", "Backup Administrator (Viewer 403)", _V,
-             ("name", "buildVersion", "platform")),
+             ("name", "buildVersion", "platform"), viewer_ok=False),
     # Get All Job States — Jobs tag; Viewer dahil
     Endpoint("jobs_states", "GET", "/api/v1/jobs/states", "Jobs", "Admin/Operator/Restore Op./Viewer/Tape/Security", _V,
              ("id", "name", "type", "status", "lastResult", "lastRun", "nextRun", "nextRunPolicy",
@@ -110,7 +131,45 @@ ENDPOINTS: Dict[str, Endpoint] = {e.key: e for e in (
     Endpoint("restore_points", "GET", "/api/v1/restorePoints", "Restore-Points",
              "Admin/Operator/Restore Op./Viewer/…", _V,
              ("id", "name", "platformName", "type", "creationTime", "backupId")),
+    # ── F.1 (doküman 1.3-rev1 okundu: 2026-10-13) ─────────────────────────────
+    # Get All Jobs — Jobs tag; Available to: Admin, Operator, Restore Op., Viewer, Tape Op., Security Admin.
+    # Yanıt modeli: iş yapılandırması (storage.retentionPolicy/gfsPolicy/storageData.encryption,
+    # vSphere.changedBlockTracking, guestProcessing.appAwareProcessing, schedule.retry/backupWindow/…).
+    Endpoint("jobs", "GET", "/api/v1/jobs", "Jobs", "Admin/Operator/Restore Op./Viewer/Tape/Security", _V,
+             ("id", "name", "type", "isDisabled", "virtualMachines.includes[].hostName/name/type",
+              "storage.backupRepositoryId", "storage.retentionPolicy.type/quantity",
+              "storage.gfsPolicy.isEnabled", "storage.advancedSettings.backupHealth.isEnabled",
+              "storage.advancedSettings.storageData.encryption.isEnabled",
+              "storage.advancedSettings.vSphere.changedBlockTracking.isEnabled",
+              "guestProcessing.appAwareProcessing.isEnabled",
+              "schedule.runAutomatically", "schedule.daily/monthly/periodically/continuously.isEnabled",
+              "schedule.retry.isEnabled/retryCount/awaitMinutes", "schedule.backupWindow.isEnabled")),
+    # Get All Proxy States — Proxies tag; Available to: Admin, Operator, Restore Op., Viewer, Tape Op.
+    Endpoint("proxies_states", "GET", "/api/v1/backupInfrastructure/proxies/states", "Proxies",
+             "Admin/Operator/Restore Op./Viewer/Tape", _V,
+             ("id", "name", "type", "hostName", "isDisabled", "isOnline", "isOutOfDate")),
+    # Get All Proxies — Proxies tag; Available to: Admin, Operator, Restore Op., Viewer, Tape Op.
+    Endpoint("proxies", "GET", "/api/v1/backupInfrastructure/proxies", "Proxies",
+             "Admin/Operator/Restore Op./Viewer/Tape", _V,
+             ("id", "name", "type", "server.transportMode", "server.maxTaskCount")),
+    # Get All Repositories — Repositories tag; Available to: Admin, Operator, Restore Op., Viewer, Tape Op.
+    # Immutability alanı örnek yanıtlarda YOK (bkz. belirsizlik #4) → yalnız type okunur.
+    Endpoint("repositories", "GET", "/api/v1/backupInfrastructure/repositories", "Repositories",
+             "Admin/Operator/Restore Op./Viewer/Tape", _V, ("id", "name", "type", "description")),
+    # Get Restore Points of Backup Object — Backup-Objects tag (yol parametresi {id} = backupObjects[].id)
+    Endpoint("object_restore_points", "GET", "/api/v1/backupObjects/{id}/restorePoints", "Backup-Objects",
+             "Admin/Operator/Restore Op./Viewer/Tape", _V,
+             ("id", "type", "creationTime", "backupId")),
 )}
+
+# Rol tablosu (F.1): hangi endpoint Viewer'a açık? UI "ölçülemedi (yetki)" ayrımı için TEK kaynak.
+ENDPOINT_ROLE_ROWS = tuple((e.key, e.path, e.roles_ok, e.viewer_ok) for e in ENDPOINTS.values())
+
+
+def viewer_closed_keys() -> Tuple[str, ...]:
+    """Backup Viewer ile 403 alınacak endpoint anahtarları (doküman 'Available to')."""
+    return tuple(e.key for e in ENDPOINTS.values() if not e.viewer_ok)
+
 
 # İstemcinin YAZMA yapabileceği tek yollar (auth). Diğer her şey yalnız GET.
 AUTH_WRITE_PATHS = ("/api/oauth2/token", "/api/oauth2/logout")

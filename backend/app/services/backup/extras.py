@@ -4,7 +4,8 @@ Yalnız ``backup`` capability varken çağrılır. Tüm rakamlar bk_* tabloları
 hesaplanır; LLM rakam üretmez, RTO tahmin EDİLMEZ.
 
 Doğrulanmamış Veeam alanlarına dayanılmaz (bkz. veeam_api_ref.py belirsizlik listesi):
-* Değişmezlik (immutability) / şifreleme: repository detay alanları doğrulanmadı → kontrol KODLANMADI.
+* Değişmezlik (immutability): F.1'de şema okundu, alan YOK → daima ``not_measurable`` (bk.repo.immutability).
+* Şifreleme / CBT (F.1): Get All Jobs alanlarından; eksik/yetkisiz → ``not_measurable``.
 * 3-2-1: yalnız "copy" tipi iş varlığı denetlenir (harici/immutable kopya doğrulanmaz).
 * Değişim oranı: oturum ``transferredSize`` (doc) toplamı — iş bazlı, VM bazlı değil.
 """
@@ -93,6 +94,63 @@ def job_trend_findings(db: Session, *, now: Optional[datetime] = None) -> List[F
     return out
 
 
+# ── F.1: iş yapılandırması kuralları (şifreleme / CBT) + depo değişmezliği (daima ölçülemedi) ──
+
+def _vbr_type(j: BkJob) -> str:
+    try:
+        return str((json.loads(j.meta_json or "{}")).get("vbr_type") or "")
+    except ValueError:
+        return ""
+
+
+def _cfg_unavailable(j: BkJob) -> Optional[str]:
+    st = j.config_state
+    if st == "forbidden":
+        return "ölçülemedi (yetki): GET /api/v1/jobs bu hesapla okunamadı"
+    if st == "error":
+        return "ölçülemedi: iş yapılandırması okunamadı"
+    if st is None:
+        return "ölçülemedi: iş yapılandırması henüz okunmadı"
+    return None
+
+
+def job_config_findings(db: Session) -> List[FindingDraft]:
+    out: List[FindingDraft] = []
+    for j in _job_ids(db, include_demo=True).values():
+        ref = f"job:{j.instance_id}:{j.provider_job_id}"
+        if not j.enabled:
+            for cid in ("bk.job.encryption_off", "bk.job.cbt_off"):
+                out.append(FindingDraft(cid, "job", ref, j.name, RESULT_NOT_APPLICABLE, detail="İş devre dışı"))
+            continue
+        why = _cfg_unavailable(j)
+        # şifreleme — backup/copy/replica işleri için ortak alan; yoksa ölçülemedi
+        if why or j.encryption_enabled is None:
+            out.append(FindingDraft("bk.job.encryption_off", "job", ref, j.name, RESULT_NOT_MEASURABLE,
+                                    detail=why or "Yanıtta şifreleme alanı yok"))
+        else:
+            out.append(FindingDraft("bk.job.encryption_off", "job", ref, j.name,
+                                    RESULT_PASS if j.encryption_enabled else RESULT_FAIL,
+                                    evidence={"encryption_enabled": j.encryption_enabled}))
+        # CBT — yalnız VMware yedek işleri
+        if _vbr_type(j) != "VSphereBackup":
+            out.append(FindingDraft("bk.job.cbt_off", "job", ref, j.name, RESULT_NOT_APPLICABLE,
+                                    detail="CBT yalnız VMware (VSphereBackup) işleri için uygulanır"))
+        elif why or j.cbt_enabled is None:
+            out.append(FindingDraft("bk.job.cbt_off", "job", ref, j.name, RESULT_NOT_MEASURABLE,
+                                    detail=why or "Yanıtta CBT alanı yok"))
+        else:
+            out.append(FindingDraft("bk.job.cbt_off", "job", ref, j.name,
+                                    RESULT_PASS if j.cbt_enabled else RESULT_FAIL,
+                                    evidence={"cbt_enabled": j.cbt_enabled}))
+    ids = [i.id for i in eng.backup_instances(db, include_demo=True)]
+    for r in db.query(BkRepository).filter(BkRepository.instance_id.in_(ids or [-1])).all():
+        out.append(FindingDraft("bk.repo.immutability", "repository", f"repo:{r.instance_id}:{r.provider_repo_id}", r.name,
+                                RESULT_NOT_MEASURABLE, evidence={"repo_type": r.repo_type},
+                                detail="Doğrulanamaz: REST yanıt şemasında değişmezlik alanı yok "
+                                       f"(depo türü: {r.repo_type or 'bilinmiyor'})"))
+    return out
+
+
 # ── Madde 12: RTO doğrulanmamış / 3-2-1 kopya / API revizyonu ────────────────
 
 def last_restore_test(db: Session, protected_object_ids: List[int]) -> Optional[BkRestoreTest]:
@@ -155,7 +213,19 @@ def policy_findings(db: Session, *, now: Optional[datetime] = None,
 
 
 def extra_findings(db: Session, *, now: Optional[datetime] = None) -> List[FindingDraft]:
-    return job_trend_findings(db, now=now) + policy_findings(db, now=now)
+    return job_trend_findings(db, now=now) + job_config_findings(db) + policy_findings(db, now=now)
+
+
+def _encryption_item(jobs: Dict[int, BkJob]) -> Dict[str, Any]:
+    act = [j for j in jobs.values() if j.enabled and j.job_type == "backup"]
+    meas = [j for j in act if j.encryption_enabled is not None and j.config_state == "ok"]
+    off = [j for j in meas if j.encryption_enabled is False]
+    st = "ölçülemedi" if not meas else ("eksik" if off else "ok")
+    note = "İş düzeyi şifreleme (storageData.encryption.isEnabled); depo/donanım şifrelemesi okunmaz."
+    if act and len(meas) < len(act):
+        note += f" {len(act) - len(meas)} iş için alan okunamadı (ölçülemedi)."
+    return {"control": "ISO27001:A.8.13", "item": "Yedek işlerinde şifreleme", "status": st,
+            "value": f"{len(meas) - len(off)}/{len(meas)}" if meas else None, "note": note}
 
 
 # ── Madde 12: ISO 27001 A.8.13 kanıtı ───────────────────────────────────────
@@ -202,11 +272,13 @@ def evidence(db: Session, *, now: Optional[datetime] = None, days: int = 30) -> 
         {"control": "ISO27001:A.8.13", "item": "İkinci kopya (copy işi)",
          "status": "ok" if any(j.job_type == "copy" and j.enabled for j in jobs.values()) else "eksik",
          "value": sum(1 for j in jobs.values() if j.job_type == "copy")},
+        _encryption_item(jobs),
     ]
     return {"generated_at": now.isoformat(), "window_days": days, "items": items, "jobs": rows,
             "demo": False, "blocked": False,
-            "not_checked": ["Değişmezlik (immutability)", "Şifreleme", "VBR yapılandırma yedeği",
-                            "CBT — Veeam alanları doğrulanmadı (veeam_api_ref belirsizlik listesi)"]}
+            "not_checked": ["Değişmezlik (immutability) — REST şemasında alan yok (doğrulanamaz)",
+                            "VBR yapılandırma yedeği",
+                            "Depo/donanım düzeyi şifreleme (yalnız iş düzeyi şifreleme okunur)"]}
 
 
 # ── Madde 10: drift ↔ yedek hatası korelasyonu ──────────────────────────────

@@ -45,7 +45,7 @@ from app.models.integration_instance import IntegrationInstance
 from app.models.capacity_policy import CapacityPolicy
 from app.models.backup import (
     BkJob, BkSession, BkRepository, BkProtectedObject, BkRestorePoint,
-    BkRpoPolicy, BkRestoreTest,
+    BkRpoPolicy, BkRestoreTest, BkProxy,
 )
 
 __all__ = [
@@ -78,5 +78,5 @@ __all__ = [
     "VirtConfigSnapshot", "VirtDatastoreFile", "InfraReferenceData",
     "IntegrationInstance", "CapacityPolicy",
     "BkJob", "BkSession", "BkRepository", "BkProtectedObject", "BkRestorePoint",
-    "BkRpoPolicy", "BkRestoreTest",
+    "BkRpoPolicy", "BkRestoreTest", "BkProxy",
 ]

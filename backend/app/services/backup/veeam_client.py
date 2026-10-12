@@ -11,6 +11,7 @@ import time
 from typing import Any, Dict, Iterator, List, Optional, Protocol
 
 import requests
+from urllib.parse import quote
 
 from app.services.backup.veeam_api_ref import (
     AUTH_WRITE_PATHS, DEFAULT_REVISION, ENDPOINTS, REVISIONS, doc_url,
@@ -31,18 +32,19 @@ class VeeamApiError(Exception):
 
 
 class VeeamTransport(Protocol):
-    def get_json(self, key: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]: ...
+    def get_json(self, key: str, params: Optional[Dict[str, Any]] = None, *,
+                 path: Optional[Dict[str, str]] = None) -> Dict[str, Any]: ...
 
 
 def paged(transport: VeeamTransport, key: str, params: Optional[Dict[str, Any]] = None,
-          *, max_items: int = 5000) -> Iterator[Dict[str, Any]]:
+          *, max_items: int = 5000, path: Optional[Dict[str, str]] = None) -> Iterator[Dict[str, Any]]:
     """skip/limit sayfalama (Overview → Query Parameters). Yanıt: {"data": [...], "pagination": {...}}."""
     skip = 0
     got = 0
     while got < max_items:
         q = dict(params or {})
         q.update({"skip": skip, "limit": PAGE_LIMIT})
-        body = transport.get_json(key, q)
+        body = transport.get_json(key, q, path=path) if path else transport.get_json(key, q)
         rows = body.get("data") if isinstance(body, dict) else None
         if not isinstance(rows, list):
             raise VeeamApiError("parse", f"{key}: 'data' listesi yok")
@@ -137,15 +139,22 @@ class VeeamRestClient:
         self._access = self._refresh = None
 
     # ── salt-okunur GET ─────────────────────────────────────────────────────
-    def get_json(self, key: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get_json(self, key: str, params: Optional[Dict[str, Any]] = None, *,
+                 path: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         ep = ENDPOINTS.get(key)
         if ep is None or ep.method != "GET":
             raise VeeamApiError("readonly", f"İzin verilmeyen endpoint: {key}")
+        url_path = ep.path
+        if "{" in url_path:   # yol parametresi (ör. backupObjects/{id}/restorePoints) — yalnız güvenli karakterler
+            try:
+                url_path = url_path.format(**{k: quote(str(v), safe="") for k, v in (path or {}).items()})
+            except KeyError:
+                raise VeeamApiError("parse", f"{key}: yol parametresi eksik") from None
         self._ensure_token()
         last: Optional[VeeamApiError] = None
         for attempt in range(self.retries + 1):
             try:
-                r = self._s.get(self.base + ep.path, params=params or None, headers=self._headers(),
+                r = self._s.get(self.base + url_path, params=params or None, headers=self._headers(),
                                 verify=self.verify, timeout=self.timeout)
             except requests.exceptions.SSLError as e:
                 raise VeeamApiError("tls", f"TLS doğrulama hatası: {_short(e)}") from None

@@ -18,6 +18,9 @@ from app.core.encryption import decrypt_secret
 from app.services.backup.protocol import ConnTestResult, ProviderHealth, SyncCursor
 from app.services.backup.registry import parse_meta, register_provider
 from app.services.backup.veeam_api_ref import DEFAULT_PORT, DEFAULT_REVISION
+from app.services.backup.veeam_cfg import (
+    host_from_backup_object_path, parse_job_config, parse_proxy_config, parse_proxy_state,
+)
 from app.services.backup.veeam_client import VeeamApiError, VeeamRestClient, VeeamTransport, paged
 
 KIND_REAL = "veeam_vbr"
@@ -28,6 +31,8 @@ SESSION_WINDOW_HOURS = 24          # oturumlar sliding pencere (çalışan oturu
 SESSION_FIRST_DAYS = 14
 RP_OVERLAP_MIN = 10
 MAX_RESTORE_POINTS = 20000
+MAX_OBJECT_RP_CALLS = 200          # F.1: sync başına en fazla bu kadar nesne-başı restorePoints çağrısı
+OBJECT_RP_LIMIT = 5                # nesne başına en yeni N nokta (orderColumn=CreationTime, orderAsc=false)
 _MOREF_RX = re.compile(r"^vm-\d+$")
 
 
@@ -65,6 +70,29 @@ def job_kind(vbr_type: str) -> str:
 
 
 # ── normalize edilmiş anlık görüntü ──────────────────────────────────────────
+
+def _extra(tp: VeeamTransport, key: str, snap: Dict[str, Any], params: Optional[Dict[str, Any]] = None,
+           *, max_items: int = 2000, path: Optional[Dict[str, str]] = None) -> Optional[List[Dict[str, Any]]]:
+    """F.1 tamamlayıcı okuma: yetki/sunucu hatası senkronu DÜŞÜRMEZ; ``snap['access'][key]`` işaretlenir.
+
+    forbidden → alanlar "ölçülemedi (yetki)"; diğer API hataları → "ölçülemedi (hata)".
+    auth/network/tls yeniden fırlatılır (ana okumalarla aynı davranış).
+    """
+    access: Dict[str, str] = snap.setdefault("access", {})
+    try:
+        rows = list(paged(tp, key, params, max_items=max_items, path=path))
+    except VeeamApiError as e:
+        if e.kind in ("auth", "network", "tls"):
+            raise
+        access[key] = "forbidden" if e.kind == "forbidden" else "error"
+        if e.kind == "forbidden":
+            snap["warnings"].append(f"{key} okunamadı (yetki yok) — ilgili alanlar 'ölçülemedi (yetki)'.")
+        else:
+            snap["warnings"].append(f"{key} okunamadı ({e.kind}) — ilgili alanlar 'ölçülemedi'.")
+        return None
+    access.setdefault(key, "ok")
+    return rows
+
 
 def collect_snapshot(tp: VeeamTransport, cursor: Dict[str, Any], *, lookback_days: int = DEFAULT_LOOKBACK_DAYS,
                      now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -118,6 +146,8 @@ def collect_snapshot(tp: VeeamTransport, cursor: Dict[str, Any], *, lookback_day
             # api_ref #1: objectId UUID veya moref olabilir — yalnız vm-<n> biçimi moref sayılır
             "object_ref": oid if isinstance(oid, str) and _MOREF_RX.match(oid) else None,
             "path": o.get("path"), "restore_points_count": o.get("restorePointsCount"),
+            # F.1: path'in ilk bölümü vCenter hostName'i (doküman örneği; sahada doğrulanmadı — api_ref #8)
+            "host_name": host_from_backup_object_path(o.get("path")),
         })
     after = parse_ts(cursor.get("rp_after")) or (now - timedelta(days=max(1, lookback_days)))
     newest: Optional[datetime] = None
@@ -130,8 +160,48 @@ def collect_snapshot(tp: VeeamTransport, cursor: Dict[str, Any], *, lookback_day
         newest = ts if newest is None or ts > newest else newest
         snap["restore_points"].append({"id": str(rp.get("id")), "name": rp.get("name") or "",
                                        "type": rp.get("type"), "created": ts, "backup_id": rp.get("backupId")})
+    _collect_f1(tp, snap, now)
     snap["next_cursor"] = {"rp_after": _iso((newest or after) - timedelta(minutes=RP_OVERLAP_MIN))}
     return snap
+
+
+def _collect_f1(tp: VeeamTransport, snap: Dict[str, Any], now: datetime) -> None:
+    """F.1: iş yapılandırması, proxy'ler, depo türleri, nesne-başı restore point (mevcut senkron döngüsünde)."""
+    snap["job_config"], snap["proxies"], snap["repo_info"], snap["object_rps"] = {}, [], {}, {}
+    # Jobs → Get All Jobs (Viewer dahil). Şifreleme/CBT/saklama/GFS/zamanlama/yeniden deneme/app-aware.
+    rows = _extra(tp, "jobs", snap)
+    if rows is not None:
+        for j in rows:
+            if j.get("id"):
+                snap["job_config"][str(j["id"])] = parse_job_config(j)
+    # Proxies → Get All Proxy States + Get All Proxies (Viewer dahil)
+    states = _extra(tp, "proxies_states", snap)
+    cfgs = _extra(tp, "proxies", snap)
+    if states is not None:
+        by_cfg = {str(c.get("id")): parse_proxy_config(c) for c in (cfgs or [])}
+        for st in states:
+            px = parse_proxy_state(st)
+            px.update({k: v for k, v in by_cfg.get(px["id"], {}).items() if k != "id"})
+            snap["proxies"].append(px)
+    # Repositories → Get All Repositories: yalnız description/type (immutability alanı dokümanda yok)
+    repos = _extra(tp, "repositories", snap)
+    if repos is not None:
+        for r in repos:
+            if r.get("id"):
+                snap["repo_info"][str(r["id"])] = {"type": r.get("type")}
+    # Backup Objects → restorePoints: toplu liste penceresinde nokta bulunamayan nesneler için nesne-başı (sınırlı)
+    seen = {rp["name"] for rp in snap["restore_points"]}
+    todo = [o for o in snap["objects"] if o["name"] not in seen and (o.get("restore_points_count") or 0) > 0]
+    for ob in todo[:MAX_OBJECT_RP_CALLS]:
+        pts = _extra(tp, "object_restore_points", snap, {"orderColumn": "CreationTime", "orderAsc": "false"},
+                     max_items=OBJECT_RP_LIMIT, path={"id": ob["id"]})
+        if pts is None:
+            break   # yetki/hata: tekrar deneme yok (ek yük yok)
+        times = [t for t in (parse_ts(x.get("creationTime")) for x in pts) if t]
+        if times:
+            snap["object_rps"][ob["id"]] = max(times)
+    if len(todo) > MAX_OBJECT_RP_CALLS:
+        snap["warnings"].append(f"{len(todo) - MAX_OBJECT_RP_CALLS} nesne için restore point sorgusu bu senkronda atlandı (üst sınır {MAX_OBJECT_RP_CALLS}).")
 
 
 # ── sağlayıcılar ─────────────────────────────────────────────────────────────
@@ -256,6 +326,18 @@ class DemoTransport:
             {"type": "LinuxLocal", "id": "demo-repo-b", "name": "DEMO Repo B", "capacityGB": 20000.0,
              "freeGB": 12000.0, "isOnline": True},
         ]
+        self._job_cfgs = [self._job_cfg(job_ids["daily"], "DEMO Daily VMs", enc=False, cbt=True, aa=False, ret=("Days", 14)),
+                          self._job_cfg(job_ids["hourly"], "DEMO Critical hourly", enc=True, cbt=True, aa=True, ret=("Days", 7)),
+                          self._job_cfg(job_ids["weekly"], "DEMO Weekly DB", enc=True, cbt=False, aa=True, ret=("RestorePoints", 4)),
+                          self._job_cfg(job_ids["copy"], "DEMO Copy to DR", enc=None, cbt=None, aa=None, ret=("Days", 30), typ="BackupCopy")]
+        self._proxy_states = [
+            {"type": "ViProxy", "id": "demo-proxy-1", "name": "DEMO Proxy 1", "hostId": "demo-host", "hostName": "This server",
+             "isDisabled": False, "isOnline": True, "isOutOfDate": False},
+            {"type": "ViProxy", "id": "demo-proxy-2", "name": "DEMO Proxy 2", "hostId": "demo-host-2", "hostName": "demo-proxy2.local",
+             "isDisabled": False, "isOnline": True, "isOutOfDate": True}]
+        self._proxy_cfgs = [
+            {"type": "ViProxy", "id": "demo-proxy-1", "name": "DEMO Proxy 1", "server": {"transportMode": "auto", "maxTaskCount": 4}},
+            {"type": "ViProxy", "id": "demo-proxy-2", "name": "DEMO Proxy 2", "server": {"transportMode": "network", "maxTaskCount": 2}}]
         self._backups = [{"id": backup_ids[k], "jobId": job_ids[k], "jobType": "VSphereBackup", "name": k,
                           "platformName": "VMware"} for k in ("daily", "hourly", "weekly")]
         self._objects, self._rps = [], []
@@ -292,13 +374,32 @@ class DemoTransport:
                     "result": {"result": "Failed" if failed else "Success",
                                "message": "DEMO: örnek hata" if failed else "Success", "isCanceled": False}})
 
+    @staticmethod
+    def _job_cfg(jid: str, name: str, *, enc: Optional[bool], cbt: Optional[bool], aa: Optional[bool],
+                 ret: Tuple[str, int], typ: str = "VSphereBackup") -> Dict[str, Any]:
+        """Veeam-şekilli (Get All Jobs) SENTETİK iş yapılandırması — GERÇEK DEĞİL."""
+        adv: Dict[str, Any] = {"backupModeType": "Incremental", "backupHealth": {"isEnabled": False}}
+        if enc is not None:
+            adv["storageData"] = {"encryption": {"isEnabled": enc}}
+        if cbt is not None:
+            adv["vSphere"] = {"changedBlockTracking": {"isEnabled": cbt}}
+        j: Dict[str, Any] = {"id": jid, "name": name, "type": typ, "isDisabled": False,
+                             "storage": {"retentionPolicy": {"type": ret[0], "quantity": ret[1]},
+                                         "gfsPolicy": {"isEnabled": False}, "advancedSettings": adv},
+                             "schedule": {"runAutomatically": True, "daily": {"isEnabled": True, "localTime": "22:00"},
+                                          "retry": {"isEnabled": True, "retryCount": 3, "awaitMinutes": 10},
+                                          "backupWindow": {"isEnabled": False}}}
+        if aa is not None:
+            j["guestProcessing"] = {"appAwareProcessing": {"isEnabled": aa}}
+        return j
+
     def _job(self, jid: str, name: str, typ: str, res: str, ago_h: int, repo: str) -> Dict[str, Any]:
         return {"type": typ, "status": "Stopped", "lastResult": res, "workload": "Vm", "id": jid, "name": name,
                 "lastRun": (self.now - timedelta(hours=ago_h)).isoformat(),
                 "nextRun": (self.now + timedelta(hours=24 - ago_h)).isoformat(), "nextRunPolicy": "DEMO",
                 "repositoryId": repo, "repositoryName": "DEMO Repo", "objectsCount": len(self.vms), "sessionId": f"demo-sess-{jid}"}
 
-    def get_json(self, key: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get_json(self, key: str, params: Optional[Dict[str, Any]] = None, **kw: Any) -> Dict[str, Any]:
         p = dict(params or {})
         data: List[Dict[str, Any]]
         if key == "server_info":
@@ -307,6 +408,18 @@ class DemoTransport:
             data = self._jobs
         elif key == "repositories_states":
             data = self._repos
+        elif key == "jobs":
+            data = self._job_cfgs
+        elif key == "proxies_states":
+            data = self._proxy_states
+        elif key == "proxies":
+            data = self._proxy_cfgs
+        elif key == "repositories":
+            data = [{"id": r["id"], "name": r["name"], "type": r["type"]} for r in self._repos]
+        elif key == "object_restore_points":
+            oid = (kw.get("path") or {}).get("id")
+            nm = next((o["name"] for o in self._objects if o["id"] == oid), None)
+            data = [r for r in self._rps if r["name"] == nm]
         elif key == "backups":
             data = self._backups
         elif key == "backup_objects":

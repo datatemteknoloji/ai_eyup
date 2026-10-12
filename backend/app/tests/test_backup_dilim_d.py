@@ -24,9 +24,10 @@ class _DocTransport:
     """Doküman örneği yanıtlarını (GERÇEK VBR DEĞİL) endpoint anahtarına göre döndürür."""
     MAP = {"server_info": "serverInfo", "jobs_states": "jobs_states", "repositories_states": "repositories_states",
            "sessions": "sessions", "backups": "backups", "backup_objects": "backup_objects",
-           "restore_points": "restore_points"}
+           "restore_points": "restore_points", "jobs": "jobs", "proxies_states": "proxies_states",
+           "proxies": "proxies", "repositories": "repositories", "object_restore_points": "object_restore_points"}
 
-    def get_json(self, key, params=None):
+    def get_json(self, key, params=None, **kw):
         return FIX[self.MAP[key]]
 
 

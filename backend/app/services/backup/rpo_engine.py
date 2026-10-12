@@ -39,9 +39,8 @@ def _aware(dt: Optional[datetime]) -> Optional[datetime]:
 
 
 def _vms(db: Session) -> List[Dict[str, Any]]:
-    from app.services import virt_insights_data as vd
-    hvs = vd.virt_hypervisors(db, platform="vmware")
-    return vd.vm_allocations(db, [h.id for h in hvs])
+    from app.services.backup.matching import inventory_vms
+    return inventory_vms(db)
 
 
 def resolve_target(policies: List[BkRpoPolicy], vm: Dict[str, Any]) -> Tuple[Optional[int], Optional[int], Optional[int]]:

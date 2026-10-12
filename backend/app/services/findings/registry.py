@@ -419,6 +419,26 @@ _DEFS: List[CheckDef] = [
              "Son oturum süresi önceki medyanın 1.5 katından uzun. Yedek penceresi ve depo/ağ performansını inceleyin.",
              "Last session took more than 1.5x the prior median. Review backup window and repository/network performance.",
              refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.job.encryption_off", "backup", _BK, "job", "medium",
+             "Yedek işinde şifreleme kapalı", "Backup job encryption is off",
+             "İşin 'storageData.encryption.isEnabled' değeri false. Yedek içeriğini korumak için iş düzeyinde şifrelemeyi açmayı değerlendirin. "
+             "Alan okunamazsa (yetki/yanıtta yok) 'ölçülemedi' döner; depo düzeyi veya donanım şifrelemesi buradan görülmez.",
+             "The job's storageData.encryption.isEnabled is false. Consider enabling job-level encryption. "
+             "If the field cannot be read the result is 'not measurable'; repository/hardware encryption is not visible here.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.job.cbt_off", "backup", _BK, "job", "low",
+             "VMware yedek işinde CBT kapalı", "CBT is off on a VMware backup job",
+             "İşin 'vSphere.changedBlockTracking.isEnabled' değeri false; her çalışmada tüm disk taranır, pencere uzar. "
+             "Yalnız VMware (VSphereBackup) işleri için uygulanır.",
+             "changedBlockTracking.isEnabled is false; each run scans whole disks and the window grows. VMware (VSphereBackup) jobs only.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.repo.immutability", "backup", _BK, "repository", "info",
+             "Depo değişmezliği doğrulanamadı", "Repository immutability could not be verified",
+             "Veeam REST 'Get All Repositories' yanıt şemasında değişmezlik (açık mı / kaç gün) alanı yok; durum daima "
+             "'ölçülemedi'. Depo türü (ör. LinuxHardened) yalnız bilgi olarak gösterilir, değişmezlik iddiası değildir.",
+             "The Veeam REST 'Get All Repositories' schema has no immutability field; the status is always 'not measurable'. "
+             "The repository type (e.g. LinuxHardened) is informational, not an immutability claim.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
     CheckDef("bk.vm.rto_unverified", "backup", _BK, "vm", "medium",
              "RTO doğrulanmadı (geri yükleme testi yok)", "RTO unverified (no restore test)",
              "Hedef RTO tanımlı fakat kayıtlı geri yükleme testi yok veya 180 günden eski. RTO tahmin edilmez; test yapıp kaydedin.",

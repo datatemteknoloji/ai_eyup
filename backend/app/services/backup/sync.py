@@ -65,9 +65,57 @@ def _breaker_open(meta: Dict[str, Any], now: datetime) -> bool:
 
 
 def _vms(db: Session) -> List[Dict[str, Any]]:
-    from app.services import virt_insights_data as vd
-    hvs = vd.virt_hypervisors(db, platform="vmware")
-    return vd.vm_allocations(db, [h.id for h in hvs])
+    from app.services.backup.matching import inventory_vms
+    return inventory_vms(db)
+
+
+def _apply_job_config(jobs: Dict[str, BkJob], snap: Dict[str, Any]) -> None:
+    """F.1: iş yapılandırmasını bk_jobs'a yazar. Okunamadıysa (yetki/hata) mevcut değer KORUNUR, durum işaretlenir;
+    yanıtta olmayan alan NULL (= ölçülemedi) — asla False yazılmaz."""
+    cfg = snap.get("job_config")
+    if cfg is None:
+        return                                   # sağlayıcı F.1 okumasını yapmadı (eski fixture/transport)
+    state = (snap.get("access") or {}).get("jobs", "ok")
+    for pid, o in jobs.items():
+        c = cfg.get(pid)
+        if state != "ok":
+            o.config_state = state               # forbidden | error — değerler değişmez
+            continue
+        if c is None:
+            o.config_state = "error"             # iş listede ama yapılandırma yanıtında yok
+            continue
+        o.config_state = "ok"
+        o.encryption_enabled, o.cbt_enabled = c["encryption"], c["cbt"]
+        o.app_aware_enabled, o.backup_health_enabled = c["app_aware"], c["backup_health"]
+        o.retention_type, o.retention_quantity = c["retention_type"], c["retention_quantity"]
+        o.gfs_enabled = c["gfs_enabled"]
+        o.retry_enabled, o.retry_count, o.retry_wait_min = c["retry_enabled"], c["retry_count"], c["retry_wait_min"]
+        o.window_enabled = c["window_enabled"]
+        o.schedule_summary = (c["schedule_summary"] or None)
+        if c.get("disabled") is True:
+            o.enabled = False
+        o.config_json = json.dumps({"gfs": c["gfs"], "backup_mode": c["backup_mode"], "proxy_auto": c["proxy_auto"],
+                                    "proxy_ids": c["proxy_ids"], "vms": c["vms"][:200], "vms_total": len(c["vms"])})
+
+
+def _apply_proxies(db: Session, iid: int, snap: Dict[str, Any]) -> None:
+    from app.models.backup import BkProxy
+    if (snap.get("access") or {}).get("proxies_states", "ok") != "ok" or snap.get("proxies") is None:
+        return                                   # okunamadı → mevcut satırlar korunur
+    have = {p.provider_proxy_id: p for p in db.query(BkProxy).filter(BkProxy.instance_id == iid).all()}
+    seen = set()
+    for px in snap["proxies"]:
+        o = have.get(px["id"])
+        if o is None:
+            o = BkProxy(instance_id=iid, provider_proxy_id=px["id"])
+            db.add(o)
+        seen.add(px["id"])
+        o.name, o.proxy_type, o.host_name = (px["name"] or "")[:512], px.get("type"), px.get("host_name")
+        o.is_online, o.is_disabled, o.is_out_of_date = px.get("is_online"), px.get("is_disabled"), px.get("is_out_of_date")
+        o.transport_mode, o.max_tasks = px.get("transport_mode"), px.get("max_tasks")
+    for pid, o in have.items():
+        if pid not in seen:
+            db.delete(o)
 
 
 def _upsert(db: Session, row: IntegrationInstance, snap: Dict[str, Any]) -> Dict[str, int]:
@@ -85,6 +133,7 @@ def _upsert(db: Session, row: IntegrationInstance, snap: Dict[str, Any]) -> Dict
         o.repository_provider_id, o.repository_name = j.get("repository_id"), j.get("repository_name")
         o.objects_count = j.get("objects_count")
         o.meta_json = json.dumps({"vbr_type": j.get("type")})
+    _apply_job_config(jobs, snap)
     db.flush()
 
     repos = {r.provider_repo_id: r for r in db.query(BkRepository).filter(BkRepository.instance_id == iid).all()}
@@ -98,6 +147,9 @@ def _upsert(db: Session, row: IntegrationInstance, snap: Dict[str, Any]) -> Dict
         o.capacity_bytes = int(cap * GIB) if cap is not None else None   # GB mi GiB mi belirsiz (api_ref #3)
         o.free_bytes = int(free * GIB) if free is not None else None
         o.used_bytes = (o.capacity_bytes - o.free_bytes) if (cap is not None and free is not None) else None
+        o.immutability_status = "not_measurable"   # F.1: dokümanda doğrulanabilir alan yok (api_ref #4)
+
+    _apply_proxies(db, iid, snap)
 
     # Oturumlar (sliding pencere; provider_session_id ile upsert)
     sess_n = 0
@@ -134,8 +186,15 @@ def _upsert(db: Session, row: IntegrationInstance, snap: Dict[str, Any]) -> Dict
         seen_ids.add(ob["id"])
         o.name, o.platform = ob["name"][:512], ob["platform"]
         o.object_ref, o.path = ob.get("object_ref"), (ob.get("path") or None)
+        o.host_name = (ob.get("host_name") or None)
+        o.host_verified = method.endswith("+host")
         o.restore_points_count = ob.get("restore_points_count")
         o.matched_vm_id, o.match_method, o.match_confidence = server_id, method, conf
+        orp = (snap.get("object_rps") or {}).get(ob["id"])   # F.1: nesne-başı restorePoints (toplu pencere dışında kalanlar)
+        if orp is not None:
+            prev = _aware(o.last_restore_point_at)
+            if prev is None or orp > prev:
+                o.last_restore_point_at = orp
         rp = newest_by_name.get(ob["name"])
         if rp is not None:
             prev = _aware(o.last_restore_point_at)
@@ -177,7 +236,8 @@ def _upsert(db: Session, row: IntegrationInstance, snap: Dict[str, Any]) -> Dict
         synchronize_session=False)
     db.flush()
     return {"jobs": len(snap["jobs"]), "repositories": len(snap["repos"]), "sessions": sess_n,
-            "objects": len(snap["objects"]), "restore_points_new": rp_n}
+            "objects": len(snap["objects"]), "restore_points_new": rp_n,
+            "proxies": len(snap.get("proxies") or [])}
 
 
 def sync_instance(db: Session, row: IntegrationInstance, *, force: bool = False, provider: Any = None) -> Dict[str, Any]:
