@@ -333,7 +333,9 @@ def build_reclaim(db: Session, *, hypervisor_id: Optional[int] = None, platform:
                                         + summary["orphans"]["size_gb"] + summary["isos"]["size_gb"], 1)
     return {
         "ok": True,
-        "computed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # Dilim T: rozet (i) zamanı
+        # Dilim T: rozet (i) iki zaman — envanterin (en eski) son senkronu ve bu hesaplamanın zamanı
+        "data_as_of": min(_syncs).isoformat() if (_syncs := [h.last_sync for h in hvs if h.last_sync]) else None,
+        "computed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "summary": summary,
         **vm,
         "snapshots": snap_findings,

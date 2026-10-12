@@ -220,7 +220,7 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 - Çok adımlı planner (görev grafı) yok; “planner” keyword + max_steps
 - Tool sonucu için formal sufficiency checker yok (LLM “yeter” der veya max_steps biter)
 - Cross-domain otomatik correlation motoru yok (`virt_bottleneck`, `cross_entity_match`, join şartlı `linux_virt_io_correlate` hariç)
-- Model confidence skoru yok. Unified’da kanıt rozeti var (`chat_evidence_badge`: high/medium/low; kavramsal gizli). Rozet payload’ı ayrıca `sources` (bu turda çağrılan araçlar + `method_registry` yöntem sınıfı + zaman → UI “Kaynak: virt_capacity_simulate (Hesap), 23:31”) ve `general` (araç/kanıt yok → “AI genel bilgisi — ortamınızdan alınmadı”) taşır. Sistem prompt’unda SAYI KURALI: LLM sayı/oran/tarih/RPO-RTO/tahmin/yerleşim/senaryo sonucu üretmez, yalnız araç sonucundaki değeri aktarır; yoksa “veri yok” der.
+- Model confidence skoru yok. Unified’da kanıt rozeti var (`chat_evidence_badge`: high/medium/low; kavramsal gizli). Rozet payload’ı ayrıca `sources` (bu turda çağrılan araçlar + `method_registry` yöntem sınıfı + zaman → UI “Kaynak: virt_capacity_simulate (Hesap), 23:31”) ve `general` (araç/kanıt yok → “AI genel bilgisi — ortamınızdan alınmadı”) taşır. Tüm sohbet akışlarının sistem prompt’unda ortak SAYI KURALI (`services/chat_rules.py` `NUMBER_RULE_TR`: Linux/OCP/Exadata `chat.py`, Unified, Windows, Centrify, Sanallaştırma persona’sı, Agent, MCP analiz; Automic kendi grounding kuralıyla): LLM sayı/oran/tarih/RPO-RTO/tahmin/yerleşim/senaryo sonucu üretmez, yalnız araç sonucundaki değeri aktarır; yoksa “veri yok” der.
 - Hallucination için groundedness scorer yok
 - Rerank sonrası relevance eşiği ile “RAG kullanma” kararı yok
 

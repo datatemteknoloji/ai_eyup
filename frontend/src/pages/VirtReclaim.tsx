@@ -46,11 +46,11 @@ export default function VirtReclaim() {
     <div className="space-y-5">
       <PageHeader title={t('vi_rc_page')} titleExtra={<PageInfo id="vi_rc" />} subtitle={t('vi_rc_sub')} actions={<RunBar base="virt-insights" lastRun={sum.data?.last_run} />} />
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <Stat label={t('vi_rc_off_mem')} value={`${fmt(s.powered_off?.memory_gb, 0)} GB`} hint={t('vi_rc_vm_count', { n: s.powered_off?.count ?? 0 })} method="reclaim.vm.powered_off" methodAt={d.computed_at} />
-        <Stat label={t('vi_rc_rightsize_mem')} value={`${fmt((s.idle?.memory_gb ?? 0) + (s.oversized?.memory_reclaimable_gb ?? 0), 0)} GB`} hint={`vCPU ${fmt((s.idle?.vcpu ?? 0) + (s.oversized?.vcpu_reclaimable ?? 0), 0)}`} method="reclaim.vm.oversized" methodAt={d.computed_at} />
-        <Stat label={t('vi_rc_snap_gb')} value={`${fmt(s.snapshots?.space_gb, 0)} GB`} hint={t('vi_rc_vm_count', { n: s.snapshots?.count ?? 0 })} tone={(s.snapshots?.count ?? 0) ? 'text-amber-400' : 'text-white'} method="reclaim.vm.snapshot_age" methodAt={d.computed_at} />
-        <Stat label={t('vi_rc_orphan_gb')} value={`${fmt(s.orphans?.size_gb, 0)} GB`} hint={t('vi_rc_file_count', { n: s.orphans?.count ?? 0 })} tone={(s.orphans?.count ?? 0) ? 'text-amber-400' : 'text-white'} method="reclaim.file.orphan" methodAt={d.computed_at} />
-        <Stat label={t('vi_rc_storage_total')} value={`${fmt(s.storage_total_gb, 0)} GB`} tone="text-blue-300" method="reclaim.summary" methodAt={d.computed_at} />
+        <Stat label={t('vi_rc_off_mem')} value={`${fmt(s.powered_off?.memory_gb, 0)} GB`} hint={t('vi_rc_vm_count', { n: s.powered_off?.count ?? 0 })} method="reclaim.vm.powered_off" methodAt={d.data_as_of} methodComputedAt={d.computed_at} />
+        <Stat label={t('vi_rc_rightsize_mem')} value={`${fmt((s.idle?.memory_gb ?? 0) + (s.oversized?.memory_reclaimable_gb ?? 0), 0)} GB`} hint={`vCPU ${fmt((s.idle?.vcpu ?? 0) + (s.oversized?.vcpu_reclaimable ?? 0), 0)}`} method="reclaim.vm.oversized" methodAt={d.data_as_of} methodComputedAt={d.computed_at} />
+        <Stat label={t('vi_rc_snap_gb')} value={`${fmt(s.snapshots?.space_gb, 0)} GB`} hint={t('vi_rc_vm_count', { n: s.snapshots?.count ?? 0 })} tone={(s.snapshots?.count ?? 0) ? 'text-amber-400' : 'text-white'} method="reclaim.vm.snapshot_age" methodAt={d.data_as_of} methodComputedAt={d.computed_at} />
+        <Stat label={t('vi_rc_orphan_gb')} value={`${fmt(s.orphans?.size_gb, 0)} GB`} hint={t('vi_rc_file_count', { n: s.orphans?.count ?? 0 })} tone={(s.orphans?.count ?? 0) ? 'text-amber-400' : 'text-white'} method="reclaim.file.orphan" methodAt={d.data_as_of} methodComputedAt={d.computed_at} />
+        <Stat label={t('vi_rc_storage_total')} value={`${fmt(s.storage_total_gb, 0)} GB`} tone="text-blue-300" method="reclaim.summary" methodAt={d.data_as_of} methodComputedAt={d.computed_at} />
       </div>
       {(d.notes || []).length > 0 && (
         <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-2 text-xs text-amber-200 space-y-0.5">
@@ -60,7 +60,7 @@ export default function VirtReclaim() {
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
       {q.isLoading && <div className="text-sm text-slate-400">{t('loading')}</div>}
       {q.error && <div className="text-sm text-red-300">{(q.error as Error).message}</div>}
-      <Panel method={PANEL_METHOD[tab] || 'reclaim.summary'} methodAt={d.computed_at}>
+      <Panel method={PANEL_METHOD[tab] || 'reclaim.summary'} methodAt={d.data_as_of} methodComputedAt={d.computed_at}>
         {tab === 'powered_off' && <SimpleTable rows={d.powered_off || []} cols={[...vmCols,
           { key: 'disk_gb', label: 'Disk GB', className: 'font-mono text-slate-300' },
           { key: 'off_days', label: t('vi_rc_off_days'), render: (r: any) => r.off_days != null ? <span className="font-mono">{r.off_days}</span> : <span className="text-slate-500">≥ {r.off_days_min}</span> },

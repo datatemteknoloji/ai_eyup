@@ -28,6 +28,7 @@ import requests
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.chat_rules import NUMBER_RULE_TR
 from app.core.config import settings, get_active_model
 from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor
@@ -113,6 +114,7 @@ _VIRTUALIZATION_PERSONA = (
     "değerlendirmesi yap' derse ya da soru gerçekten kapasite/sağlık değerlendirmesi "
     "gerektiriyorsa kapasite riskini, olası kök nedeni ve somut aksiyon önerisini de ekle."
 )
+_VIRTUALIZATION_PERSONA = _VIRTUALIZATION_PERSONA + "\n\n" + NUMBER_RULE_TR  # Dilim T: ortak SAYI KURALI
 
 # ── Intent keywords ───────────────────────────────────────────────────────────
 INTENT_PATTERNS = {

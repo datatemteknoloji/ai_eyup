@@ -125,3 +125,20 @@ def test_chat_general_knowledge_marker():
     # kanıtsız canlı soru: düşük kanıt + genel bilgi işareti
     ev = evidence_sse_field(score_evidence_badge(kind="live"))["evidence"]
     assert ev["level"] == "low" and ev["general"] is True
+
+
+def test_number_rule_in_every_chat_flow():
+    """SAYI KURALI tüm sohbet akışlarının sistem prompt'unda (Automic hariç: kendi grounding kuralı var)."""
+    from app.services.chat_rules import NUMBER_RULE_TR
+    from app.api import centrify_chat
+    from app.services import hypervisor_intelligence, unified_tool_chat
+    from app.services.agent import orchestrator
+    assert NUMBER_RULE_TR in centrify_chat.SYSTEM_PROMPT
+    assert NUMBER_RULE_TR in hypervisor_intelligence._VIRTUALIZATION_PERSONA
+    assert NUMBER_RULE_TR in orchestrator.SYSTEM_PROMPT
+    assert "SAYI KURALI" in unified_tool_chat.SYSTEM_PROMPT
+    # prompt'u fonksiyon içinde kurulan akışlar: kaynakta ortak kural kullanılıyor mu
+    base = os.path.join(os.path.dirname(__file__), "..")
+    for rel in ("api/chat.py", "api/unified_chat.py", "api/windows_chat.py", "api/mcp.py"):
+        with open(os.path.join(base, rel), encoding="utf-8") as f:
+            assert "NUMBER_RULE_TR" in f.read(), f"{rel}: SAYI KURALI yok"

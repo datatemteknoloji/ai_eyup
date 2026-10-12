@@ -80,10 +80,10 @@ export function pctTone(v?: number | null, warn = 75, crit = 90) {
   return 'text-emerald-400'
 }
 
-export function Panel({ title, right, children, className = '', method, methodAt }: {
+export function Panel({ title, right, children, className = '', method, methodAt, methodComputedAt }: {
   title?: React.ReactNode; right?: React.ReactNode; children: React.ReactNode; className?: string
   /** Yöntem kaydı id'si (Dilim T): başlık yanında yöntem rozeti + (i). */
-  method?: string; methodAt?: string | Date | null
+  method?: string; methodAt?: string | Date | null; methodComputedAt?: string | Date | null
 }) {
   return (
     <div className={`bg-cyber-card border border-white/[0.06] rounded-lg ${className}`}>
@@ -91,7 +91,7 @@ export function Panel({ title, right, children, className = '', method, methodAt
         <div className="px-4 py-3 flex items-center justify-between border-b border-white/[0.06]">
           <h2 className="text-sm font-semibold text-white flex items-center gap-2">
             {title}
-            {method && <MethodBadge id={method} at={methodAt} />}
+            {method && <MethodBadge id={method} at={methodAt} computedAt={methodComputedAt} />}
           </h2>
           {right}
         </div>
@@ -101,16 +101,16 @@ export function Panel({ title, right, children, className = '', method, methodAt
   )
 }
 
-export function Stat({ label, value, tone = 'text-white', hint, method, methodAt }: {
+export function Stat({ label, value, tone = 'text-white', hint, method, methodAt, methodComputedAt }: {
   label: string; value: React.ReactNode; tone?: string; hint?: string
   /** Yöntem kaydı id'si (Dilim T): etiket yanında yöntem rozeti + (i). */
-  method?: string; methodAt?: string | Date | null
+  method?: string; methodAt?: string | Date | null; methodComputedAt?: string | Date | null
 }) {
   return (
     <div className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-3" title={hint}>
       <div className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1.5 flex-wrap">
         {label}
-        {method && <MethodBadge id={method} at={methodAt} />}
+        {method && <MethodBadge id={method} at={methodAt} computedAt={methodComputedAt} />}
       </div>
       <div className={`text-2xl font-bold mt-0.5 font-mono ${tone}`}>{value}</div>
       {hint && <div className="text-[11px] text-slate-500 mt-0.5 truncate">{hint}</div>}

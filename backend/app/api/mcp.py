@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.services.chat_rules import NUMBER_RULE_TR
 from app.core.config import get_active_model, settings
 from app.core.database import get_db
 from app.core.encryption import decrypt_secret
@@ -182,7 +183,8 @@ async def analyze_results(payload: AnalyzeRequest, db: Session = Depends(get_db)
         f"{context}\n\n"
         f"Soru: {question}\n\n"
         "Yanıtını Türkçe yaz. Kritik sorunları ⚠️, normal durumları ✓, "
-        "önerileri 💡 işaretiyle belirt. Kısa ve eyleme geçirilebilir ol."
+        "önerileri 💡 işaretiyle belirt. Kısa ve eyleme geçirilebilir ol.\n\n"
+        + NUMBER_RULE_TR
     )
 
     model = payload.model or get_active_model(db)

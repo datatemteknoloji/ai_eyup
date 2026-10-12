@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.services.chat_rules import NUMBER_RULE_TR
 from app.core.config import get_agent_model, settings
 from app.models.agent_action import AgentAction
 from app.models.chat_session import ChatSession, ChatMessage
@@ -76,6 +77,7 @@ SYSTEM_PROMPT = (
     "4. Araç çıktısı uydurma; yalnızca gerçek sonuçlara dayan.\n"
     "5. İş bitince TÜRKÇE, kısa ve net özet ver. Hangi sunucuda ne yaptığını belirt."
 )
+SYSTEM_PROMPT = SYSTEM_PROMPT + "\n" + NUMBER_RULE_TR  # Dilim T: ortak SAYI KURALI
 
 
 def _build_initial_messages(user_message: str, ctx: Dict[str, Any]) -> List[Dict[str, Any]]:

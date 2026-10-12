@@ -116,7 +116,14 @@ function Popover({ anchor, onClose, children }: { anchor: HTMLElement | null; on
 }
 
 /** Sınıf rozeti + (i). `at`: bu sayının/kartın veri zamanı (ISO string veya Date). */
-export function MethodBadge({ id, at, className = '' }: { id: string; at?: string | Date | null; className?: string }) {
+export function MethodBadge({ id, at, computedAt, className = '' }: {
+  id: string
+  /** Verinin zamanı (envanter/senkron/ölçüm). */
+  at?: string | Date | null
+  /** Sonucun hesaplandığı an — veri zamanından farklıysa ayrıca gösterilir. */
+  computedAt?: string | Date | null
+  className?: string
+}) {
   const t = useT()
   const { m, classLabel, method, source, limits, aiNote } = useMethod(id)
   const [open, setOpen] = useState(false)
@@ -124,6 +131,7 @@ export function MethodBadge({ id, at, className = '' }: { id: string; at?: strin
   const close = useCallback(() => setOpen(false), [])
   if (!m) return null
   const when = at ? new Date(at).toLocaleString() : ''
+  const computed = computedAt ? new Date(computedAt).toLocaleString() : ''
   return (
     <span className={`inline-flex items-center gap-1 align-middle ${className}`} data-method-id={id}>
       <span className={`text-[10px] leading-none px-1.5 py-[3px] rounded border font-medium whitespace-nowrap ${CLASS_STYLE[m.cls]}`}>
@@ -137,7 +145,9 @@ export function MethodBadge({ id, at, className = '' }: { id: string; at?: strin
       {open && (
         <Popover anchor={anchor} onClose={close}>
           <div><span className="text-slate-500">{t('method_lbl_method')}: </span>{method}</div>
-          <div><span className="text-slate-500">{t('method_lbl_source')}: </span>{source}{when ? ` · ${when}` : ''}</div>
+          <div><span className="text-slate-500">{t('method_lbl_source')}: </span>{source}</div>
+          {when && <div><span className="text-slate-500">{t('method_lbl_data_time')}: </span>{when}</div>}
+          {computed && <div><span className="text-slate-500">{t('method_lbl_computed_time')}: </span>{computed}</div>}
           <div><span className="text-slate-500">{t('method_lbl_limits')}: </span>{limits}</div>
           {m.cls === 'ai' && <div className="text-violet-300">{aiNote}</div>}
           <Link to="/methods" className="inline-block text-blue-400 hover:underline pt-0.5" onClick={close}>{t('method_how_link')}</Link>

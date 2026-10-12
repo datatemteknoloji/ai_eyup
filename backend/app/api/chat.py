@@ -12,6 +12,7 @@ import re
 import unicodedata
 import httpx
 
+from app.services.chat_rules import NUMBER_RULE_TR
 from app.core.auth import get_current_user, get_current_user_optional
 from app.core.database import get_db
 from app.core.config import settings, get_active_model, remote_llm_enabled
@@ -1290,7 +1291,7 @@ def _build_prompt(
     system_block = "\n\n".join(
         [identity]
         + (["TOPLAMA DURUMU:\n" + collection_summary] if collection_summary else [])
-        + [rules]
+        + [rules, NUMBER_RULE_TR]
     )
     tail_parts = ["KULLANICI SORUSU: " + message]
     if _dir_add:

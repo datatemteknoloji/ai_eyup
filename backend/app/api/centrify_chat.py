@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.services.chat_rules import NUMBER_RULE_TR
 from app.core.auth import require_module
 from app.core.config import settings, get_active_model, remote_llm_enabled
 from app.core.database import get_db
@@ -74,6 +75,8 @@ hakkındaki sorularına cevap veriyorsun.
 - "Role nasıl klonlanır?" → Roller'de sağ tık Kopyala; işlem doğrudan uygulanır
 - "Komut beyaz listesi nedir?" → Yalnızca izinli path'lerden komut tanımlanabilir
 """
+SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + NUMBER_RULE_TR  # Dilim T: ortak SAYI KURALI
+
 
 
 # ── Pydantic şemaları ─────────────────────────────────────────
