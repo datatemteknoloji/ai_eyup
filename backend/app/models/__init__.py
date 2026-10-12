@@ -42,7 +42,7 @@ from app.models.infra_finding import (
     VirtConfigSnapshot, VirtDatastoreFile, InfraReferenceData,
 )
 from app.models.integration_instance import IntegrationInstance
-from app.models.capacity_policy import CapacityPolicy
+from app.models.capacity_policy import CapacityPolicy, CapacityPolicyOverride
 from app.models.backup import (
     BkJob, BkSession, BkRepository, BkProtectedObject, BkRestorePoint,
     BkRpoPolicy, BkRestoreTest, BkProxy,

@@ -149,6 +149,10 @@ class SimulateRequest(BaseModel):
     hypervisor_id: Optional[int] = None
     cluster: Optional[str] = None
     cpu_util_assumption: float = Field(0.5, ge=0.05, le=1.0)
+    # H.0 kapsam seçici: instance (hypervisor_id) → datacenter → cluster(lar) → (opsiyonel) host(lar)
+    clusters: Optional[List[str]] = None
+    datacenter: Optional[str] = None
+    hosts: Optional[List[str]] = None
 
 
 @router.get("/capacity/policy")
@@ -174,10 +178,72 @@ def capacity_policy_put(body: CapacityPolicyBody, request: Request, db: Session 
     return {"ok": True, **capacity_policy.payload(db)}
 
 
+class CapacityOverrideBody(BaseModel):
+    hypervisor_id: int
+    cluster: Optional[str] = None      # None/'' = instance seviyesi varsayılan
+    values: Dict[str, float]
+
+
+@router.get("/capacity/policy/overrides")
+def capacity_policy_overrides(hypervisor_id: int, db: Session = Depends(get_db), user: User = Depends(_module)):
+    """Instance (cluster='') ve cluster override'ları + her cluster için etkin değerler (H.0)."""
+    from app.services import capacity_policy
+    ov = capacity_policy.load_overrides(db, hypervisor_id)
+    return {"ok": True, "hypervisor_id": hypervisor_id, "overrides": ov,
+            "effective_instance": capacity_policy.effective(db, hypervisor_id, None),
+            "effective_by_cluster": {c: capacity_policy.effective(db, hypervisor_id, c) for c in ov if c}}
+
+
+@router.put("/capacity/policy/override")
+def capacity_policy_override_put(body: CapacityOverrideBody, request: Request, db: Session = Depends(get_db),
+                                 user: User = Depends(require_role("admin"))):
+    from app.services import capacity_policy
+    try:
+        eff = capacity_policy.save_override(db, body.hypervisor_id, body.cluster, body.values,
+                                            user=getattr(user, "username", "") or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit(db, user, "capacity_policy_override", "Kapasite eşik override'ı güncellendi", request,
+           hypervisor_id=body.hypervisor_id, cluster=body.cluster, values=body.values)
+    return {"ok": True, "effective": eff}
+
+
+@router.delete("/capacity/policy/override")
+def capacity_policy_override_delete(request: Request, hypervisor_id: int, key: str, cluster: Optional[str] = None,
+                                    db: Session = Depends(get_db),
+                                    user: User = Depends(require_role("admin"))):
+    from app.services import capacity_policy
+    n = capacity_policy.delete_override(db, hypervisor_id, cluster, key)
+    _audit(db, user, "capacity_policy_override", "Kapasite eşik override'ı silindi", request,
+           hypervisor_id=hypervisor_id, cluster=cluster, key=key)
+    return {"ok": True, "deleted": n, "effective": capacity_policy.effective(db, hypervisor_id, cluster)}
+
+
 @router.post("/capacity/simulate")
 def capacity_simulate(body: SimulateRequest, db: Session = Depends(get_db), user: User = Depends(_module)):
     from app.services.virt_capacity_planner import simulate
     return simulate(db, **body.model_dump())
+
+
+class MoveRequest(BaseModel):
+    vcpu: int = Field(..., ge=1, le=768)
+    memory_gb: float = Field(..., ge=0, le=16384)
+    disk_gb: float = Field(0.0, ge=0)
+    count: int = Field(1, ge=1, le=500)
+    from_hypervisor_id: int
+    from_cluster: str
+    to_hypervisor_id: int
+    to_cluster: str
+
+
+@router.post("/capacity/move")
+def capacity_move(body: MoveRequest, db: Session = Depends(get_db), user: User = Depends(_module)):
+    """Açık "A cluster'ından B'ye taşı" senaryosu (H.0 #10). Kendiliğinden cluster dışı yerleştirme yoktur."""
+    from app.services.virt_capacity_planner import move_scenario
+    res = move_scenario(db, **body.model_dump())
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Senaryo hesaplanamadı")
+    return res
 
 
 # ── Yerleştirme ──────────────────────────────────────────────────────────────

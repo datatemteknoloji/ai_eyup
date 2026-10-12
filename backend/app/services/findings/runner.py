@@ -71,6 +71,16 @@ def _save_snapshots(db: Session, platform: str, hv_id: int, col: Dict[str, Any],
         store.save_config_snapshot(db, platform=platform, source_id=hv_id, entity_kind="cluster",
                                    entity_ref=str(c["name"]), entity_name=c["name"], cluster_name=c["name"],
                                    config=cfg, state=c.get("state"), now=now)
+    for c in col.get("clusters") or []:
+        t = c.get("topology")
+        if t is None:
+            continue
+        # H.0: kapasite hiyerarşisi (datacenter + üst düzey resource pool'lar) — mevcut cluster/host kayıtlarına
+        # dokunmayan ayrı tür. Kaydın varlığı "okundu" demektir; pools=None "okunamadı".
+        store.save_config_snapshot(db, platform=platform, source_id=hv_id, entity_kind="cluster_topology",
+                                   entity_ref=str(c["ref"]), entity_name=c["name"], cluster_name=c["name"],
+                                   config={"datacenter": t.get("datacenter"), "pools": t.get("pools")},
+                                   state=None, now=now)
     for h in col.get("hosts") or []:
         snap = store.save_config_snapshot(db, platform=platform, source_id=hv_id, entity_kind="host",
                                           entity_ref=str(h["ref"]), entity_name=h["name"],

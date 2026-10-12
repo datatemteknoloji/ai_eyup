@@ -105,6 +105,20 @@ export function OcpCapacityPage() {
                 { key: 'mem', label: 'Memory request', render: r => <div className="w-40"><div className={`font-mono text-xs ${pctTone(r.mem_pct, 75, 85)}`}>{fmt(r.req_mem_gb)} / {fmt(r.mem_gb)} GB (%{fmt(r.mem_pct)})</div><Bar pct={r.mem_pct} warn={75} crit={85} /></div> },
               ]} />
             </Panel>
+            {c.underlay && (
+              <Panel title={t('oi_underlay_title', { n: c.underlay.matched, total: c.underlay.total })} method="cap.underlay" methodAt={c.as_of}>
+                <SimpleTable rows={c.underlay.nodes || []} cols={[
+                  { key: 'node', label: 'Node', render: (r: any) => <span className="font-mono text-white text-xs">{r.node}</span> },
+                  { key: 'path', label: t('vi_whatif_path'), render: (r: any) => r.matched ? <span className="font-mono text-xs text-slate-200">{r.path || `${r.cluster} / ${r.host}`}</span> : <span className="text-xs text-slate-500">{(r.notes || []).join(' · ')}</span> },
+                ]} />
+                <div className="px-4 py-2 space-y-0.5 text-[11px]">
+                  {(c.underlay.clusters || []).map((u: any) => (
+                    <div key={u.path} className={u.n1_status === 'fail' ? 'text-red-300' : 'text-slate-400'}>• {u.path}: {t('oi_underlay_n1')} {u.n1_status || '—'}</div>
+                  ))}
+                  {(c.underlay.notes || []).map((n: string, i: number) => <div key={i} className="text-amber-300">• {n}</div>)}
+                </div>
+              </Panel>
+            )}
             <OcpWhatIf cluster={c} />
           </div>
         )

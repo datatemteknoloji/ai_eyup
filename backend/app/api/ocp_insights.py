@@ -68,9 +68,18 @@ def summary(db: Session = Depends(get_db), user: User = Depends(_module)):
 @router.get("/capacity")
 def capacity(cluster_id: Optional[int] = None, db: Session = Depends(get_db), user: User = Depends(_module)):
     from app.services.ocp_insights import latest_stats
-    return {"ok": True, "clusters": [{"cluster_id": s["cluster_id"], "cluster": s["cluster"], "as_of": s["as_of"],
-                                      **((s["stats"] or {}).get("capacity") or {})}
-                                     for s in latest_stats(db, cluster_id)]}
+    out = [{"cluster_id": s["cluster_id"], "cluster": s["cluster"], "as_of": s["as_of"],
+            **((s["stats"] or {}).get("capacity") or {})} for s in latest_stats(db, cluster_id)]
+    # H.0 #11 (ek alan; mevcut alanlar değişmez): node bir VM ise alt platformun yolu ve alt cluster N+1'i
+    try:
+        from app.services.capacity.nested import underlay_for_ocp
+        for c in out:
+            u = underlay_for_ocp(db, [w["name"] for w in (c.get("workers") or []) if w.get("name")])
+            if u and u["matched"]:
+                c["underlay"] = u
+    except Exception:  # noqa: BLE001 — alt katman bilgisi isteğe bağlı; OCP sayfası bozulmaz
+        logger.exception("ocp underlay hesaplanamadı")
+    return {"ok": True, "clusters": out}
 
 
 @router.get("/reclaim")

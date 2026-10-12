@@ -11,6 +11,7 @@ kullanır — bu bir "task" üretir ama hiçbir şeyi değiştirmez (yalnız lis
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -38,7 +39,7 @@ HOST_PATHS = [
     "summary.hardware.vendor", "summary.hardware.model",
     "hardware.biosInfo.biosVersion",
 ]
-CLUSTER_PATHS = ["name", "host", "datastore", "configurationEx", "summary.numEffectiveHosts"]
+CLUSTER_PATHS = ["name", "host", "datastore", "configurationEx", "summary.numEffectiveHosts", "parent"]
 DS_PATHS = [
     "name", "summary.type", "summary.accessible", "summary.multipleHostAccess",
     "summary.capacity", "summary.freeSpace", "summary.uncommitted",
@@ -330,6 +331,80 @@ def _parse_cluster(row: Dict[str, Any]) -> Dict[str, Any]:
         },
         "state": {"effective_hosts": row.get("summary.numEffectiveHosts")},
     }
+
+
+# H.0 — kapasite hiyerarşisi: datacenter + resource pool rezervasyon/limitleri (vSphere Web Services SDK:
+# `ResourcePool.config` = ResourceConfigSpec → `cpuAllocation` / `memoryAllocation` (ResourceAllocationInfo:
+# `reservation` [CPU MHz / bellek MB], `limit` [-1 = sınırsız], `expandableReservation`), `ResourcePool.owner`
+# (ComputeResource), `parent`; `Datacenter.name`, `Folder.parent`. Doğrulama 2026-10-13 (belge); canlı vCenter'da
+# alan biçimi doğrulanmadı → okunamayan/biçimsiz her şey None (kapasite motoru "rezervasyonlar hesaba katılmadı" der).
+FOLDER_PATHS = ["name", "parent"]
+DC_PATHS = ["name"]
+POOL_PATHS = ["name", "parent", "owner", "config.cpuAllocation", "config.memoryAllocation"]
+
+
+class _TopologyOff(Exception):
+    """Topoloji okuması kapalı (varsayılan)."""
+
+
+def _alloc(v: Any) -> Dict[str, Any]:
+    """ResourceAllocationInfo → {reservation, limit, expandable} (sayılar float; biçimsizse None)."""
+    if not isinstance(v, dict):
+        return {"reservation": None, "limit": None, "expandable": None}
+
+    def _n(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+    return {"reservation": _n(v.get("reservation")), "limit": _n(v.get("limit")),
+            "expandable": as_bool(v.get("expandableReservation"))}
+
+
+def parse_topology(clusters_raw: List[Dict[str, Any]], folders_raw: List[Dict[str, Any]],
+                   dcs_raw: List[Dict[str, Any]], pools_raw: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Saf ayrıştırma (ağ yok): cluster ref → {datacenter, pools|None}.
+
+    Datacenter: cluster.parent → Folder.parent zinciri Datacenter'a ulaşana kadar (tür bilgisine bağlı değil: ref,
+    datacenter ref kümesinde aranır). Pool'lar: kök pool (parent'ı bir pool değil) hariç; yalnız kökün DOĞRUDAN
+    çocukları (üst düzey) rezervasyon olarak sayılır — alt havuzlar üst havuzun rezervasyonu içindedir.
+    Pool verisi hiç gelmediyse (kök pool bile yok) pools=None (okunamadı) — boş liste "havuz yok" demektir.
+    """
+    dc_name = {str(r.get("_ref")): r.get("name") for r in dcs_raw or [] if r.get("_ref")}
+    folder_parent = {str(r.get("_ref")): _ref_key(r.get("parent")) for r in folders_raw or [] if r.get("_ref")}
+    pools = [r for r in pools_raw or [] if r.get("_ref")]
+    pool_refs = {str(r["_ref"]) for r in pools}
+    out: Dict[str, Dict[str, Any]] = {}
+    for c in clusters_raw or []:
+        ref = str(c.get("_ref") or "")
+        if not ref:
+            continue
+        dc = None
+        cur = _ref_key(c.get("parent"))
+        for _ in range(12):
+            if not cur:
+                break
+            if cur in dc_name:
+                dc = dc_name[cur]
+                break
+            cur = folder_parent.get(cur, "")
+        mine = [p for p in pools if _ref_key(p.get("owner")) == ref]
+        if not mine:
+            out[ref] = {"datacenter": dc, "pools": None}
+            continue
+        roots = {str(p["_ref"]) for p in mine if _ref_key(p.get("parent")) not in pool_refs}
+        top = []
+        for p in mine:
+            if _ref_key(p.get("parent")) in roots:
+                cpu, mem = _alloc(p.get("config.cpuAllocation")), _alloc(p.get("config.memoryAllocation"))
+                top.append({
+                    "ref": str(p["_ref"]), "name": p.get("name"),
+                    "cpu_reservation_mhz": cpu["reservation"], "cpu_limit_mhz": cpu["limit"],
+                    "mem_reservation_mb": mem["reservation"], "mem_limit_mb": mem["limit"],
+                    "expandable": mem["expandable"],
+                })
+        out[ref] = {"datacenter": dc, "pools": sorted(top, key=lambda x: str(x["name"]))}
+    return out
 
 
 def _parse_datastore(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -717,6 +792,24 @@ def collect(hv: Hypervisor, *, file_scan: bool = False) -> Dict[str, Any]:
                     (host_name if g["kind"] == "host" else vm_name).get(x, x) for x in g["members"]
                 )
         out.update(clusters=clusters, hosts=hosts, datastores=datastores, vms=vms)
+        # H.0: datacenter + resource pool (ayrı, tolerant okuma — hata mevcut toplamayı bozmaz).
+        # vCenter'a EK okuma yaptığı için VARSAYILAN KAPALI (VCENTER_TOPOLOGY_COLLECT=1 ile açılır; 3. taraf yükü kuralı).
+        # Kapalıyken kapasite motoru havuzları "okunamadı" sayar: düşük güven + "rezervasyonlar hesaba katılmadı".
+        try:
+            if os.environ.get("VCENTER_TOPOLOGY_COLLECT", "").strip().lower() not in ("1", "true", "yes", "on"):
+                raise _TopologyOff()
+            folders_raw = client.retrieve_properties("Folder", FOLDER_PATHS, **kw)
+            dcs_raw = client.retrieve_properties("Datacenter", DC_PATHS, **kw)
+            pools_raw = client.retrieve_properties("ResourcePool", POOL_PATHS, **kw)
+            topo = parse_topology(clusters_raw, folders_raw, dcs_raw, pools_raw)
+            for c in clusters:
+                t = topo.get(str(c["ref"]))
+                if t is not None:
+                    c["topology"] = t
+        except _TopologyOff:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("vCenter datacenter/resource pool okunamadı: %s", exc)
         try:
             out["hcl"] = read_vlcm_hcl(client, clusters)
         except Exception as exc:

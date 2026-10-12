@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
+from app.services.capacity import rules_olvm, rules_vmware
 from app.services.capacity.model import ClusterModel, Demand, HaSpec, Node
 
 OCP_WARN_PCT = 85.0
@@ -57,33 +58,19 @@ def reserve_for(model: ClusterModel) -> Dict[str, Any]:
     if model.reserve_mode == "none":
         return {"policy": "none", "label": "Rezerv yok (platformda HA rezervi kavramı yok)",
                 "mem_gb": 0.0, "cpu_cores": 0.0, "assumed": False}
-    if model.platform == "vmware" and model.ha is not None:
-        vc: HaSpec = model.ha
-        if not vc.ha_enabled:
-            return {"policy": "ha_off", "label": "HA kapalı — rezerv yok", "mem_gb": 0.0, "cpu_cores": 0.0,
-                    "assumed": False}
-        if not vc.admission_control_enabled:
-            return {"policy": "ac_off", "label": "Admission control kapalı — rezerv garanti değil",
-                    "mem_gb": 0.0, "cpu_cores": 0.0, "assumed": False}
-        pt = str(vc.policy_type or "").lower()
-        if "resource" in pt or "percent" in pt or vc.mem_failover_pct:
-            mp = float(vc.mem_failover_pct or 0)
-            cp = float(vc.cpu_failover_pct or 0)
-            return {"policy": "percentage", "label": f"Yüzde politikası (CPU %{cp:.0f} / Memory %{mp:.0f})",
-                    "mem_gb": mem_total * mp / 100.0, "cpu_cores": cpu_total * cp / 100.0, "assumed": False}
-        n = int(vc.failover_level or 1)
-        top = by_mem[:n]
-        return {"policy": "failover_level", "label": f"Host failover seviyesi = {n}",
-                "mem_gb": sum(h.mem_gb for h in top),
-                "cpu_cores": sum(float(h.cpu_cores or 0) for h in top), "assumed": False}
-    if model.platform == "olvm" and model.ha_reservation is False:
-        return {"policy": "ha_reservation_off",
-                "label": "HA Reservation kapalı — Manager HA kapasitesini garanti etmez, rezerv yok",
-                "mem_gb": 0.0, "cpu_cores": 0.0, "assumed": False}
+    # Platforma özgü kurallar ayrı modüllerde (H.0): rules_vmware / rules_olvm.
+    if model.platform == "vmware":
+        r = rules_vmware.reserve(model, usable, by_mem, mem_total, cpu_total)
+        if r is not None:
+            return r
+    if model.platform == "olvm":
+        r = rules_olvm.reserve(model, usable, by_mem)
+        if r is not None:
+            return r
     top = by_mem[:1]
     label = "Varsayım: 1 host rezerv (platform politikası okunmadı)"
-    if model.platform == "olvm" and model.ha_reservation is True:
-        label = "HA Reservation açık — ayrılan miktar resmi belgede tanımlı değil; varsayım: 1 host rezerv"
+    if model.platform == "olvm":
+        label = rules_olvm.assumed_label(model) or label
     return {"policy": "assumed_n1", "label": label,
             "mem_gb": sum(h.mem_gb for h in top),
             "cpu_cores": sum(float(h.cpu_cores or 0) for h in top), "assumed": True}
@@ -129,15 +116,9 @@ def summarize(model: ClusterModel, n1_warn: float) -> Dict[str, Any]:
         "n1": n_plus_one(usable, mem_used, cpu_used, n1_warn),
         "usable": len(usable),
     }
-    oc = model.mem_overcommit_pct
-    if oc is not None and oc > 0:
-        # OLVM: zamanlayıcı fiziksel belleğin %oc'sine kadar VM yerleştirir (Memory Optimization).
-        # Taahhüt tabanı = çalışan VM bellek tahsisi; kapasite = (fiziksel − rezerv) × oc/100.
-        sched = mem_eff * oc / 100.0
-        out["overcommit"] = {
-            "pct": float(oc), "scheduling_gb": sched, "committed_gb": float(model.mem_allocated_gb or 0.0),
-            "committed_pct": _r(100.0 * float(model.mem_allocated_gb or 0.0) / sched) if sched > 0 else None,
-        }
+    oc = rules_olvm.overcommit(model, mem_eff)
+    if oc is not None:
+        out["overcommit"] = oc
     return out
 
 

@@ -111,24 +111,80 @@ function VmPicker({ label, placeholder, onPick, listId }: { label: string; place
   )
 }
 
-function WhatIf() {
+/** H.0 kapsam seçici: instance → datacenter → cluster(lar) → (opsiyonel) host(lar). Seçim yoksa her cluster bağımsız. */
+export function ScopeSelect({ clusters, value, onChange }: { clusters: Cluster[]; value: Scope; onChange: (s: Scope) => void }) {
+  const t = useT()
+  const inst = Array.from(new Map(clusters.map((c: any) => [c.hypervisor_id, c.hypervisor])).entries())
+  const inInst = clusters.filter((c: any) => !value.instance || String(c.hypervisor_id) === value.instance)
+  const dcs = Array.from(new Set(inInst.map((c: any) => c.datacenter).filter(Boolean))) as string[]
+  const inDc = inInst.filter((c: any) => !value.datacenter || c.datacenter === value.datacenter)
+  const cls = Array.from(new Set(inDc.map((c: any) => c.cluster))) as string[]
+  const hosts = Array.from(new Set(inDc.filter((c: any) => !value.clusters.length || value.clusters.includes(c.cluster))
+    .flatMap((c: any) => c.host_names || []))) as string[]
+  const sel = 'rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white'
+  const multi = (opts: string[], cur: string[], set: (v: string[]) => void, testId: string) => (
+    <select multiple data-testid={testId} value={cur} className={`${sel} h-20 min-w-[10rem]`}
+      onChange={e => set(Array.from(e.target.selectedOptions).map(o => o.value))}>
+      {opts.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  )
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-start gap-3">
+        <label className="flex flex-col gap-1 text-xs text-slate-400">{t('vi_scope_instance')}
+          <select data-testid="scope-instance" value={value.instance} className={sel}
+            onChange={e => onChange({ instance: e.target.value, datacenter: '', clusters: [], hosts: [] })}>
+            <option value="">{t('vi_scope_all')}</option>
+            {inst.map(([id, name]) => <option key={String(id)} value={String(id)}>{String(name)}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-slate-400">{t('vi_scope_dc')}
+          <select data-testid="scope-dc" value={value.datacenter} className={sel} disabled={dcs.length === 0}
+            onChange={e => onChange({ ...value, datacenter: e.target.value, clusters: [], hosts: [] })}>
+            <option value="">{t('vi_scope_all')}</option>
+            {dcs.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-slate-400">{t('vi_scope_cluster')}
+          {multi(cls, value.clusters, v => onChange({ ...value, clusters: v, hosts: [] }), 'scope-clusters')}
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-slate-400">{t('vi_scope_host')}
+          {multi(hosts, value.hosts, v => onChange({ ...value, hosts: v }), 'scope-hosts')}
+        </label>
+      </div>
+      <div className="text-[11px] text-slate-500">{t('vi_scope_all_hint')}</div>
+    </div>
+  )
+}
+
+export type Scope = { instance: string; datacenter: string; clusters: string[]; hosts: string[] }
+export const EMPTY_SCOPE: Scope = { instance: '', datacenter: '', clusters: [], hosts: [] }
+
+function WhatIf({ clusters }: { clusters: Cluster[] }) {
   const t = useT()
   const [vcpu, setVcpu] = useState('8')
   const [mem, setMem] = useState('32')
   const [disk, setDisk] = useState('100')
   const [count, setCount] = useState('1')
+  const [scope, setScope] = useState<Scope>(EMPTY_SCOPE)
   const [res, setRes] = useState<any>(null)
   const [err, setErr] = useState('')
   const [cloned, setCloned] = useState<VmOpt | null>(null)
   const run = async () => {
     setErr('')
     try {
-      setRes(await apiSend('virt-insights', '/capacity/simulate', 'POST', { vcpu: Number(vcpu), memory_gb: Number(mem), disk_gb: Number(disk), count: Number(count) }))
+      const body: any = { vcpu: Number(vcpu), memory_gb: Number(mem), disk_gb: Number(disk), count: Number(count) }
+      if (scope.instance) body.hypervisor_id = Number(scope.instance)
+      if (scope.datacenter) body.datacenter = scope.datacenter
+      if (scope.clusters.length) body.clusters = scope.clusters
+      if (scope.hosts.length) body.hosts = scope.hosts
+      setRes(await apiSend('virt-insights', '/capacity/simulate', 'POST', body))
     } catch (e: any) { setErr(e.message) }
   }
   return (
     <Panel title={t('vi_whatif_title')} method="cap.sim.add_vms">
       <div className="p-4 space-y-4">
+        <ScopeSelect clusters={clusters} value={scope} onChange={setScope} />
         <div className="flex flex-wrap items-end gap-3">
           <VmPicker label={t('vi_whatif_clone')} placeholder={t('vi_whatif_clone_ph')} listId="vi-whatif-vm-list"
             onPick={vm => {
@@ -149,12 +205,23 @@ function WhatIf() {
         {res && (
           <>
             <SimpleTable rows={res.results || []} cols={[
-              { key: 'cluster', label: 'Cluster', render: r => <span className="text-white">{r.cluster} <span className="text-slate-500 text-xs">· {r.hypervisor}</span></span> },
+              { key: 'path', label: t('vi_whatif_path'), render: r => <span className="text-white font-mono text-xs">{r.path || `${r.hypervisor} / ? / ${r.cluster}`}</span> },
               { key: 'fits', label: t('vi_whatif_fits'), render: r => r.fits ? <span className="text-emerald-400">✓</span> : <span className="text-red-400">✗</span> },
+              { key: 'verdict', label: <span className="inline-flex items-center gap-1">{t('vi_whatif_verdict')}<MethodBadge id="cap.sim.host_placement" /></span>, render: r => (
+                <span className={r.fits ? 'text-emerald-400' : 'text-red-300'}>
+                  {r.verdict || '—'}
+                  {r.placement && <span className="block text-[11px] text-slate-500">{t('vi_whatif_placed', { n: (r.placement.placed || []).length, total: Number(count) })}</span>}
+                </span>) },
               { key: 'mem', label: t('vi_cap_eff_mem'), render: r => <span className="font-mono">%{fmt(r.before?.memory_effective_pct)} → <span className={pctTone(r.after?.memory_effective_pct, 75, 85)}>%{fmt(r.after?.memory_effective_pct)}</span></span> },
               { key: 'n1', label: 'N+1', render: r => <span className="font-mono">%{fmt(r.before?.n1_memory_pct)} → %{fmt(r.after?.n1_memory_pct)}</span> },
               { key: 'ds', label: 'Datastore', render: r => r.datastore ? <span className="font-mono text-xs">{r.datastore.name} (%{fmt(r.datastore.usage_after_pct)})</span> : '—' },
-              { key: 'reasons', label: t('vi_whatif_reasons'), className: 'text-xs text-slate-400', render: r => (r.reasons || []).join(' · ') || '—' },
+              { key: 'conf', label: t('vi_whatif_conf'), render: r => r.confidence ? <span className={r.confidence === 'low' ? 'text-amber-400' : 'text-slate-300'}>{t(`vi_whatif_conf_${r.confidence}` as any)}</span> : '—' },
+              { key: 'reasons', label: t('vi_whatif_reasons'), className: 'text-xs text-slate-400', render: r => (
+                <div>
+                  {(r.reasons || []).join(' · ') || '—'}
+                  {(r.placement?.placed || []).length > 0 && <div className="text-[11px] text-slate-500 font-mono">{r.placement.placed.map((p: any) => p.path).join(' ; ')}</div>}
+                  {(r.placement?.notes || []).map((n: string, i: number) => <div key={i} className="text-[11px] text-slate-500">• {n}</div>)}
+                </div>) },
             ]} />
             <div className="text-[11px] text-slate-500 space-y-0.5">{(res.assumptions || []).map((a: string, i: number) => <div key={i}>• {a}</div>)}</div>
           </>
@@ -335,7 +402,7 @@ export default function VirtCapacity() {
           ]} />
         </Panel>
       )}
-      {tab === 'whatif' && <WhatIf />}
+      {tab === 'whatif' && <WhatIf clusters={clusters} />}
       {tab === 'placement' && <Placement />}
       {tab === 'policy' && <PolicyPanel onSaved={() => q.refetch?.()} />}
     </div>

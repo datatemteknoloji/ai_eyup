@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.capacity_policy import CapacityPolicy
+from app.models.capacity_policy import CapacityPolicy, CapacityPolicyOverride
 
 # anahtar → (varsayılan, min, max, açıklama)
 SPEC: Dict[str, Dict[str, Any]] = {
@@ -119,3 +119,60 @@ def payload(db: Session) -> Dict[str, Any]:
                      "default": s["default"], "overridden": cur[k] != s["default"]}
                  for k, s in SPEC.items()},
     }
+
+
+# ── H.0: instance varsayılanı + cluster override ─────────────────────────────
+
+def load_overrides(db: Session, hypervisor_id: int) -> Dict[str, Dict[str, float]]:
+    """{'' : {anahtar: değer} (instance), '<cluster>': {...}} — tablo yoksa boş."""
+    out: Dict[str, Dict[str, float]] = {}
+    try:
+        for r in db.query(CapacityPolicyOverride).filter(CapacityPolicyOverride.hypervisor_id == int(hypervisor_id)).all():
+            if r.key in SPEC:
+                out.setdefault(r.cluster or "", {})[r.key] = float(r.value)
+    except Exception:  # noqa: BLE001 — tablo henüz yoksa override yok
+        db.rollback()
+    return out
+
+
+def effective(db: Session, hypervisor_id: int, cluster: Optional[str]) -> Dict[str, float]:
+    """kod varsayılanı < global < instance < cluster."""
+    th = load(db)
+    ov = load_overrides(db, hypervisor_id)
+    th.update(ov.get("", {}))
+    if cluster:
+        th.update(ov.get(cluster, {}))
+    return th
+
+
+def activate_for(db: Session, hypervisor_id: int, cluster: Optional[str]) -> Dict[str, float]:
+    """Bu (instance, cluster) için etkin eşikleri geçerli bağlama yazar; döner: etkin eşikler."""
+    th = effective(db, hypervisor_id, cluster)
+    _ACTIVE.set(th)
+    return th
+
+
+def save_override(db: Session, hypervisor_id: int, cluster: Optional[str], values: Dict[str, Any],
+                  user: str = "") -> Dict[str, float]:
+    clean = validate(values)
+    cl = cluster or ""
+    for k, v in clean.items():
+        row = (db.query(CapacityPolicyOverride)
+               .filter(CapacityPolicyOverride.hypervisor_id == int(hypervisor_id),
+                       CapacityPolicyOverride.cluster == cl, CapacityPolicyOverride.key == k).first())
+        if row is None:
+            db.add(CapacityPolicyOverride(hypervisor_id=int(hypervisor_id), cluster=cl, key=k, value=v,
+                                          updated_by=user or None))
+        else:
+            row.value, row.updated_by = v, user or None
+    db.commit()
+    return effective(db, hypervisor_id, cluster)
+
+
+def delete_override(db: Session, hypervisor_id: int, cluster: Optional[str], key: str) -> int:
+    n = (db.query(CapacityPolicyOverride)
+         .filter(CapacityPolicyOverride.hypervisor_id == int(hypervisor_id),
+                 CapacityPolicyOverride.cluster == (cluster or ""), CapacityPolicyOverride.key == key)
+         .delete())
+    db.commit()
+    return n

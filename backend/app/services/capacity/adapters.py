@@ -14,8 +14,9 @@ def _f(v: Any) -> float:
 
 
 def from_virt_hosts(platform: str, cluster: str, hosts: List[Dict[str, Any]], vc: Any = None, *,
-                    olvm_cfg: Optional[Dict[str, Any]] = None, vms_on: Optional[List[Dict[str, Any]]] = None
-                    ) -> ClusterModel:
+                    olvm_cfg: Optional[Dict[str, Any]] = None, vms_on: Optional[List[Dict[str, Any]]] = None,
+                    instance_id: Optional[int] = None, instance_name: str = "", datacenter: Optional[str] = None,
+                    pools: Optional[Any] = None) -> ClusterModel:
     """vCenter / OLVM / OpenShift Virt: `virt_insights_data.latest_hosts` satırları + cluster satırı.
 
     vCenter: `vc` (VirtCluster) HA/admission control alanları. OLVM: `olvm_cfg` (cluster config snapshot:
@@ -23,7 +24,7 @@ def from_virt_hosts(platform: str, cluster: str, hosts: List[Dict[str, Any]], vc
     """
     nodes = tuple(Node(name=h["host_name"], mem_gb=_f(h["mem_total_gb"]), cpu_cores=_f(h.get("cpu_cores")),
                        usable=bool(h["usable"]), mem_used_gb=_f(h["mem_used_gb"]),
-                       cpu_used_cores=_f(h["cpu_used_cores"])) for h in hosts)
+                       cpu_used_cores=_f(h["cpu_used_cores"]), ref=str(h.get("host_ref") or "")) for h in hosts)
     ha = None
     if platform == "vmware" and vc is not None:
         ha = HaSpec(ha_enabled=vc.ha_enabled, admission_control_enabled=vc.admission_control_enabled,
@@ -41,7 +42,8 @@ def from_virt_hosts(platform: str, cluster: str, hosts: List[Dict[str, Any]], vc
     on = vms_on or []
     return ClusterModel(platform=platform, name=cluster, nodes=nodes, ha=ha, ha_reservation=ha_res,
                         mem_overcommit_pct=oc, mem_allocated_gb=sum(_f(v.get("memory_gb")) for v in on),
-                        vcpu_allocated=sum(_f(v.get("vcpu")) for v in on))
+                        vcpu_allocated=sum(_f(v.get("vcpu")) for v in on),
+                        instance_id=instance_id, instance_name=instance_name, datacenter=datacenter, pools=pools)
 
 
 def from_ocp_workers(workers: List[Dict[str, Any]], name: str = "cluster") -> ClusterModel:

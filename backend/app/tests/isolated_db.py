@@ -23,6 +23,9 @@ ROOT_TABLES = (
     "integration_instances", "bk_jobs", "bk_sessions", "bk_repositories", "bk_protected_objects",
     "bk_restore_points", "bk_proxies", "bk_rpo_policies", "bk_restore_tests", "servers", "infra_findings", "infra_finding_exceptions", "infra_check_runs",
     "app_settings", "infra_reference_data",
+    # H.0 kapasite: hiyerarşi + host seviyesi yerleşim + politika override testleri
+    "hypervisors", "hypervisor_host_metrics", "virt_clusters", "virt_datastores", "virt_config_snapshots",
+    "capacity_policies", "capacity_policy_overrides", "hypervisor_host_inventory",
 )
 
 _STATE: dict = {}
