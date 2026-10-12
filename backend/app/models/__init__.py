@@ -41,6 +41,12 @@ from app.models.infra_finding import (
     InfraCheckRun, InfraFinding, InfraFindingException,
     VirtConfigSnapshot, VirtDatastoreFile, InfraReferenceData,
 )
+from app.models.integration_instance import IntegrationInstance
+from app.models.capacity_policy import CapacityPolicy
+from app.models.backup import (
+    BkJob, BkSession, BkRepository, BkProtectedObject, BkRestorePoint,
+    BkRpoPolicy, BkRestoreTest,
+)
 
 __all__ = [
     "Server", "Hypervisor", "ChatSession", "ChatMessage", "ChatTurn", "ChatQACache",
@@ -70,4 +76,7 @@ __all__ = [
     "CustomReportDefinition",
     "InfraCheckRun", "InfraFinding", "InfraFindingException",
     "VirtConfigSnapshot", "VirtDatastoreFile", "InfraReferenceData",
+    "IntegrationInstance", "CapacityPolicy",
+    "BkJob", "BkSession", "BkRepository", "BkProtectedObject", "BkRestorePoint",
+    "BkRpoPolicy", "BkRestoreTest",
 ]

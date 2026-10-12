@@ -11,14 +11,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-PLATFORMS = ("vmware", "olvm", "ocp_virt", "ocp")
+PLATFORMS = ("vmware", "olvm", "ocp_virt", "ocp", "backup")
 CATEGORIES = (
     "capacity", "reclaim", "health", "hardware", "drift",
-    "vuln", "known_issue", "upgrade", "compliance",
+    "vuln", "known_issue", "upgrade", "compliance", "backup",
 )
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 SEVERITY_RANK = {s: i for i, s in enumerate(SEVERITIES)}
-RESULTS = ("pass", "fail", "not_measurable")
+# Bulgu sonuçları — kodda string literal kullanmayın; bu sabitlerden alın.
+RESULT_PASS = "pass"
+RESULT_FAIL = "fail"
+RESULT_NOT_MEASURABLE = "not_measurable"
+RESULT_NOT_APPLICABLE = "not_applicable"
+RESULTS = (RESULT_PASS, RESULT_FAIL, RESULT_NOT_MEASURABLE, RESULT_NOT_APPLICABLE)
+# Skor / yüzde / paydaya yalnız bunlar girer (ölçülemedi ve uygulanamaz dışarıda).
+MEASURED_RESULTS = (RESULT_PASS, RESULT_FAIL)
 
 # ISO/IEC 27001:2022 Ek A + CIS benchmark başlık eşlemesi (kanıt amaçlı)
 ISO_CLOCK = "ISO27001:A.8.17"
@@ -44,7 +51,7 @@ CONTROL_TITLES: Dict[str, str] = {
 # Otomatik ölçülemeyen ama denetimde sorulan maddeler (manuel inceleme listesi)
 MANUAL_REVIEW_ITEMS: List[Dict[str, str]] = [
     {"control": ISO_BACKUP, "title": "Yedekleme kapsamı ve geri dönüş testleri",
-     "note": "Veeam entegrasyonu kapsam dışı; yedek raporu ayrıca eklenmeli."},
+     "note": "Opsiyonel backup capability yoksa otomatik kanıt üretilmez (not_applicable)."},
     {"control": ISO_ACCESS, "title": "vCenter / OLVM Manager rol ve yetki gözden geçirmesi",
      "note": "Rol atamaları dönemsel olarak gözden geçirilmeli (SSO/LDAP grupları)."},
     {"control": ISO_LOGGING, "title": "Merkezi log saklama süresi",
@@ -69,6 +76,8 @@ class CheckDef:
     # Komut taslağı şablonu türü (draft.py içindeki üretici anahtarı)
     draft: Optional[str] = None
     rationale_tr: str = ""
+    # Capability yoksa check çalışmaz → RESULT_NOT_APPLICABLE (skora girmez).
+    requires_capability: Tuple[str, ...] = ()
 
 
 _ALL = ("vmware", "olvm", "ocp_virt")
@@ -76,6 +85,8 @@ _V = ("vmware",)
 _O = ("olvm",)
 _K = ("ocp_virt",)
 _OCP = ("ocp",)
+_BK = ("backup",)
+_REQ_BK = ("backup",)
 
 _DEFS: List[CheckDef] = [
     # ── Kapasite (tüm sanallaştırma platformları) ────────────────────────────
@@ -264,12 +275,21 @@ _DEFS: List[CheckDef] = [
     CheckDef("hw.host.config_issue", "hardware", ("vmware",), "host", "low",
              "Host yapılandırma uyarısı", "Host configuration issue",
              "vCenter'ın raporladığı configIssue maddelerini giderin.", "Resolve reported config issues."),
+    CheckDef("hw.host.sensor_repeat", "hardware", ("vmware",), "host", "high",
+             "Sensör alarmı tekrarlıyor", "Hardware sensor alarm keeps recurring",
+             "Son 30 günde en az 3 ayrı günde sensör alarmı görüldü; geçici değil. Vendor destek kaydı açın ve VM'leri planlı tahliye edin.",
+             "Sensor alarm seen on at least 3 separate days in 30 days; open a vendor case and plan evacuation."),
     CheckDef("hw.host.event_pattern", "hardware", ("vmware", "olvm"), "host", "medium",
              "Tekrarlayan donanım olayı", "Recurring hardware events",
              "Son 14 günde tekrarlayan donanım olayları; arıza öncesi belirti olabilir.",
              "Recurring hardware events in the last 14 days may precede a failure."),
 
     # ── Geri kazanım ─────────────────────────────────────────────────────────
+    CheckDef("vmw.vm.consolidation_needed", "health", ("vmware",), "vm", "high",
+             "Disk konsolidasyonu gerekli", "Disk consolidation needed",
+             "Snapshot silindikten sonra delta diskler birleşmemiş (runtime.consolidationNeeded). Yedek/snapshot zincirini bozmadan VM'i konsolide edin.",
+             "Delta disks were not merged after snapshot removal. Consolidate the VM disks.",
+             refs=(ISO_CONFIG,)),
     CheckDef("reclaim.vm.snapshot_age", "reclaim", ("vmware", "olvm"), "vm", "medium",
              "Eski snapshot", "Old snapshot",
              "Snapshot yedek değildir; delta disk büyür ve performansı düşürür. Konsolide edin/silin.",
@@ -350,6 +370,63 @@ _DEFS: List[CheckDef] = [
              "Compliance Operator kuralı başarısız", "Compliance Operator rule failed",
              "ComplianceCheckResult FAIL; kural açıklamasındaki düzeltmeyi uygulayın.", "Apply remediation.",
              refs=(ISO_CONFIG,)),
+    # ── Yedekleme / DR (yalnız backup capability varken üretilir; Dilim D MVP) ─
+    CheckDef("bk.vm.unprotected", "backup", _BK, "vm", "high",
+             "VM yedeklenmiyor", "VM is not protected",
+             "Açık VM için yedek sağlayıcısında geçerli bir koruma kaydı yok. Yedek işine ekleyin veya istisna tanımlayın.",
+             "No protection record for a powered-on VM. Add to a backup job or define an exception.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.vm.rpo_breach", "backup", _BK, "vm", "high",
+             "RPO hedefi aşıldı", "RPO target breached",
+             "Son geri dönüş noktası hedef RPO'dan eski. Yedek işini/zamanlamayı ve son hataları inceleyin. "
+             "Hedef tanımlı değilse bu kontrol uygulanamaz.",
+             "Latest restore point is older than the target RPO. Review job schedule and recent failures.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.job.failed_recent", "backup", _BK, "job", "high",
+             "Yedek işi son çalışmada başarısız", "Backup job failed recently",
+             "Son oturum Failed. Oturum mesajını inceleyin; tekrarlıyorsa depo alanı/ağ/kimlik bilgilerini kontrol edin.",
+             "Latest session failed. Check the session message, repository space, network and credentials.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.repo.capacity", "backup", _BK, "repository", "high",
+             "Yedek deposu dolu / çevrimdışı", "Backup repository full or offline",
+             "Depo doluluğu eşiği aştı veya depo çevrimdışı. Saklama süresini, kapasiteyi veya taşıma politikasını gözden geçirin.",
+             "Repository is above the usage threshold or offline. Review retention, capacity or tiering.",
+             refs=(ISO_BACKUP, ISO_CAPACITY), requires_capability=_REQ_BK),
+    CheckDef("bk.provider.sync_failed", "backup", _BK, "provider", "high",
+             "Yedek sağlayıcısı senkronu başarısız", "Backup provider sync failed",
+             "Son senkron hata verdi; yedek bulguları son başarılı veriye dayanır (bayat). Bağlantı/kimlik bilgilerini doğrulayın.",
+             "Last sync failed; backup findings rely on the last successful data (stale).",
+             requires_capability=_REQ_BK),
+    CheckDef("bk.provider.stale", "backup", _BK, "provider", "medium",
+             "Yedek verisi bayat", "Backup data is stale",
+             "Son başarılı senkron, senkron aralığının 2 katından eski. RPO sonuçları güvenilir değildir.",
+             "Last successful sync is older than 2x the sync interval; RPO results are unreliable.",
+             requires_capability=_REQ_BK),
+    CheckDef("bk.job.change_rate_spike", "backup", _BK, "job", "medium",
+             "Yedek değişim oranı sıçraması", "Backup change-rate spike",
+             "Son oturumda aktarılan veri önceki medyanın 2 katından fazla. Beklenmeyen veri artışı/ransomware şifrelemesi olasılığını değerlendirin.",
+             "Last session transferred more than 2x the prior median. Check for unexpected data growth or ransomware.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.job.window_overrun", "backup", _BK, "job", "medium",
+             "Yedek süresi uzadı (pencere riski)", "Backup duration growing (window risk)",
+             "Son oturum süresi önceki medyanın 1.5 katından uzun. Yedek penceresi ve depo/ağ performansını inceleyin.",
+             "Last session took more than 1.5x the prior median. Review backup window and repository/network performance.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.vm.rto_unverified", "backup", _BK, "vm", "medium",
+             "RTO doğrulanmadı (geri yükleme testi yok)", "RTO unverified (no restore test)",
+             "Hedef RTO tanımlı fakat kayıtlı geri yükleme testi yok veya 180 günden eski. RTO tahmin edilmez; test yapıp kaydedin.",
+             "A target RTO is set but no restore test is recorded (or older than 180 days). RTO is never estimated.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.copy.missing", "backup", _BK, "provider", "medium",
+             "İkinci kopya (copy işi) yok", "No secondary copy (copy job)",
+             "3-2-1 için etkin bir 'copy' tipi iş bulunamadı. Not: harici/değişmez kopya doğrulanmaz.",
+             "No enabled copy-type job found for 3-2-1. External/immutable copies are not verified.",
+             refs=(ISO_BACKUP,), requires_capability=_REQ_BK),
+    CheckDef("bk.provider.api_revision_deprecated", "backup", _BK, "provider", "low",
+             "VBR REST API revizyonu kullanımdan kalkmış", "VBR REST API revision deprecated",
+             "Yapılandırılan REST revizyonu Veeam dokümanında 'deprecated'. VBR yükseltildiğinde 1.3-rev1 veya üstünü seçin.",
+             "The configured REST revision is deprecated in Veeam docs. Move to 1.3-rev1+ after upgrading VBR.",
+             requires_capability=_REQ_BK),
 ]
 
 CHECKS: Dict[str, CheckDef] = {d.id: d for d in _DEFS}
@@ -359,6 +436,22 @@ _DYNAMIC_PREFIX_CATEGORY = {"vuln:": "vuln", "kb:": "known_issue", "upg:": "upgr
 
 def get_check(check_id: str) -> Optional[CheckDef]:
     return CHECKS.get(check_id)
+
+
+def is_valid_result(result: str) -> bool:
+    return result in RESULTS
+
+
+def is_measured_result(result: str) -> bool:
+    return result in MEASURED_RESULTS
+
+
+def check_capabilities_met(cdef: Optional[CheckDef], available: Optional[set] = None) -> bool:
+    """CheckDef.requires_capability kümesi available içinde mi?"""
+    if cdef is None or not cdef.requires_capability:
+        return True
+    have = available if available is not None else set()
+    return all(c in have for c in cdef.requires_capability)
 
 
 def category_of(check_id: str) -> str:
@@ -384,6 +477,7 @@ def catalog(locale: str = "tr") -> List[Dict[str, object]]:
             "recommendation": d.recommendation_en if en and d.recommendation_en else d.recommendation_tr,
             "refs": list(d.refs),
             "has_draft": bool(d.draft),
+            "requires_capability": list(d.requires_capability),
         }
         for d in _DEFS
     ]

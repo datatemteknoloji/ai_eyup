@@ -218,6 +218,12 @@ async def startup_tasks():
             logger.warning("create_all yarış (çok worker): %s", e)
         else:
             raise
+    try:
+        from app.services.findings.schema_ensure import ensure_backup_columns, ensure_infra_finding_columns
+        ensure_infra_finding_columns(engine)
+        ensure_backup_columns(engine)
+    except Exception as e:
+        logger.warning("findings schema ensure: %s", e)
 
     _role = (os.getenv("AINEW_SERVICE_ROLE") or "all").strip().lower()
 

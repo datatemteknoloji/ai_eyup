@@ -20,7 +20,14 @@ from app.models.infra_finding import (
     InfraFinding, InfraFindingException, VirtConfigSnapshot,
 )
 from app.services.findings.registry import (
-    SEVERITY_RANK, category_of, get_check,
+    RESULT_FAIL,
+    RESULT_NOT_APPLICABLE,
+    RESULT_NOT_MEASURABLE,
+    RESULT_PASS,
+    SEVERITY_RANK,
+    category_of,
+    get_check,
+    is_valid_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,7 +49,7 @@ class FindingDraft:
     entity_kind: str
     entity_ref: str
     entity_name: str
-    result: str                      # pass | fail | not_measurable
+    result: str                      # findings.registry.RESULTS sabitlerinden
     evidence: Dict[str, Any] = field(default_factory=dict)
     detail: str = ""
     cluster_name: Optional[str] = None
@@ -50,6 +57,8 @@ class FindingDraft:
     title: Optional[str] = None      # dinamik kontroller (CVE/KB/yükseltme)
     recommendation: Optional[str] = None
     refs: Optional[List[str]] = None
+    stale: bool = False
+    data_age_sec: Optional[float] = None
 
     @property
     def key(self) -> Tuple[str, str]:
@@ -112,8 +121,9 @@ def persist_findings(
         cdef = get_check(d.check_id)
         title = d.title or (cdef.title_tr if cdef else d.check_id)
         sev = d.severity or (cdef.severity if cdef else "medium")
-        if d.result != "fail":
-            sev = "info" if d.result == "not_measurable" else sev
+        result = d.result if is_valid_result(d.result) else RESULT_NOT_MEASURABLE
+        if result != RESULT_FAIL:
+            sev = "info" if result in (RESULT_NOT_MEASURABLE, RESULT_NOT_APPLICABLE) else sev
         rec = d.recommendation if d.recommendation is not None else (cdef.recommendation_tr if cdef else "")
         refs = d.refs if d.refs is not None else (list(cdef.refs) if cdef else [])
         row = existing.get(d.key)
@@ -124,7 +134,7 @@ def persist_findings(
             )
             db.add(row)
             existing[d.key] = row
-        elif not row.active or (row.result != "fail" and d.result == "fail"):
+        elif not row.active or (row.result != RESULT_FAIL and result == RESULT_FAIL):
             # Yeniden açılan bulgu: ilk görülme zamanı bu açılıştan başlar
             row.first_seen = now
         row.source_name = source_name
@@ -132,13 +142,15 @@ def persist_findings(
         row.entity_kind = d.entity_kind
         row.entity_name = (d.entity_name or d.entity_ref)[:512]
         row.cluster_name = d.cluster_name
-        row.result = d.result
+        row.result = result
         row.severity = sev
         row.title = title[:500]
         row.detail = d.detail
         row.evidence = _json_safe(d.evidence or {})
         row.recommendation = rec
         row.refs = refs
+        row.stale = bool(d.stale)
+        row.data_age_sec = d.data_age_sec
         row.last_seen = now
         row.active = True
         row.resolved_at = None
@@ -193,6 +205,8 @@ def finding_to_dict(row: InfraFinding, exc: Optional[InfraFindingException] = No
         "title": title,
         "detail": row.detail,
         "evidence": row.evidence or {},
+        "stale": bool(getattr(row, "stale", False)),
+        "data_age_sec": getattr(row, "data_age_sec", None),
         "recommendation": rec,
         "refs": row.refs or [],
         "first_seen": row.first_seen.isoformat() if row.first_seen else None,
@@ -278,6 +292,7 @@ def summarize_findings(db: Session, *, platforms: Optional[Sequence[str]] = None
     by_cat: Dict[str, Dict[str, int]] = {}
     excepted = 0
     not_measurable = 0
+    not_applicable = 0
     passed = 0
     last_seen: Optional[datetime] = None
     for r in q.all():
@@ -286,10 +301,14 @@ def summarize_findings(db: Session, *, platforms: Optional[Sequence[str]] = None
             continue
         if r.last_seen and (last_seen is None or _aware(r.last_seen) > _aware(last_seen)):
             last_seen = r.last_seen
-        if r.result == "not_measurable":
+        # Ölçülemedi / uygulanamaz: sayılır ama fail skorlarına ve kategori total'a girmez.
+        if r.result == RESULT_NOT_MEASURABLE:
             not_measurable += 1
             continue
-        if r.result == "pass":
+        if r.result == RESULT_NOT_APPLICABLE:
+            not_applicable += 1
+            continue
+        if r.result == RESULT_PASS:
             passed += 1
             continue
         c = by_cat.setdefault(r.category, {"total": 0})
@@ -299,6 +318,7 @@ def summarize_findings(db: Session, *, platforms: Optional[Sequence[str]] = None
         "by_category": by_cat,
         "excepted": excepted,
         "not_measurable": not_measurable,
+        "not_applicable": not_applicable,
         "passed": passed,
         "as_of": last_seen.isoformat() if last_seen else None,
     }

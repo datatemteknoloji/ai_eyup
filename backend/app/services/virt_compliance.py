@@ -25,16 +25,32 @@ def compliance_report(db: Session, *, platforms: Sequence[str]) -> Dict[str, Any
         for ref in f.get("refs") or []:
             by_ctrl[ref].append(f)
     for ctrl, items in sorted(by_ctrl.items()):
-        c = {"pass": 0, "fail": 0, "not_measurable": 0, "excepted": 0}
+        from app.services.findings.registry import (
+            MEASURED_RESULTS,
+            RESULT_FAIL,
+            RESULT_NOT_APPLICABLE,
+            RESULT_NOT_MEASURABLE,
+            RESULT_PASS,
+        )
+        c = {
+            RESULT_PASS: 0,
+            RESULT_FAIL: 0,
+            RESULT_NOT_MEASURABLE: 0,
+            RESULT_NOT_APPLICABLE: 0,
+            "excepted": 0,
+        }
         for f in items:
             if f.get("exception"):
                 c["excepted"] += 1
             else:
-                c[f["result"]] = c.get(f["result"], 0) + 1
-        measured = c["pass"] + c["fail"]
+                r = f.get("result")
+                if r in c:
+                    c[r] += 1
+        measured = sum(c[r] for r in MEASURED_RESULTS)
         controls[ctrl] = {
             "control": ctrl, "title": CONTROL_TITLES.get(ctrl, ctrl), "counts": c,
-            "score_pct": round(100.0 * c["pass"] / measured, 1) if measured else None,
+            # not_measurable / not_applicable paydaya girmez
+            "score_pct": round(100.0 * c[RESULT_PASS] / measured, 1) if measured else None,
             "findings": items,
         }
     return {

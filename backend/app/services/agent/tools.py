@@ -129,6 +129,8 @@ class Tool:
     # False → LLM şemasına girmez; yalnız sunucu tarafı akışlar (ör. karar katmanı
     # onaylı düzeltme önerisi) AgentAction ile çağırır.
     llm_visible: bool = True
+    # Capability registry (ör. {"backup"}) — yoksa tool LLM listesinde hiç görünmez.
+    requires_capability: frozenset = frozenset()
 
     def preview(self, db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> str:
         if self.direct_handler:
@@ -4481,6 +4483,19 @@ ASK_USER_SPEC: Dict[str, Any] = {
 }
 
 
+def _tool_capabilities_met(t: "Tool") -> bool:
+    """requires_capability boşsa True; aksi halde capability registry ile kesişim."""
+    need = getattr(t, "requires_capability", None) or frozenset()
+    if not need:
+        return True
+    try:
+        from app.services.capabilities import get_capabilities
+        have = get_capabilities()
+    except Exception:  # noqa: BLE001
+        return False
+    return all(c in have for c in need)
+
+
 def tool_specs() -> List[Dict[str, Any]]:
     """LLM'e gönderilecek tool şemaları — Linux + Windows araçları."""
     specs = [
@@ -4493,7 +4508,7 @@ def tool_specs() -> List[Dict[str, Any]]:
             },
         }
         for t in TOOLS.values()
-        if t.llm_visible
+        if t.llm_visible and _tool_capabilities_met(t)
     ]
     # Windows tools
     try:
@@ -4522,8 +4537,7 @@ def tool_specs_read_only(domains: Optional[frozenset] = None) -> List[Dict[str, 
             "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
         }
         for t in TOOLS.values()
-        if t.risk_level == RiskLevel.READ_ONLY and t.llm_visible
-        and (domains is None or (t.domains & domains))
+        if t.risk_level == RiskLevel.READ_ONLY and t.llm_visible and _tool_capabilities_met(t)
     ]
     try:
         from app.services.agent.tools_windows import WINDOWS_TOOLS, MUTATING_WIN_TOOLS

@@ -104,6 +104,27 @@ try:
 except Exception as e:
     logger.error(f"Could not load virt_insights router: {e}", exc_info=True)
 
+# Capability registry (backup vb. — menü/tool keşfi)
+try:
+    from app.api import capabilities_api
+    api_router.include_router(capabilities_api.router, prefix="/capabilities", tags=["capabilities"])
+except Exception as e:
+    logger.error(f"Could not load capabilities router: {e}", exc_info=True)
+
+# Opsiyonel yedekleme/DR sağlayıcı yapılandırması (modül: integrations, yalnız admin)
+try:
+    from app.api import backup_integrations
+    api_router.include_router(backup_integrations.router, prefix="/integrations/backup", tags=["backup"])
+except Exception as e:
+    logger.error(f"Could not load backup_integrations router: {e}", exc_info=True)
+
+# Yedek & DR görünümü (yalnız backup capability varken anlamlı)
+try:
+    from app.api import backup_insights
+    api_router.include_router(backup_insights.router, prefix="/virt-insights/backup", tags=["backup"])
+except Exception as e:
+    logger.error(f"Could not load backup_insights router: {e}", exc_info=True)
+
 # OpenShift platform karar katmanı (aynı bulgu motoru)
 try:
     from app.api import ocp_insights

@@ -34,7 +34,7 @@ class InfraCheckRun(Base):
 
 
 class InfraFinding(Base):
-    """Bir kontrolün bir varlık üzerindeki son sonucu (pass / fail / not_measurable)."""
+    """Bir kontrolün bir varlık üzerindeki son sonucu (findings.registry.RESULTS)."""
     __tablename__ = "infra_findings"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -48,13 +48,16 @@ class InfraFinding(Base):
     entity_ref = Column(String(512), nullable=False)
     entity_name = Column(String(512))
     cluster_name = Column(String(255), index=True)
-    result = Column(String(16), nullable=False, index=True)     # pass | fail | not_measurable
+    result = Column(String(16), nullable=False, index=True)  # RESULTS sabitleri
     severity = Column(String(12), nullable=False, default="medium", index=True)
     title = Column(String(500), nullable=False)
     detail = Column(Text)
     evidence = Column(JSON, default=dict)
     recommendation = Column(Text)
     refs = Column(JSON, default=list)
+    # Kaynak senkronu bayatsa True (yedek provider vb.); skora etki etmez.
+    stale = Column(Boolean, nullable=False, default=False)
+    data_age_sec = Column(Float, nullable=True)
     first_seen = Column(DateTime(timezone=True), server_default=func.now())
     last_seen = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     # Son turda tekrar üretilmediyse False (kontrol artık geçerli değil / varlık gitti)

@@ -38,6 +38,7 @@ function FindingsTab({ category }: { category: string }) {
         <Select value={result} onChange={setResult}>
           <option value="fail">{t('vi_res_fail')}</option>
           <option value="not_measurable">{t('vi_res_nm')}</option>
+          <option value="not_applicable">{t('vi_res_na')}</option>
           <option value="pass">{t('vi_res_pass')}</option>
           <option value="all">{t('vi_all')}</option>
         </Select>
@@ -85,6 +86,7 @@ function ComplianceTab() {
               <th className="px-3 py-2">{t('vi_res_pass')}</th>
               <th className="px-3 py-2">{t('vi_res_fail')}</th>
               <th className="px-3 py-2">{t('vi_res_nm')}</th>
+              <th className="px-3 py-2">{t('vi_res_na')}</th>
               <th className="px-3 py-2">{t('vi_excepted')}</th>
               <th className="px-3 py-2">{t('vi_cmp_score')}</th>
             </tr>
@@ -96,7 +98,8 @@ function ComplianceTab() {
                   <td className="px-3 py-2 text-white">{c.title}</td>
                   <td className="px-3 py-2 font-mono text-emerald-400">{c.counts.pass}</td>
                   <td className="px-3 py-2 font-mono text-red-400">{c.counts.fail}</td>
-                  <td className="px-3 py-2 font-mono text-slate-400">{c.counts.not_measurable}</td>
+                  <td className="px-3 py-2 font-mono text-amber-200/80">{c.counts.not_measurable}</td>
+                  <td className="px-3 py-2 font-mono text-slate-500">{c.counts.not_applicable ?? 0}</td>
                   <td className="px-3 py-2 font-mono text-slate-400">{c.counts.excepted}</td>
                   <td className="px-3 py-2 font-mono text-blue-300">{c.score_pct != null ? `%${fmt(c.score_pct)}` : '—'}</td>
                 </tr>
@@ -241,7 +244,8 @@ export default function VirtHealthChecks() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Stat label={t('vi_hc_critical')} value={crit} tone={crit ? 'text-red-400' : 'text-white'} />
         <Stat label={t('vi_hc_high')} value={high} tone={high ? 'text-amber-400' : 'text-white'} />
-        <Stat label={t('vi_res_nm')} value={sum.data?.findings?.not_measurable ?? 0} tone="text-slate-300" hint={t('vi_hc_nm_hint')} />
+        <Stat label={t('vi_res_nm')} value={sum.data?.findings?.not_measurable ?? 0} tone="text-amber-200/90" hint={t('vi_res_nm_hint')} />
+        <Stat label={t('vi_res_na')} value={sum.data?.findings?.not_applicable ?? 0} tone="text-slate-400" hint={t('vi_res_na_hint')} />
         <Stat label={t('vi_excepted')} value={sum.data?.findings?.excepted ?? 0} tone="text-slate-300" />
       </div>
       <Tabs tabs={tabs} active={tab} onChange={id => setSp({ tab: id })} />

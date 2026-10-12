@@ -20,12 +20,12 @@ DRAFT_KEYS = {"vmw_ha_enable", "vmw_ntp_set", "vmw_ntp_restart", "vmw_snapshot_r
 # ── Katalog ──────────────────────────────────────────────────────────────────
 
 def test_check_ids_are_namespaced_and_consistent():
-    cats = {"capacity", "health", "reclaim", "compliance", "drift", "hardware", "security", "upgrade", "kb"}
+    cats = {"capacity", "health", "reclaim", "compliance", "drift", "hardware", "security", "upgrade", "kb", "backup"}
     for cid, d in CHECKS.items():
         assert d.id == cid
         assert d.category in cats, cid
         assert d.severity in {"critical", "high", "medium", "low", "info"}, cid
-        assert d.platforms and set(d.platforms) <= {"vmware", "olvm", "ocp_virt", "ocp"}, cid
+        assert d.platforms and set(d.platforms) <= {"vmware", "olvm", "ocp_virt", "ocp", "backup"}, cid
         assert d.title_tr and d.title_en, cid
         assert category_of(cid) == d.category
 

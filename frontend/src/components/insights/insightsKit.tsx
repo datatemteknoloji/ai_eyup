@@ -117,13 +117,30 @@ export function Bar({ pct, warn = 75, crit = 90 }: { pct?: number | null; warn?:
 
 export function ResultBadge({ result }: { result: string }) {
   const t = useT()
+  // not_measurable = veri toplanamadı (incelenmeli); not_applicable = bu ortamda geçerli değil
   const map: Record<string, string> = {
     fail: 'bg-red-500/10 text-red-300 border-red-500/30',
     pass: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
-    not_measurable: 'bg-slate-500/10 text-slate-300 border-slate-500/30',
+    not_measurable: 'bg-amber-500/10 text-amber-200 border-amber-500/30',
+    not_applicable: 'bg-slate-500/10 text-slate-400 border-slate-500/40 border-dashed',
   }
-  const label = result === 'fail' ? t('vi_res_fail') : result === 'pass' ? t('vi_res_pass') : t('vi_res_nm')
-  return <span className={`px-2 py-0.5 rounded border text-[11px] font-medium whitespace-nowrap ${map[result] || map.not_measurable}`}>{label}</span>
+  const label =
+    result === 'fail' ? t('vi_res_fail')
+    : result === 'pass' ? t('vi_res_pass')
+    : result === 'not_applicable' ? t('vi_res_na')
+    : t('vi_res_nm')
+  const title =
+    result === 'not_applicable' ? t('vi_res_na_hint')
+    : result === 'not_measurable' ? t('vi_res_nm_hint')
+    : undefined
+  return (
+    <span
+      title={title}
+      className={`px-2 py-0.5 rounded border text-[11px] font-medium whitespace-nowrap ${map[result] || map.not_measurable}`}
+    >
+      {label}
+    </span>
+  )
 }
 
 export function RunBar({ base, lastRun }: { base: InsightsBase; lastRun?: { finished_at?: string | null; started_at?: string | null; status?: string } | null }) {

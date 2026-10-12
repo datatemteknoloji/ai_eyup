@@ -66,6 +66,8 @@ RULES: List[Rule] = [
     # ── Herkes (kimlik doğrulanmış) — uç noktaların kendi rol kontrolü geçerli ──
     _ANY("/auth"), _ANY("/public"), _ANY("/modules"), _ANY("/identity"), _ANY("/security"),
     _ANY("/audit"), _ANY("/platform"), _ANY("/platform-update"), _ANY("/settings"),
+    # Capability keşfi (backup vb.) — menü görünürlüğü; tüm kimlik doğrulanmış kullanıcılar
+    _ANY("/capabilities"),
     # Yalnız admin sayfalarının kullandığı uçlar (AuditLog, Ayarlar)
     _ADMIN("/tasks"), _ADMIN("/rag"), _ADMIN("/mcp"),
 
