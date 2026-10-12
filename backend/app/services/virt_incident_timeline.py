@@ -329,6 +329,13 @@ def _rank(items: List[Dict[str, Any]], bottleneck: Dict[str, Any], at: datetime)
     if layers[("vm", "cpu")] and not cpu:
         add("vm_own_load", "VM'in kendi yükü (host normal)", 0.35, [],
             ["Guest içinde süreç bazlı CPU kullanımını inceleyin", "vCPU sayısının yeterliliğini değerlendirin"])
+    bk = tags["backup"]
+    if bk and (st or layers[("datastore", "disk")] or layers[("host", "disk")]):
+        add("backup_overlap", "Yedek oturumu ile zamansal örtüşme (snapshot/commit stun olasılığı)",
+            0.3 + 0.05 * min(len(bk), 4), bk,
+            ["Yedek işinin başlangıç/bitiş saatini latency artışıyla karşılaştırın",
+             "VM'de snapshot oluşturma/konsolidasyon olaylarını doğrulayın",
+             "Yedek penceresini kaydırmayı değerlendirin"])
     cands.sort(key=lambda c: -c["confidence"])
     return cands
 
@@ -371,6 +378,11 @@ def build_timeline(db: Session, *, host: Optional[str] = None, vm: Optional[str]
     items += _config_changes(db, start, end, names, clusters)
     zb = _zabbix(db, start, end, H | V)
     items += zb["items"]
+    try:  # Dilim E: yedek oturumları (yalnız backup capability varken)
+        from app.services.backup import extras as _bk
+        items += _bk.timeline_items(db, start, end, S)
+    except Exception:
+        pass
     items.sort(key=lambda x: x.get("t") or "")
     bottleneck = correlate_window(db, start=start, end=end, vm_names=sorted(V) or None,
                                   host_names=sorted(H) or None, limit=20) if (V or H) else {}

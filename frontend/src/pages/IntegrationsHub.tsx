@@ -14,6 +14,7 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
   exadata: <Layers size={22} />,
   openshift: <Boxes size={22} />,
   centrify: <Shield size={22} />,
+  backup: <Database size={22} />,
 }
 
 export default function IntegrationsHub() {
@@ -39,6 +40,16 @@ export default function IntegrationsHub() {
     },
   })
 
+  const { data: bkData } = useQuery({
+    queryKey: ['integrations-backup-count'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/integrations/backup/instances`)
+      if (!r.ok) return { instances: [] }
+      return r.json()
+    },
+  })
+  const bkCount = (bkData?.instances ?? []).filter((i: any) => i.enabled).length
+
   const dedupMut = useMutation({
     mutationFn: async (dryRun: boolean) => {
       const r = await fetch(`${API_BASE_URL}/integrations/deduplicate?dry_run=${dryRun}`, { method: 'POST' })
@@ -52,7 +63,7 @@ export default function IntegrationsHub() {
   })
 
   const inv = data?.inventory
-  const sources = data?.sources ?? []
+  const sources = [...(data?.sources ?? []), { id: 'backup', name: t('bki_title'), description: t('bki_sub'), path: '/integrations/backup', count: bkCount }]
   const dupGroups = dupData?.groups ?? []
 
   return (

@@ -212,6 +212,22 @@ def run_for_hypervisor(db: Session, hv, *, file_scan: Optional[bool] = None,
     return {"hypervisor": hv.name, "platform": platform, "status": run.status, "error": run.error, "stats": stats}
 
 
+def _refresh_backup_findings(db: Session) -> None:
+    """Yedek bulguları: capability varsa güncelle; yoksa yalnız önceden kalmış aktif bulguları çöz.
+    Veeam'siz ortamda sıfır iş (tek COUNT sorgusu)."""
+    try:
+        from app.models.infra_finding import InfraFinding
+        from app.services.capabilities import get_capabilities
+        if "backup" not in get_capabilities() and not db.query(InfraFinding.id).filter(
+                InfraFinding.platform == "backup", InfraFinding.active.is_(True)).first():
+            return
+        from app.services.backup.rpo_engine import persist_backup_findings
+        persist_backup_findings(db)
+    except Exception:
+        logger.exception("backup bulguları güncellenemedi")
+        db.rollback()
+
+
 def run_cycle(db: Session, *, hypervisor_id: Optional[int] = None, platform: Optional[str] = None,
               file_scan: Optional[bool] = None, include_ocp: bool = True) -> Dict[str, Any]:
     from app.services.virt_capacity_planner import build_capacity
@@ -233,4 +249,5 @@ def run_cycle(db: Session, *, hypervisor_id: Optional[int] = None, platform: Opt
             logger.exception("OCP insights turu başarısız")
             db.rollback()
             results.append({"platform": "ocp", "status": "error", "error": str(exc)})
+    _refresh_backup_findings(db)
     return {"ok": True, "runs": results, "checks": len(CHECKS)}

@@ -24,6 +24,8 @@ const VirtMonitoring = lazy(() => import('./pages/VirtMonitoring'))
 const VirtCapacity = lazy(() => import('./pages/VirtCapacity'))
 const VirtReclaim = lazy(() => import('./pages/VirtReclaim'))
 const VirtHealthChecks = lazy(() => import('./pages/VirtHealthChecks'))
+const VirtBackup = lazy(() => import('./pages/VirtBackup'))
+const BackupIntegrationPage = lazy(() => import('./pages/BackupIntegrationPage'))
 const VirtChanges = lazy(() => import('./pages/VirtChanges'))
 const OcpCapacityPage = lazy(() => import('./pages/OcpInsightsPages').then(m => ({ default: m.OcpCapacityPage })))
 const OcpReclaimPage = lazy(() => import('./pages/OcpInsightsPages').then(m => ({ default: m.OcpReclaimPage })))
@@ -334,6 +336,7 @@ function App() {
                       <Route path="/virt/reclaim" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtReclaim /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt/health" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtHealthChecks /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt/changes" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtChanges /></ErrorBoundary></RequireModule>} />
+                      <Route path="/virt/backup" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtBackup /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt/dashboard" element={<Navigate to="/hypervisors" replace />} />
                       <Route path="/virt-ops" element={<Navigate to="/virt/ops" replace />} />
                       <Route path="/linux/reports" element={<RequireModule moduleId="linux"><ErrorBoundary><LinuxInfraReportsPage /></ErrorBoundary></RequireModule>} />
@@ -417,6 +420,7 @@ function App() {
                       <Route path="/integrations/physical-hosts" element={<RequireModule moduleId="integrations"><ErrorBoundary><PhysicalHostsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/exadata" element={<RequireAnyModule moduleIds={['integrations', 'exadata']}><ErrorBoundary><ExadataDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/openshift" element={<RequireAnyModule moduleIds={['integrations', 'openshift']}><ErrorBoundary><OpenShiftDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
+                      <Route path="/integrations/backup" element={<RequireModule moduleId="integrations"><ErrorBoundary><BackupIntegrationPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/centrify" element={<RequireAnyModule moduleIds={['integrations', 'level1']}><ErrorBoundary><CentrifySettingsPage /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/ucmdb/import" element={<Navigate to="/integrations/ucmdb" replace />} />
                       <Route path="/level1" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1OpsCenter /></ErrorBoundary></RequireModule>} />

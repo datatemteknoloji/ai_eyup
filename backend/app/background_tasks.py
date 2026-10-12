@@ -91,6 +91,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_inventory_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_esx_metric_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_virt_insights()))
+        self.tasks.append(asyncio.create_task(self._periodic_backup_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_maintenance()))
         self.tasks.append(asyncio.create_task(self._periodic_snapshot_cleanup()))
@@ -394,6 +395,26 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"Virt insights task unexpected error: {e}")
                 await asyncio.sleep(_rt_sec("virt_insights_interval_sec", 3600))
+
+    async def _periodic_backup_sync(self):
+        """Opsiyonel yedek sağlayıcı senkronu. Enabled instance yoksa HİÇBİR iş kuyruğa girmez
+        (Veeam'siz ortam bugünkü gibi davranır); tick yalnız tek hafif DB sorgusudur."""
+        logger.info("Backup sync scheduler started (yalnız enabled instance varken iş üretir)")
+        await asyncio.sleep(120)
+
+        while self.running:
+            try:
+                from app.services.backup.sync import has_enabled_backup_instance
+                if await asyncio.to_thread(has_enabled_backup_instance):
+                    from app.services.fleet_jobs import run_backup_sync
+                    await _enqueue_or_run("fleet.backup_sync", run_backup_sync, label="backup_sync")
+                await asyncio.sleep(300)
+            except asyncio.CancelledError:
+                logger.info("Backup sync task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Backup sync task unexpected error: {e}")
+                await asyncio.sleep(300)
 
     async def _periodic_rag_reindex(self):
         """RAG reindex tetikleyici — asıl embedding işi Celery worker'ında çalışır.

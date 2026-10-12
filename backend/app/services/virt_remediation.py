@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.models.hypervisor import Hypervisor
 from app.models.infra_finding import InfraFinding
+from app.services.findings.registry import RESULT_FAIL
 
 logger = logging.getLogger(__name__)
 TOOL_NAME = "virt_remediate"
@@ -132,7 +133,7 @@ def propose(db: Session, f: InfraFinding, *, action_id: Optional[str], params: D
     action = ACTIONS.get(aid or "")
     if not action or f.check_id not in action.check_ids or f.platform not in action.platforms:
         return {"ok": False, "error": "Bu bulgu için izinli bir düzeltme işlemi yok"}
-    if f.result != "fail" or not f.active:
+    if f.result != RESULT_FAIL or not f.active:
         return {"ok": False, "error": "Yalnız açık (fail) bulgular için düzeltme önerilebilir"}
     hv = db.query(Hypervisor).filter(Hypervisor.id == f.source_id).first()
     if not hv or not write_credential_status(db, hv.id).get("configured"):
@@ -146,8 +147,14 @@ def propose(db: Session, f: InfraFinding, *, action_id: Optional[str], params: D
         if not servers or len(servers) > 8 or any(len(s) > 255 or " " in s for s in servers):
             return {"ok": False, "error": "Geçerli NTP sunucu listesi gerekli"}
         params["servers"] = servers
-    if action.id == "vmw.snapshot_remove" and not _snapshots(f, params):
-        return {"ok": False, "error": "Silinecek snapshot seçilmedi / eşleşmedi"}
+    if action.id == "vmw.snapshot_remove":
+        snaps = _snapshots(f, params)
+        if not snaps:
+            return {"ok": False, "error": "Silinecek snapshot seçilmedi / eşleşmedi"}
+        from app.services.backup.snapshot_guard import check_snapshot_remove
+        guard = check_snapshot_remove(db, snapshots=snaps, vm_name=f.entity_name or "")
+        if not guard.get("ok"):
+            return {"ok": False, "error": guard.get("error") or "Snapshot silme engellendi"}
     args = {"finding_id": f.id, "action_id": action.id, "hypervisor_id": hv.id, "params": params}
     preview = _preview(action, f, params)
     call_id = f"call_{TOOL_NAME}"
@@ -218,9 +225,15 @@ def execute(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str,
         return {"ok": False, "error": "Yazma hesabı tanımlı değil"}
     params = args.get("params") or {}
     if action.id == "vmw.snapshot_remove":
+        snaps = _snapshots(f, params)
+        from app.services.backup.snapshot_guard import check_snapshot_remove
+        guard = check_snapshot_remove(db, snapshots=snaps, vm_name=f.entity_name or "")
+        if not guard.get("ok"):
+            return {"ok": False, "error": guard.get("error") or "Snapshot silme engellendi",
+                    "reason": guard.get("reason")}
         vm_ref = (f.entity_ref or "").split(":", 1)[-1]
         results = []
-        for s in _snapshots(f, params):
+        for s in snaps:
             ok, msg = client.delete_snapshot(vm_ref, s["ref"])
             results.append({"snapshot": s.get("name"), "ref": s["ref"], "ok": ok, "message": msg})
         return {"ok": all(r["ok"] for r in results) and bool(results), "results": results,

@@ -70,6 +70,7 @@ export const ROUTE_ACCESS: Array<[string, RouteReq]> = [
   ['/integrations/exadata', M('integrations', 'exadata')],
   ['/integrations/openshift', M('integrations', 'openshift')],
   ['/integrations/centrify', M('integrations', 'level1')],
+  ['/integrations/backup', M('integrations')],
   // ── Level 1 ──
   ['/level1', M('level1')], ['/level1/ops/*', M('level1')], ['/level1/console/:id', M('level1')],
   ['/level1/jobs/*', M('level1')], ['/level1/centrify', M('level1')],

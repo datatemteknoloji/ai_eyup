@@ -4334,6 +4334,9 @@ TOOLS: Dict[str, Tool] = {
 
 from app.services.agent.tools_virt_insights import VIRT_INSIGHTS_TOOLS  # noqa: E402
 TOOLS.update(VIRT_INSIGHTS_TOOLS)
+from app.services.agent.tools_backup import BACKUP_TOOLS  # noqa: E402
+TOOLS.update(BACKUP_TOOLS)  # requires_capability={"backup"}: Veeam/provider yoksa LLM'e görünmez
+
 
 
 # Platform domain etiketleri — sohbet kapsamına göre tool filtresi için.
@@ -4404,6 +4407,8 @@ _TOOL_DOMAIN_OVERRIDE = {
     "virt_health_findings": frozenset({"vcenter"}),
     "virt_incident_timeline": frozenset({"vcenter"}),
     "virt_remediate": frozenset({"vcenter"}),
+    "virt_backup_status": frozenset({"vcenter"}),
+    "virt_rpo_compliance": frozenset({"vcenter"}),
 }
 for _tool_name, _tool in TOOLS.items():
     if _tool_name in _TOOL_DOMAIN_OVERRIDE:

@@ -1,0 +1,96 @@
+{
+  "_meta": {
+    "source": "doc-example",
+    "note": "GERÇEK VBR YANITI DEĞİL. Veeam Help Center VBR 13 REST API Reference (1.3-rev1) yanıt örneklerinden alınmış, kısaltılmıştır. Gerçek VBR'den maskelenmiş fixture alındığında bu dosya ile yan yana eklenecek; o zamana kadar tüm endpoint'ler 'doğrulanmadı (gerçek VBR yok)'.",
+    "api_revision": "1.3-rev1",
+    "reference_base": "https://helpcenter.veeam.com/references/vbr/13/rest/1.3-rev1/tag/"
+  },
+  "serverInfo": {
+    "platform": "Linux",
+    "vbrId": "f2ef2bfd-e8e6-418a-8725-472e2e2d1efc",
+    "name": "srv88.tech.local",
+    "buildVersion": "13.0.0.4883",
+    "patches": [],
+    "databaseVendor": "PostgreSQL"
+  },
+  "jobs_states": {
+    "data": [
+      {
+        "type": "VSphereBackup", "status": "Stopped", "lastResult": "Success", "workload": "Vm",
+        "id": "e35ef047-8cfa-4c3e-979e-de2e5399142f", "name": "Linux backup job",
+        "lastRun": "2025-07-28T10:44:39.694588+02:00", "nextRun": "2025-07-30T19:00:00+02:00",
+        "nextRunPolicy": "7/30/2025 7:00 PM",
+        "repositoryId": "751421e3-d93e-44cc-b79a-15793af16e1b", "repositoryName": "Veeam Data Cloud Vault repository",
+        "objectsCount": 1, "sessionId": "6c76bb17-8695-4f7c-981f-670789edd8f3"
+      },
+      {
+        "type": "VSphereBackup", "status": "Running", "lastResult": "None", "workload": "Application",
+        "id": "508ae9cb-cc94-4705-8dda-5522a9ed60da", "name": "PostgreSQL backup",
+        "lastRun": "2025-07-30T16:36:14.921469+02:00", "nextRunPolicy": "After [Linux backup job]",
+        "repositoryId": "88788f9e-d8f5-4eb4-bc4f-9b3f5403bcec", "repositoryName": "Default Backup Repository",
+        "objectsCount": 1, "sessionId": "cab27d13-244e-4e6e-84c1-063a80b74117"
+      }
+    ],
+    "pagination": {"total": 2, "count": 2}
+  },
+  "repositories_states": {
+    "data": [
+      {"type": "WinLocal", "id": "d4b5e196-f3ad-474c-99bc-dfef051dae07", "name": "Backup Repository 1",
+       "hostName": "enterprise03.tech.local", "path": "C:\\Backup Repository",
+       "capacityGB": 299.4, "freeGB": 217.8, "usedSpaceGB": 173.4, "isOnline": true, "isOutOfDate": false},
+      {"type": "WinLocal", "id": "88788f9e-d8f5-4eb4-bc4f-9b3f5403bcec", "name": "Default Backup Repository",
+       "hostName": "enterprise06.tech.local", "path": "C:\\Backup",
+       "capacityGB": 99.4, "freeGB": 16.4, "usedSpaceGB": 30.4, "isOnline": true, "isOutOfDate": true}
+    ],
+    "pagination": {"total": 2, "count": 2, "skip": 0, "limit": 200}
+  },
+  "sessions": {
+    "data": [
+      {"sessionType": "BackupJob", "state": "Stopped", "id": "c924ee2f-1197-4b37-8de3-009c1977f347",
+       "name": "Backup Job 1", "jobId": "c05dfa57-f59a-4e90-8065-b7f5d3276406",
+       "creationTime": "2023-12-04T06:13:34.983+01:00", "endTime": "2023-12-04T06:15:00.617+01:00",
+       "progressPercent": 100,
+       "result": {"result": "Failed", "message": "Creating synthetic full backup (22% done)", "isCanceled": false},
+       "resourceId": "c7478158-7c99-4bab-93b1-c3efdd1062fa",
+       "resourceReference": "/api/v1/backups/c7478158-7c99-4bab-93b1-c3efdd1062fa", "usn": 0, "initiatedBy": "user"}
+    ],
+    "pagination": {"total": 307, "count": 1, "skip": 0, "limit": 1}
+  },
+  "backups": {
+    "data": [
+      {"platformName": "VMware", "id": "f3b0fbc5-01cf-4464-976a-4881e6eda067",
+       "jobId": "53b87378-7958-477d-8def-fbe6740d4b6f", "jobType": "VSphereBackup", "name": "Oracle Backup",
+       "creationTime": "2024-02-12T02:24:16.2+01:00", "repositoryId": "88788f9e-d8f5-4eb4-bc4f-9b3f5403bcec",
+       "repositoryName": "Repository 1"}
+    ],
+    "pagination": {"total": 1, "count": 1, "skip": 0, "limit": 200}
+  },
+  "backup_objects": {
+    "data": [
+      {"platformName": "VMware", "id": "b74c6a02-e540-4a5c-8eac-e34550614b35", "name": "appsrv001",
+       "type": "VM", "restorePointsCount": 3, "objectId": "f1e2d3c4-b5a6-9078-dcba-fe0987654321"},
+      {"viType": "VirtualMachine", "objectId": "vm-2067",
+       "path": "vcenter01.tech.local\\Prague\\Templates\\Manual\\win10_pro", "platformName": "VMware",
+       "id": "8cc1503d-c191-41dc-97a6-d748aff9cad4", "name": "win10_pro", "type": "Template"}
+    ],
+    "pagination": {"total": 2, "count": 2}
+  },
+  "restore_points": {
+    "data": [
+      {"platformName": "VMware", "type": "Increment", "malwareStatus": "Clean",
+       "id": "a456a7fd-c562-461f-aa7a-3f39b7320622", "name": "linbase01",
+       "creationTime": "2024-11-05T18:01:26.520805+01:00", "backupId": "c88774c1-ce7b-4530-8b73-cca781f02061"},
+      {"platformName": "VMware", "type": "Increment", "malwareStatus": "Clean",
+       "id": "5d858942-8813-48f7-b5c3-5378af993665", "name": "winsrv88",
+       "creationTime": "2024-11-05T16:01:02.928191+01:00", "backupId": "ffcedddf-577d-4033-aab8-9c6f46c82b8d"},
+      {"platformName": "LinuxPhysical", "type": "Increment", "malwareStatus": "Clean",
+       "id": "ab3361d3-df80-474d-b23f-ea9a498b9e8c", "name": "linbase02 AgentBackupJob",
+       "creationTime": "2024-11-06T00:30:20+01:00", "backupId": "00d9832b-0b4e-45fe-a284-0683e6c0e44c"}
+    ],
+    "pagination": {"total": 3, "count": 3}
+  },
+  "token": {
+    "access_token": "MASKED", "token_type": "bearer", "refresh_token": "MASKED", "expires_in": 900,
+    ".issued": "2025-06-10T10:29:39", ".expires": "2025-06-10T10:44:39", "username": "administrator"
+  }
+}

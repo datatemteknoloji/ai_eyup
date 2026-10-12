@@ -177,6 +177,27 @@ def run_virt_insights(hypervisor_id: Optional[int] = None, platform: Optional[st
         db.close()
 
 
+def run_backup_sync(force: bool = False) -> Dict[str, Any]:
+    """Opsiyonel yedek sağlayıcı senkronu + bulgular (yalnız enabled instance varken planlanır)."""
+    from app.services.fleet_mutex import fleet_lock
+
+    db = _db()
+    try:
+        with fleet_lock("backup_sync", ttl_sec=3600) as ok:
+            if not ok:
+                return {"skipped": True}
+            from app.services.backup.rpo_engine import persist_backup_findings
+            from app.services.backup.sync import run_all_due
+            runs = run_all_due(db, force=force)
+            res = persist_backup_findings(db) if runs else {"skipped": "no_due_instance"}
+            return {"runs": runs, "findings": res}
+    except Exception as exc:
+        logger.exception("backup_sync hata: %s", exc)
+        return {"error": str(exc)}
+    finally:
+        db.close()
+
+
 def run_esx_metric_sync() -> Dict[str, Any]:
     from app.services.fleet_mutex import fleet_lock
     from app.services.esx_metric_sync import sync_esx_metrics

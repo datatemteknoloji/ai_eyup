@@ -14,6 +14,7 @@ import {
 import { API_BASE_URL } from '../config/api'
 import { useTheme } from '../theme/ThemeProvider'
 import { useLocale } from '../i18n/LocaleProvider'
+import { useCapabilities } from '../hooks/useCapabilities'
 import {
   buildPlatformAiopsChildren,
   PLATFORM_AIOPS_LABEL_KEY,
@@ -169,6 +170,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { theme, toggleTheme } = useTheme()
   const { t, locale, setLocale } = useLocale()
   const { appName, logoUrl, version } = useBranding()
+  const { hasBackup } = useCapabilities()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -307,6 +309,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             { type: 'link', path: '/virt/reclaim', name: t('nav_virt_reclaim'), icon: <Recycle size={15} /> },
             { type: 'link', path: '/virt/health', name: t('nav_virt_health'), icon: <ShieldCheck size={15} /> },
             { type: 'link', path: '/virt/changes', name: t('nav_virt_changes'), icon: <GitCompare size={15} /> },
+            // Yalnız backup capability varken (Veeam'siz ortamda sekme hiç görünmez)
+            ...(hasBackup ? [{ type: 'link' as const, path: '/virt/backup', name: t('nav_virt_backup'), icon: <Database size={15} /> }] : []),
           ],
         },
         {
@@ -406,6 +410,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/integrations/exadata', name: t('nav_exadata_inventory'), icon: <Layers size={15} /> },
         { type: 'link', path: '/integrations/openshift', name: t('nav_openshift_inventory'), icon: <Boxes size={15} /> },
         { type: 'link', path: '/integrations/centrify', name: 'Centrify / Delinea', icon: <Shield size={15} /> },
+        { type: 'link', path: '/integrations/backup', name: 'Veeam', icon: <HardDrive size={15} /> },
       ],
     },
     { type: 'link', path: '/applications', name: t('nav_applications'), icon: <Package size={18} />, moduleId: 'applications' },
