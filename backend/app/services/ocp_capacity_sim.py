@@ -24,8 +24,9 @@ def _pct(a: float, b: float) -> Optional[float]:
     return round(100.0 * a / b, 1) if b > 0 else None
 
 
-def simulate(cap: Dict[str, Any], *, drain: List[str], cpu_cores: float = 0.0, memory_gb: float = 0.0,
-             count: int = 0) -> Dict[str, Any]:
+def simulate_legacy(cap: Dict[str, Any], *, drain: List[str], cpu_cores: float = 0.0, memory_gb: float = 0.0,
+                    count: int = 0) -> Dict[str, Any]:
+    """ESKİ motor (CAPACITY_ENGINE=legacy) — bir sürüm korunur; eşdeğerlik testleri karşılaştırır."""
     workers = list((cap or {}).get("workers") or [])
     if not workers:
         return {"ok": False, "error": "Worker verisi yok — önce taramayı çalıştırın"}
@@ -72,6 +73,17 @@ def simulate(cap: Dict[str, Any], *, drain: List[str], cpu_cores: float = 0.0, m
             "Eşik: >%85 uyarı, >%100 sığmaz.",
         ],
     }
+
+
+def simulate(cap: Dict[str, Any], *, drain: List[str], cpu_cores: float = 0.0, memory_gb: float = 0.0,
+             count: int = 0) -> Dict[str, Any]:
+    """Drene + yeni iş yükü senaryosu. Ortak motoru (`app.services.capacity.engine.drain`) çağırır;
+    `CAPACITY_ENGINE=legacy` eski motoru kullanır. API/arayüz sözleşmesi değişmedi."""
+    from app.services.capacity import engine, engine_mode
+    if engine_mode() == "legacy":
+        return simulate_legacy(cap, drain=drain, cpu_cores=cpu_cores, memory_gb=memory_gb, count=count)
+    return engine.drain((cap or {}).get("workers") or [], drain_names=drain, cpu_cores=cpu_cores,
+                        memory_gb=memory_gb, count=count)
 
 
 def node_risk(db: Session, *, days: int = 7, cluster_id: Optional[int] = None) -> Dict[str, Any]:

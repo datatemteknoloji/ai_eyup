@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.services import capacity_policy, virt_insights_data as vd
+from app.services.capacity import adapters as cap_adapters, engine as cap_engine, engine_mode
 from app.services.report_analytics import (
     compute_trend_from_series, days_to_threshold_range, horizon_uncertainty_label,
 )
@@ -103,13 +104,8 @@ def _cluster_vms(vms: List[Dict[str, Any]], hv_id: int, cluster: str, host_names
     return out
 
 
-def _analyze_cluster(db: Session, hv, platform: str, cluster: str, hosts: List[Dict[str, Any]],
-                     vms: List[Dict[str, Any]], vc: Any, p95: Dict, with_forecast: bool = True) -> Dict[str, Any]:
-    usable = [h for h in hosts if h["usable"]]
-    host_names = {h["host_name"] for h in hosts}
-    cvms = _cluster_vms(vms, hv.id, cluster, host_names)
-    on = [v for v in cvms if v["powered_on"]]
-
+def _core_legacy(usable: List[Dict[str, Any]], vc: Any, platform: str) -> Dict[str, Any]:
+    """ESKİ hesap (CAPACITY_ENGINE=legacy): bir sürüm boyunca korunur; eşdeğerlik testleri karşılaştırır."""
     mem_total = sum(h["mem_total_gb"] for h in usable)
     mem_used = sum(h["mem_used_gb"] for h in usable)
     cpu_total = sum(float(h.get("cpu_cores") or 0) for h in usable)
@@ -135,6 +131,45 @@ def _analyze_cluster(db: Session, hv, platform: str, cluster: str, hosts: List[D
         n1["cpu_warning"] = bool(n1["cpu_after_pct"] and n1["cpu_after_pct"] > 100)
     else:
         n1["status"] = "single_host" if len(usable) == 1 else "no_data"
+    return {"mem_total": mem_total, "mem_used": mem_used, "cpu_total": cpu_total, "cpu_used": cpu_used,
+            "reserve": reserve, "mem_eff": mem_eff, "cpu_eff": cpu_eff, "n1": n1}
+
+
+def _olvm_cluster_cfg(db: Session, hv_id: int, cluster: str) -> Optional[Dict[str, Any]]:
+    """OLVM cluster yapılandırması (config snapshot; ek API çağrısı yok). Yoksa None."""
+    try:
+        for c in vd.latest_config(db, "olvm", hv_id, "cluster"):
+            if c.get("name") == cluster:
+                return c.get("config") or None
+    except Exception:  # noqa: BLE001 — tablo/veri yoksa bilinmiyor
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
+def _core_unified(db: Session, hv, platform: str, cluster: str, hosts: List[Dict[str, Any]], vc: Any,
+                  on: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Ortak motor (`app.services.capacity`): düğüm kapasitesi, HA rezervi ve N+1 tek yerde."""
+    cfg = _olvm_cluster_cfg(db, hv.id, cluster) if platform == "olvm" else None
+    model = cap_adapters.from_virt_hosts(platform, cluster, [h for h in hosts], vc, olvm_cfg=cfg, vms_on=on)
+    return cap_engine.summarize(model, T.n1_warn)
+
+
+def _analyze_cluster(db: Session, hv, platform: str, cluster: str, hosts: List[Dict[str, Any]],
+                     vms: List[Dict[str, Any]], vc: Any, p95: Dict, with_forecast: bool = True) -> Dict[str, Any]:
+    usable = [h for h in hosts if h["usable"]]
+    host_names = {h["host_name"] for h in hosts}
+    cvms = _cluster_vms(vms, hv.id, cluster, host_names)
+    on = [v for v in cvms if v["powered_on"]]
+
+    if engine_mode() == "legacy":
+        core = _core_legacy(usable, vc, platform)
+    else:
+        core = _core_unified(db, hv, platform, cluster, hosts, vc, on)
+    mem_total, mem_used, cpu_total, cpu_used = core["mem_total"], core["mem_used"], core["cpu_total"], core["cpu_used"]
+    reserve, mem_eff, cpu_eff, n1 = core["reserve"], core["mem_eff"], core["cpu_eff"], core["n1"]
 
     vcpu = sum(v["vcpu"] for v in on)
     alloc_mem = sum(v["memory_gb"] for v in on)
@@ -157,6 +192,7 @@ def _analyze_cluster(db: Session, hv, platform: str, cluster: str, hosts: List[D
             "effective_used_pct": _r(100.0 * mem_used / mem_eff) if mem_eff else None,
             "allocated_gb": _r(alloc_mem),
             "allocation_ratio": _r(alloc_mem / mem_total, 2) if mem_total else None,
+            **({"overcommit": core["overcommit"]} if core.get("overcommit") else {}),
         },
         "cpu": {
             "total_cores": _r(cpu_total), "used_cores": _r(cpu_used), "reserved_cores": _r(reserve["cpu_cores"]),
@@ -334,6 +370,38 @@ def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster:
     }
 
 
+def _place_legacy(c: Dict[str, Any], *, add_mem: float, add_cpu: float, add_vcpu: float, vcpu: int) -> Dict[str, Any]:
+    """ESKİ yerleşim hesabı (CAPACITY_ENGINE=legacy) — eşdeğerlik testleri için korunur."""
+    reasons: List[str] = []
+    mem, cpu, n1 = c["memory"], c["cpu"], c["n_plus_one"]
+    mem_used = (mem["used_gb"] or 0) + add_mem
+    cpu_used = (cpu["used_cores"] or 0) + add_cpu
+    eff_mem_pct = 100.0 * mem_used / mem["effective_gb"] if mem["effective_gb"] else None
+    eff_cpu_pct = 100.0 * cpu_used / cpu["effective_cores"] if cpu["effective_cores"] else None
+    n1_after = (100.0 * mem_used / n1["remaining_mem_gb"]) if n1.get("remaining_mem_gb") else None
+    ratio_after = ((cpu["vcpu_allocated"] or 0) + add_vcpu) / cpu["total_cores"] if cpu["total_cores"] else None
+    fits = True
+    if eff_mem_pct is None or eff_mem_pct > T.mem:
+        fits = False
+        reasons.append(f"Effective Memory %{_r(eff_mem_pct)} > %{T.mem:.0f}")
+    if n1_after is not None and n1_after > 100:
+        fits = False
+        reasons.append(f"N+1 bozulur (en büyük host düşünce Memory %{_r(n1_after)})")
+    elif n1_after is not None and n1_after > T.n1_warn:
+        reasons.append(f"N+1 sınırda (%{_r(n1_after)})")
+    if eff_cpu_pct is not None and eff_cpu_pct > T.cpu:
+        reasons.append(f"CPU effective %{_r(eff_cpu_pct)} — performans riski (uyarı)")
+    if ratio_after and ratio_after > T.vcpu_ratio:
+        reasons.append(f"vCPU:çekirdek {ratio_after:.1f}:1 (uyarı)")
+    if c["hosts_usable"] == 0:
+        fits = False
+        reasons.append("Kullanılabilir host yok")
+    if vcpu > (c.get("typical_host_cores") or 0) and c.get("typical_host_cores"):
+        reasons.append(f"Tek VM vCPU ({vcpu}) host çekirdeğinden ({c['typical_host_cores']:.0f}) fazla")
+    return {"fits": fits, "reasons": reasons, "eff_mem_pct": eff_mem_pct, "eff_cpu_pct": eff_cpu_pct,
+            "n1_after": n1_after, "ratio_after": ratio_after}
+
+
 def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, count: int = 1,
              hypervisor_id: Optional[int] = None, cluster: Optional[str] = None,
              cpu_util_assumption: float = DEFAULT_CPU_ASSUMPTION) -> Dict[str, Any]:
@@ -355,32 +423,15 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
     cluster_ds = _cluster_datastore_names(db, cap["clusters"])
     results = []
     for c in cap["clusters"]:
-        reasons: List[str] = []
+        if engine_mode() == "legacy":
+            pl = _place_legacy(c, add_mem=add_mem, add_cpu=add_cpu, add_vcpu=add_vcpu, vcpu=vcpu)
+        else:
+            pl = cap_engine.place(c, add_mem=add_mem, add_cpu=add_cpu, add_vcpu=add_vcpu, vcpu_single=vcpu, thr=T,
+                                  overcommit=(c["memory"] or {}).get("overcommit"))
+        fits, reasons = pl["fits"], list(pl["reasons"])
+        eff_mem_pct, eff_cpu_pct, n1_after, ratio_after = (
+            pl["eff_mem_pct"], pl["eff_cpu_pct"], pl["n1_after"], pl["ratio_after"])
         mem, cpu, n1 = c["memory"], c["cpu"], c["n_plus_one"]
-        mem_used = (mem["used_gb"] or 0) + add_mem
-        cpu_used = (cpu["used_cores"] or 0) + add_cpu
-        eff_mem_pct = 100.0 * mem_used / mem["effective_gb"] if mem["effective_gb"] else None
-        eff_cpu_pct = 100.0 * cpu_used / cpu["effective_cores"] if cpu["effective_cores"] else None
-        n1_after = (100.0 * mem_used / n1["remaining_mem_gb"]) if n1.get("remaining_mem_gb") else None
-        ratio_after = ((cpu["vcpu_allocated"] or 0) + add_vcpu) / cpu["total_cores"] if cpu["total_cores"] else None
-        fits = True
-        if eff_mem_pct is None or eff_mem_pct > T.mem:
-            fits = False
-            reasons.append(f"Effective Memory %{_r(eff_mem_pct)} > %{T.mem:.0f}")
-        if n1_after is not None and n1_after > 100:
-            fits = False
-            reasons.append(f"N+1 bozulur (en büyük host düşünce Memory %{_r(n1_after)})")
-        elif n1_after is not None and n1_after > T.n1_warn:
-            reasons.append(f"N+1 sınırda (%{_r(n1_after)})")
-        if eff_cpu_pct is not None and eff_cpu_pct > T.cpu:
-            reasons.append(f"CPU effective %{_r(eff_cpu_pct)} — performans riski (uyarı)")
-        if ratio_after and ratio_after > T.vcpu_ratio:
-            reasons.append(f"vCPU:çekirdek {ratio_after:.1f}:1 (uyarı)")
-        if c["hosts_usable"] == 0:
-            fits = False
-            reasons.append("Kullanılabilir host yok")
-        if vcpu > (c.get("typical_host_cores") or 0) and c.get("typical_host_cores"):
-            reasons.append(f"Tek VM vCPU ({vcpu}) host çekirdeğinden ({c['typical_host_cores']:.0f}) fazla")
         ds_pick = None
         if add_disk:
             names = cluster_ds.get((c["hypervisor_id"], c["cluster"]))
@@ -407,6 +458,7 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
             "after": {
                 "memory_effective_pct": _r(eff_mem_pct), "cpu_effective_pct": _r(eff_cpu_pct),
                 "n1_memory_pct": _r(n1_after), "vcpu_ratio": _r(ratio_after, 2),
+                **({"memory_committed_pct": pl["committed_after_pct"]} if pl.get("committed_after_pct") is not None else {}),
             },
             "before": {
                 "memory_effective_pct": mem["effective_used_pct"], "cpu_effective_pct": cpu["effective_used_pct"],

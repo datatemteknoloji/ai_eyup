@@ -199,15 +199,11 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
             "fail" if hot > REQ_WARN_PCT else "pass", evidence=cap["request_pct"],
             detail=f"Request/allocatable: CPU %{_r(cpu_pct)}, Memory %{_r(mem_pct)}", cluster_name=cname))
     if len(usable) >= 2:
-        big = max(usable, key=lambda w: w["mem_gb"])
-        rem_mem = tot_mem - big["mem_gb"]
-        rem_cpu = tot_cpu - big["cpu_m"]
-        n1_mem = 100.0 * req_mem / rem_mem if rem_mem > 0 else None
-        n1_cpu = 100.0 * req_cpu / rem_cpu if rem_cpu > 0 else None
-        fail = (n1_mem is None or n1_mem > 100) or (n1_cpu is not None and n1_cpu > 100)
+        from app.services.capacity.engine import worker_n_plus_one
+        n1w = worker_n_plus_one(usable, req_cpu, req_mem)
+        big, n1_mem, n1_cpu, fail = n1w["big"], n1w["n1_mem"], n1w["n1_cpu"], n1w["fail"]
         cap["n_plus_one"] = {"largest_worker": big["name"], "memory_after_pct": _r(n1_mem),
-                             "cpu_after_pct": _r(n1_cpu), "status": "fail" if fail else (
-                                 "warn" if max(n1_mem or 0, n1_cpu or 0) > 90 else "ok")}
+                             "cpu_after_pct": _r(n1_cpu), "status": n1w["status"]}
         drafts.append(FindingDraft(
             "ocp.cluster.n_plus_one", "cluster", "cluster", cname, "fail" if fail else "pass",
             evidence=cap["n_plus_one"],
