@@ -48,7 +48,7 @@ export type ChatStreamSnapshot = {
   suggestions: ChatSuggestion[] | null
   queueMessage: string | null
   lastUsage: ChatUsage | null
-  lastEvidence: { level: string; reason?: string } | null
+  lastEvidence: { level: string; reason?: string; sources?: { tool: string; class: string | null; at?: string }[]; general?: boolean } | null
   /** Son akış kullanıcı isteğiyle durduruldu mu? */
   cancelled: boolean
 }
@@ -340,6 +340,9 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
               lastEvidence: {
                 level: String(chunk.evidence.level),
                 reason: chunk.evidence.reason ? String(chunk.evidence.reason) : undefined,
+                // Dilim T.3: araç kaynak satırı + "AI genel bilgisi" işareti
+                sources: Array.isArray(chunk.evidence.sources) ? chunk.evidence.sources : undefined,
+                general: chunk.evidence.general ? true : undefined,
               },
             })
           }

@@ -158,7 +158,7 @@ export function ChangesView({ base }: { base: InsightsBase }) {
             <SearchInput value={entity} onChange={setEntity} placeholder={t('vi_col_entity')} />
             <div className="ml-auto"><BaselineAll base={base} /></div>
           </div>
-          <Panel>
+          <Panel method="drift.changes">
             {q.isLoading ? <div className="p-6 text-sm text-slate-400">{t('loading')}</div> : rows.length === 0 ? (
               <div className="py-10 text-center text-sm text-slate-500 space-y-1">
                 <div>{t('vi_ch_none')}</div>

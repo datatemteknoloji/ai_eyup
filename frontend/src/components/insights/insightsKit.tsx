@@ -5,6 +5,7 @@ import { API_BASE_URL } from '../../config/api'
 import { useAuth } from '../../auth/AuthContext'
 import { useLocale, useT } from '../../i18n/LocaleProvider'
 import { GhostButton, Modal, NEON, SeverityBadge } from '../aiops/ui'
+import { MethodBadge } from './MethodBadge'
 
 export type InsightsBase = 'virt-insights' | 'ocp-insights'
 
@@ -19,7 +20,7 @@ export type Finding = {
   entity_ref: string
   entity_name: string
   cluster_name: string | null
-  result: 'pass' | 'fail' | 'not_measurable'
+  result: 'pass' | 'fail' | 'not_measurable' | 'not_applicable'
   severity: string
   title: string
   detail: string | null
@@ -79,14 +80,19 @@ export function pctTone(v?: number | null, warn = 75, crit = 90) {
   return 'text-emerald-400'
 }
 
-export function Panel({ title, right, children, className = '' }: {
+export function Panel({ title, right, children, className = '', method, methodAt }: {
   title?: React.ReactNode; right?: React.ReactNode; children: React.ReactNode; className?: string
+  /** Yöntem kaydı id'si (Dilim T): başlık yanında yöntem rozeti + (i). */
+  method?: string; methodAt?: string | Date | null
 }) {
   return (
     <div className={`bg-cyber-card border border-white/[0.06] rounded-lg ${className}`}>
-      {title && (
+      {(title || method) && (
         <div className="px-4 py-3 flex items-center justify-between border-b border-white/[0.06]">
-          <h2 className="text-sm font-semibold text-white">{title}</h2>
+          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+            {title}
+            {method && <MethodBadge id={method} at={methodAt} />}
+          </h2>
           {right}
         </div>
       )}
@@ -95,10 +101,17 @@ export function Panel({ title, right, children, className = '' }: {
   )
 }
 
-export function Stat({ label, value, tone = 'text-white', hint }: { label: string; value: React.ReactNode; tone?: string; hint?: string }) {
+export function Stat({ label, value, tone = 'text-white', hint, method, methodAt }: {
+  label: string; value: React.ReactNode; tone?: string; hint?: string
+  /** Yöntem kaydı id'si (Dilim T): etiket yanında yöntem rozeti + (i). */
+  method?: string; methodAt?: string | Date | null
+}) {
   return (
     <div className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-3" title={hint}>
-      <div className="text-[11px] uppercase tracking-wider text-slate-400">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1.5 flex-wrap">
+        {label}
+        {method && <MethodBadge id={method} at={methodAt} />}
+      </div>
       <div className={`text-2xl font-bold mt-0.5 font-mono ${tone}`}>{value}</div>
       {hint && <div className="text-[11px] text-slate-500 mt-0.5 truncate">{hint}</div>}
     </div>
@@ -301,7 +314,7 @@ export function FindingsTable({ base, rows, showPlatform = true, emptyText }: {
                 <tr className="border-b border-white/[0.04] hover:bg-white/[0.02] cursor-pointer" onClick={() => setOpen(isOpen ? null : f.id)}>
                   <td className="px-3 py-2 text-slate-500">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                   <td className="px-3 py-2"><SeverityBadge severity={f.severity} /></td>
-                  <td className="px-3 py-2 text-white">{f.title}{f.exception && <span className="ml-2 text-[10px] text-slate-400 border border-white/10 rounded px-1">{t('vi_excepted')}</span>}</td>
+                  <td className="px-3 py-2 text-white">{f.title}<MethodBadge id={f.check_id} at={f.last_seen} className="ml-2" />{f.exception && <span className="ml-2 text-[10px] text-slate-400 border border-white/10 rounded px-1">{t('vi_excepted')}</span>}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-300">{f.entity_name}{f.cluster_name && f.cluster_name !== f.entity_name ? <span className="text-slate-500"> · {f.cluster_name}</span> : null}</td>
                   {showPlatform && <td className="px-3 py-2 text-xs text-slate-400">{f.source_name} <span className="text-slate-600">({f.platform})</span></td>}
                   <td className="px-3 py-2 text-xs text-slate-400 max-w-[28rem] truncate" title={f.detail || ''}>{f.detail || '—'}</td>
@@ -346,7 +359,7 @@ export function FindingsTable({ base, rows, showPlatform = true, emptyText }: {
 }
 
 export function SimpleTable({ cols, rows, empty }: {
-  cols: { key: string; label: string; render?: (r: any) => React.ReactNode; className?: string }[]
+  cols: { key: string; label: React.ReactNode; render?: (r: any) => React.ReactNode; className?: string }[]
   rows: any[]; empty?: string
 }) {
   const t = useT()

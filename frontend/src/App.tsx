@@ -22,6 +22,7 @@ const Servers = lazy(() => import('./pages/Servers'))
 const Hypervisors = lazy(() => import('./pages/Hypervisors'))
 const VirtMonitoring = lazy(() => import('./pages/VirtMonitoring'))
 const VirtCapacity = lazy(() => import('./pages/VirtCapacity'))
+const MethodsPage = lazy(() => import('./pages/MethodsPage'))
 const VirtReclaim = lazy(() => import('./pages/VirtReclaim'))
 const VirtHealthChecks = lazy(() => import('./pages/VirtHealthChecks'))
 const VirtBackup = lazy(() => import('./pages/VirtBackup'))
@@ -332,6 +333,7 @@ function App() {
                       <Route path="/servers" element={<RequireModule moduleId="linux"><ErrorBoundary><Servers /></ErrorBoundary></RequireModule>} />
                       <Route path="/hypervisors" element={<RequireModule moduleId="virtualization"><ErrorBoundary><Hypervisors /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt/monitoring" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtMonitoring /></ErrorBoundary></RequireModule>} />
+                      <Route path="/methods" element={<ErrorBoundary><MethodsPage /></ErrorBoundary>} />
                       <Route path="/virt/capacity" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtCapacity /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt/reclaim" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtReclaim /></ErrorBoundary></RequireModule>} />
                       <Route path="/virt/health" element={<RequireModule moduleId="virtualization"><ErrorBoundary><VirtHealthChecks /></ErrorBoundary></RequireModule>} />

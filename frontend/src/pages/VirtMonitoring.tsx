@@ -9,6 +9,7 @@ import {
 } from 'recharts'
 import { API_BASE_URL } from '../config/api'
 import { useT } from '../i18n/LocaleProvider'
+import { MethodBadge } from '../components/insights/MethodBadge'
 import { MonitoringShell, type MonitoringDataMode } from '../components/monitoring/MonitoringShell'
 import { VirtPromView } from '../components/monitoring/VirtPromView'
 import { CHART_COLORS } from '../components/monitoring/zabbix/zbxUi'
@@ -99,9 +100,12 @@ const METRIC_LABEL: Record<string, string> = {
   write_iops: 'Yazma IOPS',
 }
 
-function Panel({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+function Panel({ children, className = '', method }: { children: React.ReactNode; className?: string; method?: string }) {
   return (
-    <div className={`bg-cyber-card border border-white/[0.06] rounded-lg px-3 py-2 ${className}`}>{children}</div>
+    <div className={`relative bg-cyber-card border border-white/[0.06] rounded-lg px-3 py-2 ${className}`}>
+      {method && <div className="absolute top-1.5 right-2"><MethodBadge id={method} /></div>}
+      {children}
+    </div>
   )
 }
 
@@ -514,14 +518,14 @@ const VirtMonitoring: React.FC<{
 
       <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
         {[
-          { label: t('vmn_health'), value: health?.label, cls: tone(health?.grade) },
-          { label: t('vmn_healthy'), value: health?.hosts?.healthy ?? '—', cls: 'text-emerald-400' },
-          { label: t('vmn_warning'), value: health?.hosts?.warning ?? '—', cls: 'text-amber-400' },
-          { label: t('vmn_critical'), value: health?.hosts?.critical ?? '—', cls: 'text-red-400' },
-          { label: t('vmn_unknown'), value: health?.hosts?.unknown ?? '—', cls: 'text-slate-400' },
-          { label: t('vmn_availability'), value: health?.availability_pct != null ? `${health.availability_pct}%` : '—' },
+          { label: t('vmn_health'), value: health?.label, cls: tone(health?.grade), method: 'ops.health_score' },
+          { label: t('vmn_healthy'), value: health?.hosts?.healthy ?? '—', cls: 'text-emerald-400', method: 'ops.platform_cards' },
+          { label: t('vmn_warning'), value: health?.hosts?.warning ?? '—', cls: 'text-amber-400', method: 'ops.platform_cards' },
+          { label: t('vmn_critical'), value: health?.hosts?.critical ?? '—', cls: 'text-red-400', method: 'ops.platform_cards' },
+          { label: t('vmn_unknown'), value: health?.hosts?.unknown ?? '—', cls: 'text-slate-400', method: 'ops.platform_cards' },
+          { label: t('vmn_availability'), value: health?.availability_pct != null ? `${health.availability_pct}%` : '—', method: 'ops.platform_cards' },
         ].map((k) => (
-          <Panel key={k.label}>
+          <Panel key={k.label} method={k.method}>
             <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">{k.label}</div>
             <div className={`text-base font-semibold mt-0.5 ${k.cls || 'text-white'}`}>{k.value}</div>
           </Panel>
@@ -741,7 +745,7 @@ const VirtMonitoring: React.FC<{
       </Panel>
 
       <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <Panel>
+        <Panel method="ops.platform_cards">
           <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3">{t('vmn_inventory')}</div>
           <ul className="text-sm text-slate-300 space-y-1.5">
             <li>{t('vmn_managers')} <span className="float-right font-mono">{ov?.inventory?.vcenters ?? '—'}</span></li>
@@ -751,7 +755,7 @@ const VirtMonitoring: React.FC<{
             <li>Datastore <span className="float-right font-mono">{ov?.inventory?.datastores ?? '—'}</span></li>
           </ul>
         </Panel>
-        <Panel>
+        <Panel method="monitor.comparison">
           <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">{t('vmn_comparison')}</div>
           <p className="text-[11px] text-slate-500 mb-3">{t('vmn_comparison_hint')}</p>
           {(['cpu', 'memory', 'storage'] as const).map((k) => {
@@ -767,7 +771,7 @@ const VirtMonitoring: React.FC<{
             )
           })}
         </Panel>
-        <Panel>
+        <Panel method="monitor.capacity_days">
           <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3">{t('vmn_capacity')}</div>
           {(ov?.capacity || []).length === 0 && <div className="text-sm text-slate-500">{t('vmn_empty_data')}</div>}
           {(ov?.capacity || []).slice(0, 5).map((c: any) => (
@@ -778,7 +782,7 @@ const VirtMonitoring: React.FC<{
               </div>
               <div className="text-[11px] text-slate-500">
                 30g {deltaTxt(c.trend_30d)} · {t('vmn_headroom')} {c.headroom ?? '—'}%
-                {c.days_to_80 != null ? ` · ${t('vmn_days_to')} ${c.days_to_80}` : ''}
+                {c.days_to_80 != null ? ` · ${t('vmn_days_to')} ~${Math.round(c.days_to_80)}` : ''}
               </div>
             </div>
           ))}

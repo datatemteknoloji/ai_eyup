@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
 import ReactMarkdown from 'react-markdown'
+import { AiBlock } from '../components/insights/MethodBadge'
 import remarkGfm from 'remark-gfm'
 import {
   NEON, rgb, PageHeader, PrimaryButton, GhostButton, Kpi, SeverityBadge,
@@ -781,10 +782,12 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                 </div>
               )}
               {analysisText && (
-                <div className="chat-response-content prose prose-invert prose-sm max-w-none text-slate-200">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisText}</ReactMarkdown>
-                  {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-sm" style={{ background: NEON.blue }} />}
-                </div>
+                <AiBlock method="ai.chat">
+                  <div className="chat-response-content prose prose-invert prose-sm max-w-none text-slate-200">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisText}</ReactMarkdown>
+                    {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-sm" style={{ background: NEON.blue }} />}
+                  </div>
+                </AiBlock>
               )}
             </div>
           )}
@@ -819,6 +822,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                     <span>Model: {logAnalysis.model}</span>
                   </div>
 
+                  <AiBlock method="ai.log_analyze"><div className="space-y-3">
                   {/* Kök neden */}
                   <div className="p-3 rounded-[8px]" style={{ background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.15)' }}>
                     <div className="text-xs font-semibold mb-1" style={{ color: NEON.cyan }}>{t('ops_root_cause')}</div>
@@ -852,6 +856,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                       </ol>
                     </div>
                   )}
+                  </div></AiBlock>
                 </div>
               )}
             </div>

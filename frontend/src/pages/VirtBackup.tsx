@@ -28,7 +28,7 @@ function RpoBadge({ s }: { s: string }) {
   return <span className={`text-[11px] px-2 py-0.5 rounded border ${m[1]}`}>{t(m[0] as any)}</span>
 }
 
-function Evidence() {
+function Evidence({ syncAt }: { syncAt?: string | null }) {
   const t = useT()
   const ev = useInsights<any>(BASE, '/backup/evidence')
   const cor = useInsights<any>(BASE, '/backup/correlations')
@@ -39,7 +39,7 @@ function Evidence() {
   const w = wi.data
   return (
     <div className="space-y-4">
-      <Panel title={t('bk_ev_title')}>
+      <Panel title={t('bk_ev_title')} method="bk.evidence" methodAt={syncAt}>
         <p className="text-xs text-slate-400 p-3">{t('bk_ev_hint')}</p>
         <SimpleTable rows={ev.data?.items || []} cols={[
           { key: 'control', label: t('bk_ev_control') },
@@ -51,7 +51,7 @@ function Evidence() {
           <p className="text-xs text-amber-200 p-3">{t('bk_ev_not_checked')}: {ev.data.not_checked.join(' · ')}</p>
         )}
       </Panel>
-      <Panel title={t('bk_wi_title')}>
+      <Panel title={t('bk_wi_title')} method="bk.whatif" methodAt={syncAt}>
         <div className="p-3 flex flex-wrap gap-3 items-end text-xs text-slate-400">
           <label className="flex flex-col gap-1">{t('bk_wi_add')}<input className="input-field text-sm w-28" type="number" min={0} value={n} onChange={e => setN(e.target.value)} /></label>
           <label className="flex flex-col gap-1">{t('bk_wi_gb')}<input className="input-field text-sm w-36" type="number" min={1} value={gb} placeholder={t('bk_wi_auto')} onChange={e => setGb(e.target.value)} /></label>
@@ -64,7 +64,7 @@ function Evidence() {
           </div>
         ) : <div className="px-3 pb-3 text-xs text-slate-500">{w?.reason || ''}</div>}
       </Panel>
-      <Panel title={t('bk_cor_title')}>
+      <Panel title={t('bk_cor_title')} method="bk.correlation" methodAt={syncAt}>
         <p className="text-xs text-slate-400 p-3">{t('bk_cor_hint')}</p>
         <SimpleTable rows={cor.data?.items || []} empty={t('bk_cor_none')} cols={[
           { key: 'job', label: t('bk_col_job'), render: (r: any) => <span className="text-white">{r.job}</span> },
@@ -161,6 +161,7 @@ export default function VirtBackup() {
   const s = sum.data || {}
   const providers: any[] = s.providers || []
   const demo = providers.some(p => p.demo)
+  const syncAt: string | null = providers.map(p => p.last_sync_at).filter(Boolean).sort().pop() || null
   const syncNow = async () => {
     setBusy(true)
     try {
@@ -188,12 +189,12 @@ export default function VirtBackup() {
         </div>
       ))}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-        <Stat label={t('bk_protected_pct')} value={s.protected_pct != null ? `%${fmt(s.protected_pct)}` : '—'} hint={`${s.protected ?? 0} / ${s.powered_on ?? 0}`} tone="text-blue-300" />
-        <Stat label={t('bk_unprotected')} value={s.unprotected ?? 0} tone={(s.unprotected ?? 0) ? 'text-red-400' : 'text-white'} />
-        <Stat label={t('bk_rpo_ok')} value={s.rpo_ok ?? 0} tone="text-emerald-400" />
-        <Stat label={t('bk_rpo_breach')} value={s.rpo_breach ?? 0} tone={(s.rpo_breach ?? 0) ? 'text-red-400' : 'text-white'} />
-        <Stat label={t('bk_rpo_no_target')} value={s.rpo_no_target ?? 0} hint={t('bk_no_target_hint')} />
-        <Stat label={t('bk_jobs_failed')} value={s.jobs_failed ?? 0} tone={(s.jobs_failed ?? 0) ? 'text-amber-400' : 'text-white'} hint={`${s.jobs ?? 0} ${t('bk_jobs')}`} />
+        <Stat label={t('bk_protected_pct')} value={s.protected_pct != null ? `%${fmt(s.protected_pct)}` : '—'} hint={`${s.protected ?? 0} / ${s.powered_on ?? 0}`} tone="text-blue-300" method="bk.summary" methodAt={syncAt} />
+        <Stat label={t('bk_unprotected')} value={s.unprotected ?? 0} tone={(s.unprotected ?? 0) ? 'text-red-400' : 'text-white'} method="bk.vm.unprotected" methodAt={syncAt} />
+        <Stat label={t('bk_rpo_ok')} value={s.rpo_ok ?? 0} tone="text-emerald-400" method="bk.rpo" methodAt={syncAt} />
+        <Stat label={t('bk_rpo_breach')} value={s.rpo_breach ?? 0} tone={(s.rpo_breach ?? 0) ? 'text-red-400' : 'text-white'} method="bk.vm.rpo_breach" methodAt={syncAt} />
+        <Stat label={t('bk_rpo_no_target')} value={s.rpo_no_target ?? 0} hint={t('bk_no_target_hint')} method="bk.rpo" methodAt={syncAt} />
+        <Stat label={t('bk_jobs_failed')} value={s.jobs_failed ?? 0} tone={(s.jobs_failed ?? 0) ? 'text-amber-400' : 'text-white'} hint={`${s.jobs ?? 0} ${t('bk_jobs')}`} method="bk.jobs" methodAt={syncAt} />
       </div>
       <Tabs active={tab} onChange={setTab} tabs={[
         { id: 'rpo', label: t('bk_tab_rpo') }, { id: 'jobs', label: t('bk_tab_jobs'), count: s.jobs },
@@ -201,7 +202,7 @@ export default function VirtBackup() {
         { id: 'policies', label: t('bk_tab_policies') }, { id: 'evidence', label: t('bk_tab_evidence') },
       ]} />
       {tab === 'rpo' && (
-        <Panel>
+        <Panel method="bk.rpo" methodAt={syncAt}>
           <div className="flex flex-wrap gap-2 p-3 border-b border-white/[0.06]">
             <select className="input-field text-sm" value={filter} onChange={e => setFilter(e.target.value)}>
               <option value="">{t('vi_all')}</option><option value="unprotected">{t('bk_unprotected')}</option>
@@ -224,7 +225,7 @@ export default function VirtBackup() {
         </Panel>
       )}
       {tab === 'jobs' && (
-        <Panel><SimpleTable rows={jobs.data?.jobs || []} cols={[
+        <Panel method="bk.jobs" methodAt={syncAt}><SimpleTable rows={jobs.data?.jobs || []} cols={[
           { key: 'name', label: t('bk_col_job'), render: (r: any) => <span className="text-white">{r.name}</span> },
           { key: 'type', label: t('vi_col_type') },
           { key: 'last_result', label: t('bk_col_result'), render: (r: any) => <span className={r.last_result === 'Failed' ? 'text-red-300' : r.last_result === 'Warning' ? 'text-amber-300' : 'text-emerald-300'}>{r.last_result || '—'}</span> },
@@ -234,7 +235,7 @@ export default function VirtBackup() {
         ]} /></Panel>
       )}
       {tab === 'repos' && (
-        <Panel><SimpleTable rows={repos.data?.repositories || []} cols={[
+        <Panel method="bk.repos" methodAt={syncAt}><SimpleTable rows={repos.data?.repositories || []} cols={[
           { key: 'name', label: t('bk_col_repo'), render: (r: any) => <span className="text-white">{r.name}</span> },
           { key: 'type', label: t('vi_col_type') },
           { key: 'used_pct', label: t('bk_col_used'), render: (r: any) => <div className="w-40"><Bar pct={r.used_pct} warn={r.warn_pct} crit={95} /></div> },
@@ -243,7 +244,7 @@ export default function VirtBackup() {
         ]} /></Panel>
       )}
       {tab === 'unmatched' && (
-        <Panel>
+        <Panel method="bk.match" methodAt={syncAt}>
           <p className="text-xs text-slate-400 p-3">{t('bk_unmatched_hint')}</p>
           <SimpleTable rows={unm.data?.objects || []} cols={[
             { key: 'name', label: t('bk_col_obj'), render: (r: any) => <span className="text-white">{r.name}</span> },
@@ -252,7 +253,7 @@ export default function VirtBackup() {
           ]} />
         </Panel>
       )}
-      {tab === 'evidence' && <Evidence />}
+      {tab === 'evidence' && <Evidence syncAt={syncAt} />}
       {tab === 'policies' && <Panel><div className="p-4"><Policies onChanged={refresh} /></div></Panel>}
     </div>
   )

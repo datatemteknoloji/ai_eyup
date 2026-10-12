@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
+import { AiBlock } from '../components/insights/MethodBadge'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import {
@@ -479,14 +480,14 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                       </p>
                       <GhostButton accent={NEON.blue} onClick={() => downloadRcaPdf(selectedIncident)}>{t('ops_pdf_download')}</GhostButton>
                     </div>
-                    <div className="rounded-lg p-3" style={{ background: 'var(--bg-deep)', border: `1px solid rgba(${rgb(NEON.blue)},0.2)` }}>
+                    <AiBlock method="ai.rca.incident">
                       <p className="text-[10px] mb-2" style={{ color: 'rgba(148,163,184,0.5)' }}>
                         {selectedIncident.rca_result.model} · {fmt(selectedIncident.rca_result.analyzed_at, locale, false)}
                       </p>
                       <div className="chat-response-content prose prose-invert prose-sm max-w-none text-xs leading-relaxed break-words text-slate-200">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedIncident.rca_result.analysis}</ReactMarkdown>
                       </div>
-                    </div>
+                    </AiBlock>
                     {Array.isArray(selectedIncident.rca_result.history) && selectedIncident.rca_result.history.length > 0 && (
                       <div className="mt-3 space-y-2">
                         <p className="text-[11px] font-medium" style={{ color: 'rgba(148,163,184,0.7)' }}>

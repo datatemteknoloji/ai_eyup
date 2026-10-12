@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { AlertTriangle, CheckCircle2, XCircle, Star, Monitor, BarChart3, Search, FileDown, Trash2, PlugZap, X, Plus } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
 import { useBranding } from '../branding/BrandingContext'
@@ -3637,6 +3638,9 @@ const Settings: React.FC = () => {
                   <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">Frontend</p><p className="text-white font-medium">React + TypeScript</p></div>
                   <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">Database</p><p className="text-white font-medium">PostgreSQL</p></div>
                   <div className="bg-cyber-card rounded-lg p-4"><p className="text-slate-400 text-sm">AI</p><p className="text-white font-medium">Ollama + LLaMA</p></div>
+                </div>
+                <div className="mt-4">
+                  <Link to="/methods" className="text-sm text-blue-300 hover:text-blue-200 hover:underline">{t('set_methods_link')}</Link>
                 </div>
                 {isAdmin && (
                   <div className="mt-6 pt-5 border-t border-white/[0.06]">

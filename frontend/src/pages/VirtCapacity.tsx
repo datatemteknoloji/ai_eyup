@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Gauge, Info } from 'lucide-react'
 import { useT } from '../i18n/LocaleProvider'
 import { GhostButton, NEON, PageHeader, Tabs } from '../components/aiops/ui'
+import { MethodBadge } from '../components/insights/MethodBadge'
 import { Bar, PageInfo, Panel, RunBar, SimpleTable, Stat, apiGet, apiSend, fmt, pctTone, useInsights } from '../components/insights/insightsKit'
 
 type Cluster = any
@@ -32,26 +33,27 @@ function ClusterCard({ c }: { c: Cluster }) {
     <Panel title={<span>{c.cluster} <span className="text-xs text-slate-500 font-normal">· {c.hypervisor} ({c.platform})</span></span>}
       right={n1IsNotApplicable(n1.status)
         ? <span title={t('vi_n1_single_hint')} className="text-xs font-semibold text-slate-400 border border-dashed border-slate-500/40 rounded px-1.5 py-0.5">N+1: {t('vi_res_na')}</span>
-        : <span className={`text-xs font-semibold ${n1Tone(n1.status)}`}>N+1: {n1Label[n1.status] || n1.status}{n1.mem_after_pct != null ? ` (%${fmt(n1.mem_after_pct)})` : ''}</span>}>
+        : <span className={`text-xs font-semibold ${n1Tone(n1.status)}`}>N+1: {n1Label[n1.status] || n1.status}{n1.mem_after_pct != null ? ` (%${fmt(n1.mem_after_pct)})` : ''}</span>}
+      method="cap.cluster.n_plus_one" methodAt={c.as_of}>
       <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
         <div className="space-y-1.5">
-          <div className="flex justify-between text-slate-400"><span>{t('vi_cap_eff_mem')}</span><span className={`font-mono ${pctTone(c.memory?.effective_used_pct, 75, 85)}`}>%{fmt(c.memory?.effective_used_pct)}</span></div>
+          <div className="flex justify-between text-slate-400"><span>{t('vi_cap_eff_mem')} <MethodBadge id="cap.cluster.effective" at={c.as_of} /></span><span className={`font-mono ${pctTone(c.memory?.effective_used_pct, 75, 85)}`}>%{fmt(c.memory?.effective_used_pct)}</span></div>
           <Bar pct={c.memory?.effective_used_pct} warn={75} crit={85} />
           <div className="text-slate-500 font-mono">{fmt(c.memory?.used_gb)} / {fmt(c.memory?.effective_gb)} GB · {t('vi_cap_reserve')} {fmt(c.memory?.reserved_gb)} GB</div>
-          <div className="flex justify-between text-slate-400 pt-2"><span>{t('vi_cap_eff_cpu')}</span><span className={`font-mono ${pctTone(c.cpu?.effective_used_pct, 70, 80)}`}>%{fmt(c.cpu?.effective_used_pct)}</span></div>
+          <div className="flex justify-between text-slate-400 pt-2"><span>{t('vi_cap_eff_cpu')} <MethodBadge id="cap.cluster.effective" at={c.as_of} /></span><span className={`font-mono ${pctTone(c.cpu?.effective_used_pct, 70, 80)}`}>%{fmt(c.cpu?.effective_used_pct)}</span></div>
           <Bar pct={c.cpu?.effective_used_pct} warn={70} crit={80} />
-          <div className="text-slate-500 font-mono">vCPU:core {fmt(c.cpu?.vcpu_ratio, 2)}:1 · {c.vm_powered_on}/{c.vm_count} VM</div>
+          <div className="text-slate-500 font-mono">vCPU:core {fmt(c.cpu?.vcpu_ratio, 2)}:1 · {c.vm_powered_on}/{c.vm_count} VM <MethodBadge id="cap.cluster.vcpu_ratio" at={c.as_of} /></div>
         </div>
         <div className="space-y-1.5 text-slate-400">
           <div>{t('vi_cap_hosts')}: <span className="font-mono text-slate-200">{c.hosts_usable}/{c.hosts_total}</span>{(c.hosts_excluded || []).length > 0 && <span className="text-slate-500"> ({(c.hosts_excluded || []).map((h: any) => h.host || h).join(', ')})</span>}</div>
           <div>HA: <span className="text-slate-200">{c.ha?.label}</span></div>
           {n1.largest_host && <div>{t('vi_cap_largest')}: <span className="font-mono text-slate-200">{n1.largest_host}</span> ({fmt(n1.largest_host_mem_gb)} GB)</div>}
-          <div>{t('vi_cap_runway_mem')}: <span className="text-slate-200">{runwayTxt(c.forecast?.memory, t)}</span></div>
-          <div>{t('vi_cap_runway_cpu')}: <span className="text-slate-200">{runwayTxt(c.forecast?.cpu, t)}</span></div>
+          <div>{t('vi_cap_runway_mem')}: <span className="text-slate-200">{runwayTxt(c.forecast?.memory, t)}</span> <MethodBadge id="cap.cluster.mem_runway" at={c.as_of} /></div>
+          <div>{t('vi_cap_runway_cpu')}: <span className="text-slate-200">{runwayTxt(c.forecast?.cpu, t)}</span> <MethodBadge id="cap.cluster.cpu_runway" at={c.as_of} /></div>
           {c.network && <div>{t('vi_cap_network')}: <span className="text-slate-200 font-mono">{fmt(c.network.max_util_pct)}%</span></div>}
         </div>
         <div className="space-y-2">
-          <div className="text-slate-400">{t('vi_cap_actions')}</div>
+          <div className="text-slate-400">{t('vi_cap_actions')} <MethodBadge id="cap.actions" at={c.as_of} /></div>
           {(c.actions || []).length === 0 && <div className="text-slate-500">{t('vi_cap_no_action')}</div>}
           {(c.actions || []).map((a: any) => (
             <div key={a.step} className="border-l-2 border-blue-600/60 pl-2">
@@ -125,7 +127,7 @@ function WhatIf() {
     } catch (e: any) { setErr(e.message) }
   }
   return (
-    <Panel title={t('vi_whatif_title')}>
+    <Panel title={t('vi_whatif_title')} method="cap.sim.add_vms">
       <div className="p-4 space-y-4">
         <div className="flex flex-wrap items-end gap-3">
           <VmPicker label={t('vi_whatif_clone')} placeholder={t('vi_whatif_clone_ph')} listId="vi-whatif-vm-list"
@@ -177,7 +179,7 @@ function Placement() {
     } catch (e: any) { setErr(e.message) }
   }
   return (
-    <Panel title={t('vi_place_title')}>
+    <Panel title={t('vi_place_title')} method="cap.placement">
       <div className="p-4 space-y-4">
         <div className="flex flex-wrap items-end gap-3">
           <VmPicker label={t('vi_place_vm')} placeholder={t('vi_place_vm_ph')} listId="vi-place-vm-list" onPick={setVm} />
@@ -260,7 +262,7 @@ function PolicyPanel({ onSaved }: { onSaved: () => void }) {
   }
   const reset = () => setVals(Object.fromEntries(Object.entries(spec).map(([k, s]: any) => [k, String(s.default)])))
   return (
-    <Panel title={t('vi_policy_title')}>
+    <Panel title={t('vi_policy_title')} method="cap.policy">
       <div className="p-4 space-y-4">
         <div className="text-xs text-slate-400">{t('vi_policy_intro')}</div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -299,10 +301,10 @@ export default function VirtCapacity() {
     <div className="space-y-5">
       <PageHeader title={t('vi_cap_page')} titleExtra={<PageInfo id="vi_cap" />} subtitle={t('vi_cap_sub')} actions={<RunBar base="virt-insights" lastRun={sum.data?.last_run} />} />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label={t('vi_cap_clusters')} value={clusters.length} />
-        <Stat label={t('vi_cap_n1_broken')} value={n1Fail} tone={n1Fail ? 'text-red-400' : 'text-emerald-400'} />
-        <Stat label={t('vi_cap_hosts_needed')} value={hostsNeeded} tone={hostsNeeded ? 'text-amber-400' : 'text-white'} />
-        <Stat label={t('vi_cap_ds_hot')} value={dsHot} tone={dsHot ? 'text-amber-400' : 'text-white'} />
+        <Stat label={t('vi_cap_clusters')} value={clusters.length} method="cap.cluster.effective" methodAt={q.data?.as_of} />
+        <Stat label={t('vi_cap_n1_broken')} value={n1Fail} tone={n1Fail ? 'text-red-400' : 'text-emerald-400'} method="cap.cluster.n_plus_one" methodAt={q.data?.as_of} />
+        <Stat label={t('vi_cap_hosts_needed')} value={hostsNeeded} tone={hostsNeeded ? 'text-amber-400' : 'text-white'} method="cap.actions" methodAt={q.data?.as_of} />
+        <Stat label={t('vi_cap_ds_hot')} value={dsHot} tone={dsHot ? 'text-amber-400' : 'text-white'} method="cap.datastore.usage" methodAt={q.data?.as_of} />
       </div>
       <Tabs active={tab} onChange={setTab} tabs={[
         { id: 'clusters', label: 'Cluster', count: clusters.length },
@@ -326,10 +328,10 @@ export default function VirtCapacity() {
             { key: 'name', label: 'Datastore', render: r => <span className="text-white font-mono">{r.name}</span> },
             { key: 'hypervisor', label: t('vi_col_source') },
             { key: 'type', label: t('vi_col_type') },
-            { key: 'usage_pct', label: t('vi_col_usage'), render: r => <div className="w-32"><div className={`font-mono text-xs ${pctTone(r.usage_pct, 80, 90)}`}>%{fmt(r.usage_pct)}</div><Bar pct={r.usage_pct} warn={80} crit={90} /></div> },
+            { key: 'usage_pct', label: <span className="inline-flex items-center gap-1">{t('vi_col_usage')}<MethodBadge id="cap.datastore.usage" at={q.data?.as_of} /></span>, render: r => <div className="w-32"><div className={`font-mono text-xs ${pctTone(r.usage_pct, 80, 90)}`}>%{fmt(r.usage_pct)}</div><Bar pct={r.usage_pct} warn={80} crit={90} /></div> },
             { key: 'free_gb', label: t('vi_col_free_gb'), render: r => <span className="font-mono">{fmt(r.free_gb)}</span> },
             { key: 'provisioned_pct', label: 'Provisioned %', render: r => <span className={`font-mono ${pctTone(r.provisioned_pct, 100, 150)}`}>{fmt(r.provisioned_pct)}</span> },
-            { key: 'runway', label: t('vi_cap_runway'), render: r => runwayTxt(r.forecast, t) },
+            { key: 'runway', label: <span className="inline-flex items-center gap-1">{t('vi_cap_runway')}<MethodBadge id="cap.datastore.runway" at={q.data?.as_of} /></span>, render: r => runwayTxt(r.forecast, t) },
           ]} />
         </Panel>
       )}

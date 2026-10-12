@@ -40,7 +40,7 @@ function OcpWhatIf({ cluster }: { cluster: any }) {
     } catch (e: any) { setErr(e.message); setRes(null) }
   }
   return (
-    <Panel title={`${t('oi_whatif_title')} · ${cluster.cluster}`}>
+    <Panel title={`${t('oi_whatif_title')} · ${cluster.cluster}`} method="ocp.capacity.whatif" methodAt={cluster.as_of}>
       <div className="p-4 space-y-4">
         <div>
           <div className="text-xs text-slate-400 mb-1.5">{t('oi_whatif_drain')}</div>
@@ -62,7 +62,7 @@ function OcpWhatIf({ cluster }: { cluster: any }) {
         {res && (
           <div className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Stat label={t('oi_whatif_verdict')} value={t(`oi_verdict_${res.verdict}` as any)} tone={VERDICT_TONE[res.verdict] || 'text-white'} hint={res.reason} />
+              <Stat label={t('oi_whatif_verdict')} value={t(`oi_verdict_${res.verdict}` as any)} tone={VERDICT_TONE[res.verdict] || 'text-white'} hint={res.reason} method="ocp.capacity.whatif" methodAt={cluster.as_of} />
               <Stat label={t('oi_req_cpu')} value={`%${fmt(res.before?.cpu_pct)} → %${fmt(res.after?.cpu_pct)}`} tone={pctTone(res.after?.cpu_pct, 85, 100)} />
               <Stat label={t('oi_req_mem')} value={`%${fmt(res.before?.memory_pct)} → %${fmt(res.after?.memory_pct)}`} tone={pctTone(res.after?.memory_pct, 85, 100)} />
               <Stat label={t('oi_whatif_more')} value={res.max_additional ?? '—'} hint={t('oi_whatif_free', { c: fmt(res.free_after?.cpu_cores), m: fmt(res.free_after?.memory_gb) })} />
@@ -92,9 +92,9 @@ export function OcpCapacityPage() {
           <div key={c.cluster_id} className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <Stat label={t('oi_workers')} value={`${c.workers_usable ?? 0}/${c.workers_total ?? 0}`} hint={c.cluster} />
-              <Stat label={t('oi_req_cpu')} value={`%${fmt(c.request_pct?.cpu)}`} tone={pctTone(c.request_pct?.cpu, 75, 85)} hint={`${fmt(c.requested?.cpu_cores)} / ${fmt(c.allocatable?.cpu_cores)} core`} />
-              <Stat label={t('oi_req_mem')} value={`%${fmt(c.request_pct?.memory)}`} tone={pctTone(c.request_pct?.memory, 75, 85)} hint={`${fmt(c.requested?.memory_gb)} / ${fmt(c.allocatable?.memory_gb)} GB`} />
-              <Stat label="N+1" value={n1.status || '—'} tone={n1Tone} hint={n1.largest_worker ? t('oi_n1_hint', { w: n1.largest_worker, m: fmt(n1.memory_after_pct), c: fmt(n1.cpu_after_pct) }) : undefined} />
+              <Stat label={t('oi_req_cpu')} value={`%${fmt(c.request_pct?.cpu)}`} tone={pctTone(c.request_pct?.cpu, 75, 85)} hint={`${fmt(c.requested?.cpu_cores)} / ${fmt(c.allocatable?.cpu_cores)} core`} method="ocp.capacity.requests" methodAt={c.as_of} />
+              <Stat label={t('oi_req_mem')} value={`%${fmt(c.request_pct?.memory)}`} tone={pctTone(c.request_pct?.memory, 75, 85)} hint={`${fmt(c.requested?.memory_gb)} / ${fmt(c.allocatable?.memory_gb)} GB`} method="ocp.capacity.requests" methodAt={c.as_of} />
+              <Stat label="N+1" value={n1.status || '—'} tone={n1Tone} hint={n1.largest_worker ? t('oi_n1_hint', { w: n1.largest_worker, m: fmt(n1.memory_after_pct), c: fmt(n1.cpu_after_pct) }) : undefined} method="ocp.cluster.n_plus_one" methodAt={c.as_of} />
             </div>
             <Panel title={`${c.cluster} · ${t('oi_workers')}`} right={c.as_of && <span className="text-[11px] text-slate-500">{new Date(c.as_of).toLocaleString()}</span>}>
               <SimpleTable rows={c.workers || []} cols={[

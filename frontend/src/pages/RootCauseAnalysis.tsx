@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react'
+import { AiBlock } from '../components/insights/MethodBadge'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { API_BASE_URL } from '../config/api'
@@ -466,9 +467,10 @@ function CompareResultCard({ result }: { result: CompareResult }) {
       </div>
 
       {/* LLM analizi */}
-      <div className="cyber-card p-4 space-y-3">
+      <AiBlock method="ai.rca.window" title={t('ana_ai_compare')} className="p-1">
+        <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: NEON.cyan }}>{t('ana_ai_compare')}</div>
+          <span />
           <div className="flex items-center gap-2">
             <ConfidenceBadge confidence={llm_analysis.confidence} />
             <span className="text-[10px]" style={{ color: 'rgba(148,163,184,0.4)' }}>{result.model}</span>
@@ -509,7 +511,8 @@ function CompareResultCard({ result }: { result: CompareResult }) {
         <LLMSection title={t('ana_key_diffs')} items={llm_analysis.key_differences} accent={NEON.cyan} />
         <LLMSection title={t('ana_regressions')} items={llm_analysis.regression_indicators} accent={NEON.red} />
         <LLMSection title={t('ana_recs')} items={llm_analysis.recommendations} accent={NEON.green} />
-      </div>
+        </div>
+      </AiBlock>
 
       {/* Pencere detayları */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

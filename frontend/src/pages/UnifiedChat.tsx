@@ -11,7 +11,7 @@ import { ChatPlatformStatsBar } from '../components/ChatPlatformStatsBar'
 import ChatFeedbackButtons, { priorUserQuestion } from '../components/ChatFeedbackButtons'
 import ChatPinFact from '../components/ChatPinFact'
 import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
-import { ChatEvidenceBadge, type ChatEvidence } from '../components/ChatEvidenceBadge'
+import { ChatEvidenceBadge, ChatSources, type ChatEvidence } from '../components/ChatEvidenceBadge'
 import { chatMarkdownComponents, chatResponseBody } from '../components/chatMarkdown'
 import {
   NlChatRoot, NlHistorySidebar, NlChatPanel, NlTopBar, NlModelSelect,
@@ -553,6 +553,7 @@ const UnifiedChat: React.FC<{
                           )}
                         </div>
                       )}
+                      {msg.role === 'assistant' && <ChatSources evidence={msg.evidence} />}
                       <div className={`text-xs mt-2 flex items-center gap-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-slate-500'}`}>
                         <span>{formatDate(msg.created_at)}</span>
                         {msg.role === 'assistant' && <ChatEvidenceBadge evidence={msg.evidence} />}
@@ -618,6 +619,7 @@ const UnifiedChat: React.FC<{
                       <div className={chatResponseBody}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{streamingText}</ReactMarkdown>
                       </div>
+                      <ChatSources evidence={stream.lastEvidence as ChatEvidence | null} />
                       <div className="text-xs mt-2 flex items-center gap-2 text-slate-500">
                         <ChatEvidenceBadge evidence={stream.lastEvidence as ChatEvidence | null} />
                       </div>

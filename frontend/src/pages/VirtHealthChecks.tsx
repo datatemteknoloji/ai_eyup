@@ -153,7 +153,7 @@ function ReferencePackages() {
   }
   const label: Record<string, string> = { cve_feed: t('vi_ref_cve'), kb_feed: t('vi_ref_kb'), upgrade_matrix: t('vi_ref_upg') }
   return (
-    <Panel title={t('vi_ref_title')}>
+    <Panel title={t('vi_ref_title')} method="upg:*">
       <div className="p-4 space-y-3">
         <div className="text-xs text-slate-400">{t('vi_ref_hint')}</div>
         <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={upload} />
@@ -242,10 +242,10 @@ export default function VirtHealthChecks() {
     <div className="space-y-5">
       <PageHeader title={t('vi_hc_page')} titleExtra={<PageInfo id="vi_hc" />} subtitle={t('vi_hc_sub')} actions={<RunBar base="virt-insights" lastRun={sum.data?.last_run} />} />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label={t('vi_hc_critical')} value={crit} tone={crit ? 'text-red-400' : 'text-white'} />
-        <Stat label={t('vi_hc_high')} value={high} tone={high ? 'text-amber-400' : 'text-white'} />
-        <Stat label={t('vi_res_nm')} value={sum.data?.findings?.not_measurable ?? 0} tone="text-amber-200/90" hint={t('vi_res_nm_hint')} />
-        <Stat label={t('vi_res_na')} value={sum.data?.findings?.not_applicable ?? 0} tone="text-slate-400" hint={t('vi_res_na_hint')} />
+        <Stat label={t('vi_hc_critical')} value={crit} tone={crit ? 'text-red-400' : 'text-white'} method="findings.summary" methodAt={sum.data?.last_run?.finished_at} />
+        <Stat label={t('vi_hc_high')} value={high} tone={high ? 'text-amber-400' : 'text-white'} method="findings.summary" methodAt={sum.data?.last_run?.finished_at} />
+        <Stat label={t('vi_res_nm')} value={sum.data?.findings?.not_measurable ?? 0} tone="text-amber-200/90" hint={t('vi_res_nm_hint')} method="findings.summary" methodAt={sum.data?.last_run?.finished_at} />
+        <Stat label={t('vi_res_na')} value={sum.data?.findings?.not_applicable ?? 0} tone="text-slate-400" hint={t('vi_res_na_hint')} method="findings.summary" methodAt={sum.data?.last_run?.finished_at} />
         <Stat label={t('vi_excepted')} value={sum.data?.findings?.excepted ?? 0} tone="text-slate-300" />
       </div>
       <Tabs tabs={tabs} active={tab} onChange={id => setSp({ tab: id })} />
