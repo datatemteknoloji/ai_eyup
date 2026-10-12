@@ -78,7 +78,11 @@ def _tool_sources(tools: Sequence[str]) -> List[Dict[str, Any]]:
             continue
         seen.add(t)
         m = mr.resolve_tool(t)
-        out.append({"tool": t, "class": m.cls if m else None, "at": at})
+        src: Dict[str, Any] = {"tool": t, "class": m.cls if m else None, "at": at}
+        from app.services.backup.demo_gate import tool_is_demo
+        if tool_is_demo(t):
+            src["demo"] = True     # F.0: demo modunda kaynak satırı "DEMO veri" etiketi taşır
+        out.append(src)
     return out
 
 

@@ -103,10 +103,10 @@ def test_flag_on_demo_gets_view_capability_but_not_backup(db, monkeypatch):
     assert DEMO_CAPABILITY in caps and "backup" not in caps
     p = capabilities_payload()
     assert p["demo_active"] is True and p["has_backup"] is False and "DEMO VERİ" in p["demo_banner"]
-    # araçlar (capability 'backup' ister) demo'da görünmez; bölge/koruma kuralları etkilenmez
+    # demo modunda iki sohbet aracı AÇIK (etiketli; bkz. test_demo_tools_are_labeled_*)
     from app.services.agent.tools import tool_specs_read_only
     names = {s["function"]["name"] for s in tool_specs_read_only(domains=frozenset({"vcenter"}))}
-    assert "virt_backup_status" not in names and "virt_rpo_compliance" not in names
+    assert {"virt_backup_status", "virt_rpo_compliance"} <= names
     # varsayılan (gerçek-only) görünüm boş; Yedekleme ekranı include_demo ile görür
     assert eng.vm_protection(db, vms=vms) == []
     assert eng.vm_protection(db, vms=vms, include_demo=True)
@@ -222,3 +222,108 @@ def test_no_demo_kind_checks_outside_gate():
     offenders = [p.name for p in root.glob("*.py")
                  if p.name not in ("demo_gate.py", "veeam_provider.py") and 'endswith("_demo")' in p.read_text()]
     assert offenders == [], offenders
+
+
+# ── demo modunda sohbet araçları: açık + "DEMO veri" etiketi (yalnız bayrak açıkken) ──────────
+
+def _tool_names():
+    from app.services.agent.tools import tool_specs_read_only
+    return {s["function"]["name"] for s in tool_specs_read_only(domains=frozenset({"vcenter"}))}
+
+
+def test_demo_tools_are_labeled_in_output_and_source_line(db, monkeypatch):
+    from app.services.agent.tools import TOOLS
+    from app.services.chat_evidence_badge import score_evidence_badge
+    row = _make_instance(db, kind="veeam_demo")
+    vms = _sync(db, monkeypatch, row)
+    monkeypatch.setattr(eng, "_vms", lambda _db: vms)
+    _caps()
+    assert {"virt_backup_status", "virt_rpo_compliance"} <= _tool_names()
+    for name, args in (("virt_backup_status", {"vm_name": "demo-vm-00"}), ("virt_rpo_compliance", {"filter": "unprotected"})):
+        out = TOOLS[name].direct_handler(db, args, {})
+        assert out["ok"] is True and out["demo"] is True and out["data_label"] == "DEMO veri"
+        assert "DEMO VERİ" in out["note"] and "gerçek Veeam değil" in out["note"]
+    out = TOOLS["virt_rpo_compliance"].direct_handler(db, {"filter": "unprotected"}, {})
+    assert out["count"] > 0                      # demo verisi gerçekten okunuyor
+    b = score_evidence_badge(kind="live", tools_used=["virt_rpo_compliance", "virt_health_overview"], has_tool_text=True)
+    src = {s["tool"]: s for s in b["sources"]}
+    assert src["virt_rpo_compliance"].get("demo") is True
+    assert "demo" not in src["virt_health_overview"]
+
+
+def test_demo_tools_closed_when_flag_off_and_unlabeled_with_real_provider(db, monkeypatch):
+    from app.services.agent.tools import TOOLS
+    from app.services.chat_evidence_badge import score_evidence_badge
+    row = _make_instance(db, kind="veeam_demo")
+    vms = _sync(db, monkeypatch, row)
+    monkeypatch.setattr(eng, "_vms", lambda _db: vms)
+    # bayrak kapalı → araçlar görünmez, handler çalışmaz
+    monkeypatch.delenv(ENV_FLAG)
+    _caps()
+    assert not ({"virt_backup_status", "virt_rpo_compliance"} & _tool_names())
+    out = TOOLS["virt_rpo_compliance"].direct_handler(db, {}, {})
+    assert out["ok"] is False
+    # bayrak açık ama GERÇEK sağlayıcı var → demo yok sayılır; araç gerçek veriyi etiketsiz döndürür
+    monkeypatch.setenv(ENV_FLAG, "true")
+    real = _make_instance(db, kind="veeam_vbr")
+    real.last_status, real.last_sync_at = "ok", datetime.now(timezone.utc)
+    db.commit()
+    _caps()
+    out = TOOLS["virt_rpo_compliance"].direct_handler(db, {}, {})
+    assert out["ok"] is True and out["demo"] is False and "data_label" not in out
+    b = score_evidence_badge(kind="live", tools_used=["virt_rpo_compliance"], has_tool_text=True)
+    assert "demo" not in b["sources"][0]
+
+
+# ── bayrak kapanınca çözülen demo bulguları: neden "demo_disabled", metriklerden dışlanır ─────
+
+def test_demo_disabled_resolution_reason_and_metrics_exclusion(db, monkeypatch):
+    from app.models.infra_finding import InfraFinding
+    from app.services.findings.registry import RESOLVED_DEMO_DISABLED, RESOLVED_FIXED
+    row = _make_instance(db, kind="veeam_demo")
+    vms = _sync(db, monkeypatch, row)
+    monkeypatch.setattr(eng, "_vms", lambda _db: vms)
+    assert eng.persist_backup_findings(db)["demo_upserted"] > 0
+    monkeypatch.delenv(ENV_FLAG)
+    invalidate_capabilities()
+    out = eng.persist_backup_findings(db)
+    assert out["demo_resolved"] > 0
+    rows = db.query(InfraFinding).filter(InfraFinding.platform == DEMO_PLATFORM).all()
+    assert rows and all(r.active is False and r.resolved_reason == RESOLVED_DEMO_DISABLED for r in rows)
+    assert all(r.resolved_reason != RESOLVED_FIXED for r in rows)
+    m = store.closure_metrics(db)
+    assert m["closed"] == 0 and m["median_resolution_sec"] is None
+    assert store.summarize_findings(db)["closure"]["closed"] == 0
+    # gerçek bir düzelme sayılır; demo_disabled / provider_disabled sayılmaz
+    now = datetime.now(timezone.utc)
+    mk = lambda ref, reason: InfraFinding(  # noqa: E731
+        platform="backup", source_id=None, check_id="bk.job.failed_recent", entity_ref=ref, category="backup",
+        entity_kind="job", result="fail", severity="high", title="t", active=False,
+        first_seen=now - timedelta(hours=10), resolved_at=now - timedelta(hours=4), resolved_reason=reason)
+    db.add_all([mk("job:fixed", RESOLVED_FIXED), mk("job:legacy", None), mk("job:dd", RESOLVED_DEMO_DISABLED),
+                mk("job:pd", "provider_disabled")])
+    db.commit()
+    m = store.closure_metrics(db)
+    assert m["closed"] == 2 and m["median_resolution_sec"] == pytest.approx(6 * 3600)
+    # demo platformu kayıtları reason'dan bağımsız hiç sayılmaz
+    db.add(InfraFinding(platform=DEMO_PLATFORM, source_id=None, check_id="bk.job.failed_recent", entity_ref="job:x",
+                        category="backup", entity_kind="job", result="fail", severity="high", title="t", active=False,
+                        first_seen=now - timedelta(hours=3), resolved_at=now - timedelta(hours=1),
+                        resolved_reason=RESOLVED_FIXED))
+    db.commit()
+    assert store.closure_metrics(db)["closed"] == 2
+    # gerçek-sağlayıcı bulgusu düzeldiğinde reason == fixed
+    real = _make_instance(db, kind="veeam_vbr")
+    monkeypatch.setenv(ENV_FLAG, "true")
+    vms2 = _sync(db, monkeypatch, real)
+    monkeypatch.setattr(eng, "_vms", lambda _db: vms2)
+    _caps()
+    assert eng.persist_backup_findings(db)["upserted"] > 0
+    pre = {f.id for f in db.query(InfraFinding).filter(InfraFinding.platform == "backup", InfraFinding.active.is_(True))}
+    from app.models.backup import BkRepository
+    db.query(BkRepository).filter(BkRepository.instance_id == real.id).delete()
+    db.commit()
+    eng.persist_backup_findings(db)
+    gone = db.query(InfraFinding).filter(InfraFinding.id.in_(pre), InfraFinding.active.is_(False),
+                                         InfraFinding.check_id == "bk.repo.capacity").all()
+    assert gone and all(g.resolved_reason == RESOLVED_FIXED for g in gone)

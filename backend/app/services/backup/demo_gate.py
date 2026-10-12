@@ -66,5 +66,26 @@ def active_instances(db, *, include_demo: bool = False) -> List:
     return []
 
 
+# F.0 kararı: demo modunda bu iki sohbet aracı AÇIK; çıktıları ve kaynak satırı "DEMO veri" etiketi taşır.
+DEMO_VISIBLE_TOOLS = frozenset({"virt_backup_status", "virt_rpo_compliance"})
+DEMO_LABEL_TR = "DEMO veri"
+DEMO_TOOL_NOTE_TR = ("DEMO VERİ — gerçek Veeam değil (fixture). Yanıtında bunu açıkça 'DEMO veri' olarak belirt; "
+                     "gerçek durummuş gibi sunma.")
+
+
+def demo_tools_active() -> bool:
+    """Yalnız bayrak açık + demo görünür + gerçek sağlayıcı yok iken True (capability registry'den)."""
+    try:
+        from app.services.capabilities import get_capabilities
+        caps = get_capabilities()
+    except Exception:  # noqa: BLE001
+        return False
+    return DEMO_CAPABILITY in caps and "backup" not in caps and demo_enabled()
+
+
+def tool_is_demo(name: str) -> bool:
+    return name in DEMO_VISIBLE_TOOLS and demo_tools_active()
+
+
 def demo_active(db) -> bool:
     return backup_mode(db) == "demo"

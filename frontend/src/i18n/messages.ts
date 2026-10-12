@@ -4576,6 +4576,7 @@ type Dict = { [K in keyof typeof tr]: string }
 const en: Dict = {
   language: 'Language',
   language_tr: 'Türkçe',
+  chat_source_demo: 'DEMO veri — gerçek Veeam değil',
   language_en: 'English',
   loading: 'Loading…',
   cancel: 'Cancel',
@@ -9137,3 +9138,4 @@ export function formatMessage(template: string, vars: Record<string, string | nu
     template,
   )
 }
+  chat_source_demo: 'DEMO data — not real Veeam',

@@ -4498,7 +4498,11 @@ def _tool_capabilities_met(t: "Tool") -> bool:
         have = get_capabilities()
     except Exception:  # noqa: BLE001
         return False
-    return all(c in have for c in need)
+    if all(c in have for c in need):
+        return True
+    # F.0: DEMO modunda (bayrak açık, gerçek sağlayıcı yok) yalnız izinli yedek araçları açılır.
+    from app.services.backup.demo_gate import DEMO_VISIBLE_TOOLS, demo_tools_active
+    return need == frozenset({"backup"}) and t.name in DEMO_VISIBLE_TOOLS and demo_tools_active()
 
 
 def tool_specs() -> List[Dict[str, Any]]:

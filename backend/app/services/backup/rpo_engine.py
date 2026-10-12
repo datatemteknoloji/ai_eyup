@@ -270,9 +270,21 @@ def persist_backup_findings(db: Session, *, now: Optional[datetime] = None) -> D
     have = "backup" in caps and mode == "real"
     have_demo = DEMO_CAPABILITY in caps and mode == "demo"
     drafts = backup_findings(db, now=now) if (have or have_demo) else []
+    # Kapanış nedeni: koşul düzeldiyse "fixed"; sağlayıcı/DEMO kapandığı için çözülenler ayrı neden
+    # alır ve "kapanan bulgu / çözüm süresi" metriklerine girmez (store.closure_metrics).
+    from app.models.integration_instance import IntegrationInstance
+    from app.services.findings.registry import (
+        RESOLVED_DEMO_DISABLED, RESOLVED_FIXED, RESOLVED_PROVIDER_DISABLED,
+    )
+    has_demo_rows = any(is_demo_kind(r.kind) for r in db.query(IntegrationInstance.kind)
+                        .filter(IntegrationInstance.category == "backup").all())
+    real_reason = RESOLVED_FIXED if have else (RESOLVED_DEMO_DISABLED if has_demo_rows and mode != "real"
+                                               else RESOLVED_PROVIDER_DISABLED)
     r = store.persist_findings(db, platform="backup", source_id=None, source_name="backup",
-                               categories=("backup",), drafts=drafts if have else [], now=now)
+                               categories=("backup",), drafts=drafts if have else [], now=now,
+                               resolve_reason=real_reason)
     rd = store.persist_findings(db, platform=DEMO_PLATFORM, source_id=None, source_name="backup (DEMO)",
-                                categories=("backup",), drafts=drafts if have_demo else [], now=now)
+                                categories=("backup",), drafts=drafts if have_demo else [], now=now,
+                                resolve_reason=RESOLVED_FIXED if have_demo else RESOLVED_DEMO_DISABLED)
     db.commit()
     return {"capability": have, "demo": have_demo, **r, "demo_upserted": rd["upserted"], "demo_resolved": rd["resolved"]}

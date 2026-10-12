@@ -63,6 +63,9 @@ class InfraFinding(Base):
     # Son turda tekrar üretilmediyse False (kontrol artık geçerli değil / varlık gitti)
     active = Column(Boolean, default=True, index=True)
     resolved_at = Column(DateTime(timezone=True))
+    # Kapanış nedeni: fixed (koşul düzeldi; NULL = eski kayıt, fixed sayılır) | demo_disabled |
+    # provider_disabled. "fixed" dışındakiler kapanan bulgu/çözüm süresi metriklerine GİRMEZ (F.0).
+    resolved_reason = Column(String(32), nullable=True)
     run_id = Column(Integer, index=True)
 
     __table_args__ = (

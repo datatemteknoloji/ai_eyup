@@ -2,7 +2,7 @@ import { useT } from '../i18n/LocaleProvider'
 import { MethodBadge, useMethodCatalog } from './insights/MethodBadge'
 import { useLocale } from '../i18n/LocaleProvider'
 
-export type ChatEvidenceSource = { tool: string; class: string | null; at?: string }
+export type ChatEvidenceSource = { tool: string; class: string | null; at?: string; demo?: boolean }
 
 export type ChatEvidence = {
   level: 'high' | 'medium' | 'low' | 'hidden'
@@ -55,6 +55,7 @@ export function ChatSources({ evidence }: { evidence?: ChatEvidence | null }) {
       {sources.slice(0, 6).map(s => (
         <div key={s.tool} className="font-mono">
           {t('method_source_line', { tool: s.tool, cls: label(s.class), time: time(s.at) })}
+          {s.demo && <span className="ml-1 px-1 rounded bg-fuchsia-500/20 text-fuchsia-300 font-sans" data-testid="chat-source-demo">{t('chat_source_demo')}</span>}
         </div>
       ))}
       {sources.length > 6 && <div>+{sources.length - 6}</div>}

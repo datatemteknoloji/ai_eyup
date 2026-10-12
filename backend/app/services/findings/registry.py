@@ -38,6 +38,10 @@ ISO_ACCESS = "ISO27001:A.8.2"
 # DEMO (fixture) yedek sağlayıcısının bulguları bu platform altında tutulur; store sorguları
 # ``include_demo=True`` verilmedikçe bunu DIŞLAR → denetim kanıtı/rapor/skorlara girmez (F.0).
 PLATFORM_BACKUP_DEMO = "backup_demo"
+# Bulgu kapanış nedenleri (infra_findings.resolved_reason). Yalnız FIXED "düzeltildi" sayılır.
+RESOLVED_FIXED = "fixed"
+RESOLVED_DEMO_DISABLED = "demo_disabled"
+RESOLVED_PROVIDER_DISABLED = "provider_disabled"
 ISO_BACKUP = "ISO27001:A.8.13"
 
 CONTROL_TITLES: Dict[str, str] = {

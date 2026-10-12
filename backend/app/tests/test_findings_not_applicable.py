@@ -73,6 +73,7 @@ def test_summarize_skips_not_applicable_from_category_totals(monkeypatch):
             return FakeQ()
 
     monkeypatch.setattr(st, "exception_keys", lambda db: set())
+    monkeypatch.setattr(st, "closure_metrics", lambda *a, **k: {"closed": 0})   # sahte DB; metrik ayrı test edilir
     s = st.summarize_findings(FakeDB())  # type: ignore[arg-type]
     assert s["not_applicable"] == 1
     assert s["by_category"]["health"]["total"] == 1

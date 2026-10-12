@@ -12,6 +12,7 @@ def ensure_infra_finding_columns(engine) -> None:
     stmts = [
         "ALTER TABLE infra_findings ADD COLUMN IF NOT EXISTS stale boolean NOT NULL DEFAULT false",
         "ALTER TABLE infra_findings ADD COLUMN IF NOT EXISTS data_age_sec double precision",
+        "ALTER TABLE infra_findings ADD COLUMN IF NOT EXISTS resolved_reason varchar(32)",
     ]
     try:
         with engine.begin() as conn:

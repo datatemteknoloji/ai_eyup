@@ -10,7 +10,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import and_, or_
@@ -21,6 +21,7 @@ from app.models.infra_finding import (
 )
 from app.services.findings.registry import (
     PLATFORM_BACKUP_DEMO,
+    RESOLVED_FIXED,
     RESULT_FAIL,
     RESULT_NOT_APPLICABLE,
     RESULT_NOT_MEASURABLE,
@@ -81,6 +82,7 @@ def persist_findings(
     run_id: Optional[int] = None,
     now: Optional[datetime] = None,
     resolve_checks: Optional[Iterable[str]] = None,
+    resolve_reason: str = RESOLVED_FIXED,
 ) -> Dict[str, int]:
     """Bulguları upsert eder; değerlendirilen kategoride bu turda üretilmeyenleri çözer.
 
@@ -155,6 +157,7 @@ def persist_findings(
         row.last_seen = now
         row.active = True
         row.resolved_at = None
+        row.resolved_reason = None
         row.run_id = run_id
         upserted += 1
 
@@ -164,6 +167,7 @@ def persist_findings(
             continue
         row.active = False
         row.resolved_at = now
+        row.resolved_reason = resolve_reason
         resolved += 1
     db.flush()
     return {"upserted": upserted, "resolved": resolved}
@@ -214,6 +218,7 @@ def finding_to_dict(row: InfraFinding, exc: Optional[InfraFindingException] = No
         "last_seen": row.last_seen.isoformat() if row.last_seen else None,
         "active": bool(row.active),
         "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+        "resolved_reason": getattr(row, "resolved_reason", None),
         "has_draft": bool(cdef and cdef.draft),
         "exception": (
             {
@@ -287,6 +292,36 @@ def query_findings(
     return out
 
 
+def closure_metrics(db: Session, *, platforms: Optional[Sequence[str]] = None, since_days: int = 30,
+                    now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Kapanan bulgu sayısı ve çözüm süresi (first_seen → resolved_at) — YALNIZ gerçekten düzelenler.
+
+    Kapanış nedeni ``fixed`` (veya eski kayıt NULL) olmayanlar (demo_disabled, provider_disabled) ve DEMO
+    platformu metriğe girmez: bayrak/sağlayıcı kapanması "düzeltme" değildir.
+    """
+    now = now or utcnow()
+    since = now - timedelta(days=since_days)
+    q = (db.query(InfraFinding)
+         .filter(InfraFinding.active.is_(False), InfraFinding.resolved_at.isnot(None),
+                 InfraFinding.resolved_at >= since, InfraFinding.platform != PLATFORM_BACKUP_DEMO,
+                 or_(InfraFinding.resolved_reason.is_(None), InfraFinding.resolved_reason == RESOLVED_FIXED)))
+    if platforms:
+        q = q.filter(InfraFinding.platform.in_(list(platforms)))
+    secs = []
+    n = 0
+    for r in q.all():
+        n += 1
+        a, b = _aware(r.first_seen), _aware(r.resolved_at)
+        if a and b and b >= a:
+            secs.append((b - a).total_seconds())
+    secs.sort()
+    med = None
+    if secs:
+        m = len(secs) // 2
+        med = secs[m] if len(secs) % 2 else (secs[m - 1] + secs[m]) / 2
+    return {"since_days": since_days, "closed": n, "median_resolution_sec": med}
+
+
 def summarize_findings(db: Session, *, platforms: Optional[Sequence[str]] = None,
                        include_demo: bool = False) -> Dict[str, Any]:
     """Kategori × önem sayımı (istisnalı bulgular hariç). DEMO bulguları varsayılan olarak dışlanır."""
@@ -327,6 +362,7 @@ def summarize_findings(db: Session, *, platforms: Optional[Sequence[str]] = None
         "not_measurable": not_measurable,
         "not_applicable": not_applicable,
         "passed": passed,
+        "closure": closure_metrics(db, platforms=platforms),
         "as_of": last_seen.isoformat() if last_seen else None,
     }
 

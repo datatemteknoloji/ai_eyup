@@ -23,8 +23,25 @@ def _int(v: Any, default: int) -> int:
 
 
 def _have() -> bool:
+    """Gerçek sağlayıcı VEYA (bayrak açıkken) demo — demo etiketi çıktıya zorunlu eklenir."""
     from app.services.capabilities import get_capabilities
-    return "backup" in get_capabilities()
+    from app.services.backup.demo_gate import demo_tools_active
+    return "backup" in get_capabilities() or demo_tools_active()
+
+
+def _demo() -> bool:
+    from app.services.backup.demo_gate import demo_tools_active
+    return demo_tools_active()
+
+
+def _label(out: Dict[str, Any]) -> Dict[str, Any]:
+    """Demo modunda çıktıyı 'DEMO veri' ile etiketle (LLM'e açıkça belirtme talimatı dahil)."""
+    if out.get("ok") and _demo():
+        from app.services.backup.demo_gate import DEMO_LABEL_TR, DEMO_TOOL_NOTE_TR
+        out["demo"] = True
+        out["data_label"] = DEMO_LABEL_TR
+        out["note"] = f"{DEMO_TOOL_NOTE_TR} {out.get('note') or ''}".strip()
+    return out
 
 
 def _slim(r: Dict[str, Any]) -> Dict[str, Any]:
@@ -38,7 +55,8 @@ def _status_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> D
     try:
         from app.models.backup import BkJob
         from app.services.backup import rpo_engine as eng
-        summ = eng.summary(db)
+        inc = _demo()
+        summ = eng.summary(db, include_demo=inc)
         out: Dict[str, Any] = {
             "ok": True, "summary": {k: v for k, v in summ.items() if k != "providers"},
             "providers": [{k: p.get(k) for k in ("label", "demo", "stale", "last_status", "data_age_sec")}
@@ -46,7 +64,7 @@ def _status_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> D
             "demo": any(p.get("demo") for p in summ["providers"]),
             "note": "Rakamlar deterministik motordan; hedef RPO tanımsız VM'ler 'no_target'. RTO tahmin edilmez.",
         }
-        ids = [i.id for i in eng.backup_instances(db)]
+        ids = [i.id for i in eng.backup_instances(db, include_demo=inc)]
         failed = db.query(BkJob).filter(BkJob.instance_id.in_(ids or [-1]), BkJob.last_result == "Failed").limit(10).all()
         out["failed_jobs"] = [{"name": j.name, "last_run_at": j.last_run_at.isoformat() if j.last_run_at else None}
                               for j in failed]
@@ -57,8 +75,9 @@ def _status_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> D
                                        or r.is_online is False]
         vm = (args.get("vm_name") or "").strip().lower()
         if vm:
-            out["vms"] = [_slim(r) for r in eng.vm_protection(db) if vm in str(r["name"] or "").lower()][:10]
-        return out
+            out["vms"] = [_slim(r) for r in eng.vm_protection(db, include_demo=inc)
+                         if vm in str(r["name"] or "").lower()][:10]
+        return _label(out)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
 
@@ -68,7 +87,8 @@ def _rpo_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict
         return dict(_NO_PROVIDER)
     try:
         from app.services.backup import rpo_engine as eng
-        rows = eng.vm_protection(db)
+        inc = _demo()
+        rows = eng.vm_protection(db, include_demo=inc)
         lim = max(1, min(_int(args.get("limit"), 15), 40))
         which = (args.get("filter") or "breach").strip()
         if which == "unprotected":
@@ -78,12 +98,12 @@ def _rpo_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict
         else:
             sel = [r for r in rows if r["rpo_state"] == "breach"]
         sel.sort(key=lambda r: -(r["rpo_age_min"] or 10 ** 9))
-        s = eng.summary(db)
-        return {"ok": True, "filter": which, "count": len(sel), "vms": [_slim(r) for r in sel[:lim]],
+        s = eng.summary(db, include_demo=inc)
+        return _label({"ok": True, "filter": which, "count": len(sel), "vms": [_slim(r) for r in sel[:lim]],
                 "totals": {k: s[k] for k in ("powered_on", "protected", "unprotected", "protected_pct", "rpo_ok",
                                              "rpo_breach", "rpo_no_target", "low_match")},
                 "demo": any(p.get("demo") for p in s["providers"]),
-                "note": "RPO = şimdi − son geri dönüş noktası; hedef ainew politikasından. RTO ölçülmez/tahmin edilmez."}
+                "note": "RPO = şimdi − son geri dönüş noktası; hedef ainew politikasından. RTO ölçülmez/tahmin edilmez."})
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
 
