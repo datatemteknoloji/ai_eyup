@@ -412,6 +412,46 @@ def _top_sql(db: Session, sql: str, params: Dict[str, Any]) -> List[Dict[str, An
         return []
 
 
+CAPACITY_DAYS_WINDOW = 30      # gün; eski iki-noktalı yöntemle aynı pencere
+CAPACITY_DAYS_MIN_SAMPLES = 7  # günlük nokta; Linux/Windows kapasite tahminiyle aynı (build_threshold_forecast)
+
+
+def _datastore_daily_series(db: Session, clause: str, params: Dict[str, Any]) -> Dict[Any, List[float]]:
+    """(hypervisor_id, ad) → günlük ortalama doluluk serisi (en eski → en yeni), son 30 gün."""
+    sql = f"""
+    SELECT hypervisor_id, name, date_trunc('day', timestamp) AS day, avg(usage_pct) AS usage_pct
+    FROM virt_datastore_metrics
+    WHERE timestamp >= now() - interval '{CAPACITY_DAYS_WINDOW} days' AND usage_pct IS NOT NULL AND {clause}
+    GROUP BY hypervisor_id, name, day
+    ORDER BY hypervisor_id, name, day
+    """
+    out: Dict[Any, List[float]] = {}
+    for r in _top_sql(db, sql, params):
+        out.setdefault((r["hypervisor_id"], str(r["name"] or "")), []).append(float(r["usage_pct"]))
+    return out
+
+
+def _runway_forecast(current: Optional[float], values: Optional[List[float]],
+                     capacity_gb: Optional[float] = None) -> Dict[str, Any]:
+    """%80 eşiğine gün — Theil–Sen (report_analytics). Yetersiz/belirsiz seride days=None ('veri yetersiz')."""
+    from app.services import report_analytics as ra
+    empty = {"days": None, "range": None, "fastest": None, "confidence": "none",
+             "sample_days": len(values or []), "daily_growth_pct": None}
+    if current is None or not values:
+        return empty
+    f = ra.build_threshold_forecast(current, values, threshold=80.0, min_samples=CAPACITY_DAYS_MIN_SAMPLES,
+                                    total_gb=capacity_gb)
+    out = {**empty, "confidence": f["trend_confidence"], "sample_days": f["sample_days"],
+           "daily_growth_pct": f["daily_growth_pct"]}
+    if current >= 80.0:
+        return out        # eşik zaten aşıldı: "kaç gün kaldı" anlamsız; risk doluluk üzerinden
+    rng = f.get("days_to_threshold_range")
+    if f.get("days_to_threshold") is None or not rng:
+        return out
+    out.update(days=f["days_to_threshold"], range=rng, fastest=rng.get("fastest"))
+    return out
+
+
 def _capacity_rows(db: Session, hypervisor_ids: Optional[Sequence[int]] = None) -> List[Dict[str, Any]]:
     clause, hv_params = _hv_sql(hypervisor_ids)
     sql = f"""
@@ -442,6 +482,7 @@ def _capacity_rows(db: Session, hypervisor_ids: Optional[Sequence[int]] = None) 
     LIMIT 12
     """
     rows = _top_sql(db, sql, hv_params)
+    series = _datastore_daily_series(db, clause, hv_params)
     counts = count_names((r.get("hypervisor_id"), str(r.get("name") or "")) for r in rows)
     hv_names = {r.get("hypervisor_id"): r.get("hypervisor_name") for r in rows if r.get("hypervisor_id") is not None}
     out = []
@@ -449,11 +490,10 @@ def _capacity_rows(db: Session, hypervisor_ids: Optional[Sequence[int]] = None) 
         cur = _r(r.get("usage_pct"))
         old = _r(r.get("usage_30d"))
         delta = _delta(cur, old)
-        days = None
-        if cur is not None and delta is not None and delta > 0.2:
-            gap = 80.0 - cur
-            if gap > 0:
-                days = round(gap / (delta / 30.0), 1)
+        # Dilim F: iki noktalı doğrusal uzatma yerine mevcut Theil–Sen motoru (report_analytics) —
+        # tek eğim değil, eğim belirsizliğinden gelen ARALIK (hızlı/tipik/yavaş) verilir.
+        fc = _runway_forecast(cur, series.get((r.get("hypervisor_id"), str(r.get("name") or ""))), r.get("capacity_gb"))
+        days = fc["days"]
         raw_name = str(r.get("name") or "")
         out.append({
             "name": disambiguate(raw_name, r.get("hypervisor_id"), counts, hv_names),
@@ -466,9 +506,14 @@ def _capacity_rows(db: Session, hypervisor_ids: Optional[Sequence[int]] = None) 
             "forecast": round(cur + (delta or 0), 1) if cur is not None else None,
             "headroom": round(100 - cur, 1) if cur is not None else None,
             "days_to_80": days,
+            "days_to_80_range": fc["range"],
+            "trend_confidence": fc["confidence"],
+            "sample_days": fc["sample_days"],
+            "daily_growth_pct": fc["daily_growth_pct"],
+            # Risk, tahminin en erken ucuna (fastest) göre — temkinli; tipik değere göre değil.
             "risk": (
-                "critical" if (cur is not None and cur >= 90) or (days is not None and days <= 7)
-                else "warning" if (cur is not None and cur >= 80) or (days is not None and days <= 21)
+                "critical" if (cur is not None and cur >= 90) or (fc["fastest"] is not None and fc["fastest"] <= 7)
+                else "warning" if (cur is not None and cur >= 80) or (fc["fastest"] is not None and fc["fastest"] <= 21)
                 else "ok"
             ),
         })
@@ -505,9 +550,14 @@ def _build_summary(
         parts.append(f"Öne çıkan sorun: {top.get('title')}{aff_s}.")
     risk = next((c for c in capacity if c.get("risk") in ("critical", "warning")), None)
     if risk and risk.get("days_to_80") is not None:
+        rg = risk.get("days_to_80_range") or {}
+        rng_s = ""
+        if rg:
+            slow = rg.get("slowest")
+            rng_s = f" (aralık {rg.get('fastest')}–{slow if slow is not None else 'sonsuz'} gün)"
         parts.append(
             f"{risk['name']} depolama %{risk.get('current')} — "
-            f"%80 eşiğine yaklaşık {risk['days_to_80']} gün."
+            f"%80 eşiğine yaklaşık {risk['days_to_80']} gün{rng_s}."
         )
     parts.append("Kaynak: vCenter sync (Timescale). Guest OS / Prometheus karışmaz.")
     return " ".join(parts)

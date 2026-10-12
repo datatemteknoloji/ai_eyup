@@ -784,6 +784,8 @@ const VirtMonitoring: React.FC<{
                 30g {deltaTxt(c.trend_30d)} · {t('vmn_headroom')} {c.headroom ?? '—'}%
                 {c.days_to_80 != null ? ` · ${t('vmn_days_to')} ~${Math.round(c.days_to_80)}` : ''}
               </div>
+                {c.days_to_80_range ? ` (${t('vmn_range')} ${Math.round(c.days_to_80_range.fastest)}–${c.days_to_80_range.slowest == null ? '∞' : Math.round(c.days_to_80_range.slowest)})` : ''}
+                {c.days_to_80 == null && c.current != null && c.current < 80 && c.trend_confidence && ['none', 'low'].includes(c.trend_confidence) ? ` · ${t('vmn_runway_unsure')}` : ''}
             </div>
           ))}
         </Panel>
