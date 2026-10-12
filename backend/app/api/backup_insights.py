@@ -158,7 +158,8 @@ def _pol(p: BkRpoPolicy) -> Dict[str, Any]:
 def list_policies(db: Session = Depends(get_db), _u: User = Depends(_module)):
     _need_backup()
     return {"policies": [_pol(p) for p in db.query(BkRpoPolicy).order_by(BkRpoPolicy.id).all()],
-            "note": "Hedef RPO/RTO ainew'de tanımlanır (Veeam'den gelmez). RTO yalnız hedef olarak saklanır, tahmin edilmez."}
+            "note": "Hedef RPO/RTO ainew'de tanımlanır (Veeam'den gelmez). RTO yalnız hedef olarak saklanır, tahmin edilmez.",
+            "rto_note": eng.RTO_NOTE_TR}
 
 
 @router.post("/policies")

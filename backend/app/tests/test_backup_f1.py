@@ -268,3 +268,40 @@ def test_api_protection_rows_have_job_names_and_host_flag(db, monkeypatch):
     rows = api.backup_rpo(state="protected", rpo_state=None, q=None, limit=500, db=db, _u=None)["vms"]
     assert rows and all("job_names" in r and "host_verified" in r and "restore_points_count" in r for r in rows)
     assert any(r["job_names"] for r in rows)
+
+
+# ── F.3: RTO notu — RTO asla tahmin edilmez ──────────────────────────────────
+
+def test_rto_never_estimated_unverified_with_sure_backup_reason(db, monkeypatch):
+    from app.models.backup import BkRpoPolicy
+    from app.services.backup import extras, rpo_engine as eng
+    _sync(db, monkeypatch)
+    vms = _demo_vms(40)
+    monkeypatch.setattr(eng, "_vms", lambda _db: vms)
+    db.add(BkRpoPolicy(scope_kind="all", scope_ref="", target_rpo_min=1440, target_rto_min=60))
+    db.commit()
+    rows = [r for r in eng.vm_protection(db, vms=vms, include_demo=True) if r["state"] == "protected"]
+    assert rows and {r["rto_state"] for r in rows} == {"unverified"}
+    fs = [f for f in extras.policy_findings(db, vms=vms) if f.check_id == "bk.vm.rto_unverified"]
+    assert fs and all(f.result == RESULT_FAIL for f in fs)
+    assert all("Azure/AWS/Google" in f.detail for f in fs)
+    # hiçbir yerde tahmini RTO değeri yok
+    assert all(not any("estimated" in k or k in ("rto_min", "rto_estimate") for k in f.evidence) for f in fs)
+    assert not any("estimated_rto" in r or "rto_estimate" in r for r in rows)
+
+
+def test_rto_verified_only_by_recorded_test_and_stale_after_180_days(db, monkeypatch):
+    from app.models.backup import BkProtectedObject, BkRestoreTest, BkRpoPolicy
+    from app.services.backup import rpo_engine as eng
+    row = _sync(db, monkeypatch)
+    db.add(BkRpoPolicy(scope_kind="all", scope_ref="", target_rpo_min=1440, target_rto_min=60))
+    db.commit()
+    o = db.query(BkProtectedObject).filter(BkProtectedObject.instance_id == row.id,
+                                           BkProtectedObject.match_confidence.in_(("exact", "high"))).first()
+    now = datetime.now(timezone.utc)
+    assert eng.rto_state(db, now, 60, [o.id])[0] == "unverified"
+    assert eng.rto_state(db, now, None, [o.id])[0] == "no_target"
+    db.add(BkRestoreTest(protected_object_id=o.id, tested_at=now - __import__("datetime").timedelta(days=10), result="ok"))
+    db.commit()
+    assert eng.rto_state(db, now, 60, [o.id])[0] == "verified"
+    assert eng.rto_state(db, now + __import__("datetime").timedelta(days=200), 60, [o.id])[0] == "stale"

@@ -225,17 +225,18 @@ def policy_findings(db: Session, *, now: Optional[datetime] = None,
             continue
         vref = f"vm:{r['ref']}" if r.get("ref") else f"vm:srv-{r['server_id']}"
         rto = r.get("target_rto_min")
-        if not rto:
+        st, t = eng.rto_state(db, now, rto, objs_by_vm.get(r["server_id"], []))
+        if st == "no_target":
             res, det, ev = RESULT_NOT_APPLICABLE, "Hedef RTO tanımlı değil", {}
+        elif st == "unverified":
+            # F.3: neden — SureBackup REST'te yalnız bulut yedekleri için (Jobs → SureBackupContentScan notu)
+            res, det, ev = (RESULT_FAIL, "Hedef RTO var ama kayıtlı geri yükleme testi yok (RTO tahmin edilmez). " + eng.RTO_NOTE_TR,
+                            {"target_rto_min": rto, "sure_backup_rest": "yalnız Azure/AWS/Google Cloud yedekleri (1.3-rev1)"})
         else:
-            t = last_restore_test(db, objs_by_vm.get(r["server_id"], []))
-            if t is None or t.tested_at is None:
-                res, det, ev = RESULT_FAIL, "Hedef RTO var ama kayıtlı geri yükleme testi yok (RTO tahmin edilmez)", {"target_rto_min": rto}
-            else:
-                age = (now - _aware(t.tested_at)).days
-                res = RESULT_FAIL if age > 180 else RESULT_PASS
-                det = f"Son geri yükleme testi {age} gün önce"
-                ev = {"target_rto_min": rto, "tested_at": t.tested_at.isoformat(), "duration_sec": t.duration_sec}
+            age = (now - _aware(t.tested_at)).days
+            res = RESULT_FAIL if st == "stale" else RESULT_PASS
+            det = f"Son geri yükleme testi {age} gün önce"
+            ev = {"target_rto_min": rto, "tested_at": t.tested_at.isoformat(), "duration_sec": t.duration_sec}
         out.append(FindingDraft("bk.vm.rto_unverified", "vm", vref, str(r["name"]), res, cluster_name=r.get("cluster"),
                                 evidence=ev, detail=det, stale=bool(r["stale"])))
     # 3-2-1 (yalnız copy işi varlığı)

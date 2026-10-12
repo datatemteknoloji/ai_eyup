@@ -39,6 +39,20 @@ function gfsText(r: any) {
   return parts.length ? parts.join(' / ') : '✓'
 }
 
+/** F.3: RTO hiçbir zaman tahmin edilmez; yalnız hedef + kayıtlı test durumu gösterilir. */
+function RtoBadge({ s }: { s?: string }) {
+  const t = useT()
+  if (!s || s === 'n/a' || s === 'no_target') return <span className="text-slate-500">—</span>
+  const m: Record<string, [string, string]> = {
+    unverified: ['bk_f3_rto_unverified', 'text-amber-300 border-amber-500/30 bg-amber-500/10'],
+    stale: ['bk_f3_rto_stale', 'text-amber-300 border-amber-500/30 bg-amber-500/10'],
+    verified: ['bk_f3_rto_verified', 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'],
+  }
+  const x = m[s]
+  if (!x) return <span className="text-slate-500">—</span>
+  return <span className={`text-[11px] px-2 py-0.5 rounded border ${x[1]}`} title={t('bk_f3_rto_note')} data-testid="bk-rto-badge">{t(x[0] as any)}</span>
+}
+
 function RpoBadge({ s }: { s: string }) {
   const t = useT()
   const map: Record<string, [string, string]> = {
@@ -195,6 +209,7 @@ function Policies({ onChanged }: { onChanged: () => void }) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-400">{t('bk_policy_hint')}</p>
+      <p className="text-xs text-amber-200/90 rounded border border-amber-500/20 bg-amber-500/5 px-3 py-2" data-testid="bk-rto-note">{t('bk_f3_rto_note')}</p>
       <SimpleTable rows={q.data?.policies || []} empty={t('bk_policy_none')} cols={[
         { key: 'scope_kind', label: t('bk_policy_scope') },
         { key: 'scope_ref', label: t('bk_policy_ref'), render: (r: any) => r.scope_ref || '—' },
@@ -317,6 +332,7 @@ export default function VirtBackup() {
             { key: 'rpo_age_min', label: t('bk_col_age'), render: (r: any) => <span className="font-mono">{ago(r.rpo_age_min)}</span> },
             { key: 'target_rpo_min', label: t('bk_col_target'), render: (r: any) => r.target_rpo_min ? <span className="font-mono">{ago(r.target_rpo_min)}</span> : <span className="text-slate-500">—</span> },
             { key: 'rpo_state', label: 'RPO', render: (r: any) => <RpoBadge s={r.rpo_state} /> },
+            { key: 'rto_state', label: t('bk_f3_rto_col'), render: (r: any) => <RtoBadge s={r.rto_state} /> },
             { key: 'job_names', label: t('bk_f2_col_jobnames'), render: (r: any) => (r.job_names || []).join(', ') || '—' },
             { key: 'restore_points_count', label: t('bk_f2_col_rpcount'), className: 'font-mono', render: (r: any) => r.restore_points_count ?? '—' },
             { key: 'match_confidence', label: t('bk_col_match'), render: (r: any) => <span>{r.match_confidence}{r.host_verified ? <span className="ml-1 text-emerald-300" title={t('bk_f2_host_ok')}>⌂</span> : null}</span> },

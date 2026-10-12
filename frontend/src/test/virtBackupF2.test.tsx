@@ -31,6 +31,8 @@ function mount() {
 
 describe('F.2 Yedek sekmeleri', () => {
   beforeEach(() => {
+    DATA['/backup/rpo'] = { vms: [{ name: 'vm1', state: 'protected', rpo_state: 'ok', rto_state: 'unverified', powered_on: true }] }
+    DATA['/backup/policies'] = { policies: [] }
     DATA['/backup/summary'] = { enabled: true, providers: [], jobs: 2, repositories: 1 }
     DATA['/backup/jobs'] = { jobs: [
       { id: 1, name: 'okunan', type: 'backup', config_state: 'ok', encryption: false, cbt: true, app_aware: null,
@@ -84,5 +86,14 @@ describe('F.2 Yedek sekmeleri', () => {
     expect(screen.getByTestId('bk-sec-imm').textContent).toBe('bk_f2_sec_imm_nm')
     expect(screen.getByText('/api/v1/serverInfo')).toBeTruthy()
     expect(screen.getByText('bk_f2_nm_perm')).toBeTruthy()      // serverInfo forbidden
+  })
+
+  it('F.3: RTO "doğrulanmadı" rozeti ve not; tahmin değeri gösterilmez', () => {
+    mount()
+    const b = screen.getByTestId('bk-rto-badge')
+    expect(b.textContent).toBe('bk_f3_rto_unverified')
+    expect(b.getAttribute('title')).toBe('bk_f3_rto_note')
+    fireEvent.click(screen.getByText('bk_tab_policies'))
+    expect(screen.getByTestId('bk-rto-note').textContent).toBe('bk_f3_rto_note')
   })
 })

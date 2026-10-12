@@ -313,7 +313,7 @@ _METHODS: List[Method] = [
     _m("bk.vm.rto_unverified", CLASS_KURAL, "backup",
        ("Restore testi kanıtı yoksa RTO 'doğrulanmadı' olarak işaretlenir; RTO hiçbir koşulda tahmin edilmez.", "Without restore-test evidence RTO is marked 'unverified'; RTO is never estimated."),
        _BK,
-       ("VBR REST'te SureBackup yalnız bulut yedekleri için sunulduğundan çoğu ortamda 'doğrulanmadı' döner.", "In the VBR REST API SureBackup is exposed only for cloud backups, so 'unverified' is the common result.")),
+       ("VBR REST 1.3-rev1'de SureBackup yalnız Azure/AWS/Google Cloud yedekleri için sunulduğundan VMware ortamlarında çoğunlukla 'doğrulanmadı' döner.", "In VBR REST 1.3-rev1 SureBackup is exposed only for Azure/AWS/Google Cloud backups, so 'unverified' is the common result in VMware environments.")),
     _m("bk.job.*", CLASS_KURAL, "backup",
        ("İş sonucu/süre/değişim oranı kuralla değerlendirilir (başarısız oturum, süre > 1,5× medyan, değişim > 2× medyan); şifreleme ve CBT, Veeam iş yapılandırmasındaki açık/kapalı değerden okunur.", "Job result/duration/change rate are rule-evaluated (failed session, duration > 1.5× median, change > 2× median); encryption and CBT are read from the on/off values in the Veeam job configuration."),
        _BK,

@@ -43,6 +43,31 @@ def _vms(db: Session) -> List[Dict[str, Any]]:
     return inventory_vms(db)
 
 
+# F.3 — RTO notu. Kaynak: Veeam REST 1.3-rev1, Jobs → "SureBackupContentScan": "In the current version, SureBackup is
+# supported only for backups created with Veeam Backup for Microsoft Azure, Veeam Backup for AWS, or Veeam Backup for
+# Google Cloud." https://helpcenter.veeam.com/references/vbr/13/rest/1.3-rev1/tag/Jobs/index.html
+RTO_NOTE_TR = ("RTO doğrulanmadı: Veeam REST'te SureBackup yalnız Azure/AWS/Google Cloud yedekleri için sunulur (1.3-rev1); "
+               "VMware yedekleri için kurtarma doğrulama verisi REST'ten alınamaz. RTO hiçbir koşulda tahmin edilmez; "
+               "yalnız ainew'e kaydedilmiş geri yükleme testi sayılır.")
+RTO_NOTE_EN = ("RTO unverified: in the Veeam REST API SureBackup is exposed only for Azure/AWS/Google Cloud backups (1.3-rev1); "
+               "no recovery-verification data is available via REST for VMware backups. RTO is never estimated; "
+               "only a restore test recorded in ainew counts.")
+RTO_TEST_MAX_AGE_DAYS = 180
+
+
+def rto_state(db: Session, now: datetime, rto_min: Optional[int], object_ids: List[int]) -> Tuple[str, Optional[Any]]:
+    """→ (durum, son test). Durum: no_target | unverified | verified | stale. RTO değeri ASLA hesaplanmaz."""
+    if not rto_min:
+        return "no_target", None
+    from app.models.backup import BkRestoreTest
+    t = (db.query(BkRestoreTest).filter(BkRestoreTest.protected_object_id.in_(object_ids or [-1]))
+         .order_by(BkRestoreTest.tested_at.desc()).first())
+    if t is None or t.tested_at is None:
+        return "unverified", t
+    age = (now - _aware(t.tested_at)).days
+    return ("stale" if age > RTO_TEST_MAX_AGE_DAYS else "verified"), t
+
+
 def resolve_target(policies: List[BkRpoPolicy], vm: Dict[str, Any]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
     """Öncelik: vm > cluster > all. → (rpo_min, rto_min, policy_id)."""
     def pick(kind: str, ref: str) -> Optional[BkRpoPolicy]:
@@ -121,6 +146,7 @@ def vm_protection(db: Session, *, now: Optional[datetime] = None,
                                      if any(o.restore_points_count is not None for o in trusted) else None),
             "match_method": (trusted[0].match_method if trusted else (low[0].match_method if low else None)),
             "host_verified": any(o.host_verified for o in trusted),
+            "rto_state": (rto_state(db, now, rto_t, [o.id for o in trusted])[0] if state == "protected" else "n/a"),
         })
     return out
 
