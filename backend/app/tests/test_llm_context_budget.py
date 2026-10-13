@@ -37,8 +37,8 @@ def test_input_budget_clamped_by_gateway_hard_cap(monkeypatch):
     import app.services.llm_context_budget as m
     # Admin bütçeyi 128K'ya çıkarmış olsa bile, gateway/model gerçekte 32K ise
     # efektif bütçe 32K'nın (güvenlik payı + rezerv düşülmüş) üstüne çıkmamalı.
-    monkeypatch.setattr(m, "get_context_token_budget", lambda: 128000)
-    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda: 32768)
+    monkeypatch.setattr(m, "get_context_token_budget", lambda **_k: 128000)
+    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda **_k: 32768)
     budget = m.get_input_token_budget()
     assert budget == 32768 - 2000 - 4096
     assert budget < 128000
@@ -48,8 +48,8 @@ def test_input_budget_grows_when_hard_cap_raised(monkeypatch):
     # Gateway/model gerçekten büyürse (32K → 64K), kod değişmeden bütçe otomatik
     # büyür — "32K'ya sabit kalmayacak" gereksinimi.
     import app.services.llm_context_budget as m
-    monkeypatch.setattr(m, "get_context_token_budget", lambda: 128000)
-    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda: 65536)
+    monkeypatch.setattr(m, "get_context_token_budget", lambda **_k: 128000)
+    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda **_k: 65536)
     budget = m.get_input_token_budget()
     assert budget == 65536 - 2000 - 4096
 
@@ -65,8 +65,8 @@ def test_budget_sections_no_truncate_when_small():
 
 def test_budget_sections_truncates_context_not_tail(monkeypatch):
     import app.services.llm_context_budget as m
-    monkeypatch.setattr(m, "get_context_token_budget", lambda: 32768)
-    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda: 32768)
+    monkeypatch.setattr(m, "get_context_token_budget", lambda **_k: 32768)
+    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda **_k: 32768)
     # Gerçek regresyon senaryosu: 62 host / 3720 VM'lik dev bir context dump'ı +
     # ufak bir kullanıcı sorusu. Kesilen SADECE context olmalı; soru asla değil.
     huge_context = "VM verisi satırı. " * 200000
@@ -86,8 +86,8 @@ def test_budget_sections_truncates_context_not_tail(monkeypatch):
 
 def test_budget_sections_truncates_history_when_context_alone_not_enough(monkeypatch):
     import app.services.llm_context_budget as m
-    monkeypatch.setattr(m, "get_context_token_budget", lambda: 8192)
-    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda: 8192)
+    monkeypatch.setattr(m, "get_context_token_budget", lambda **_k: 8192)
+    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda **_k: 8192)
     result = m.budget_sections(
         system="s" * 100,
         context="c" * 100,
@@ -104,8 +104,8 @@ def test_budget_sections_never_shrinks_tail_even_when_impossible(monkeypatch):
     # sıfırlanır ama fonksiyon tail'i KISALTMAZ (sessiz veri kaybı yerine
     # gateway'in kendi limit hatasını vermesi tercih edilir).
     import app.services.llm_context_budget as m
-    monkeypatch.setattr(m, "get_context_token_budget", lambda: 100)
-    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda: 100)
+    monkeypatch.setattr(m, "get_context_token_budget", lambda **_k: 100)
+    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda **_k: 100)
     # get_input_token_budget() alt sınırı 2048 token'dır (bkz. max(2048, ...));
     # bu alt sınırı da aşan bir tail ile gerçek "imkansız" senaryoyu test ediyoruz.
     huge_tail = "Kullanıcı Sorusu: " + ("x" * 10000)

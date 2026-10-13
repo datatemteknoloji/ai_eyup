@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, Dict, Iterator, List, Optional
 
 from sqlalchemy.orm import Session
@@ -21,6 +22,24 @@ from sqlalchemy.orm import Session
 from app.services import chat_cancel
 
 logger = logging.getLogger(__name__)
+
+
+def _record_count(result: Any) -> Optional[int]:
+    """Araç sonucundaki kayıt sayısı ipucu (UI ilerleme satırı: '<N> kayıt bulundu'). Bilinmiyorsa None."""
+    if not isinstance(result, dict):
+        return None
+    cov = result.get("coverage")
+    if isinstance(cov, dict) and isinstance(cov.get("records_in_range"), int):
+        return int(cov["records_in_range"])
+    for k in ("total", "total_count", "count"):
+        v = result.get(k)
+        if isinstance(v, int) and not isinstance(v, bool):
+            return int(v)
+    for k in ("items", "rows", "data", "runs", "executions"):
+        v = result.get(k)
+        if isinstance(v, list):
+            return len(v)
+    return None
 
 
 SYSTEM_PROMPT = (
@@ -231,6 +250,13 @@ _PLATFORM_HINTS = {
         "Hepsi READ_ONLY.\n"
         "infra_overview yalnızca OCP cluster özeti döner."
     ),
+    "automic": (
+        "\n\nBU SOHBET KAPSAMI: YALNIZCA Automic (UC4) iş zamanlama verisi — job/workflow çalışmaları, "
+        "durumlar, raporlar, agent'lar. Linux/Windows/OCP/vCenter cevabı ÜRETME. Yalnızca automic_* "
+        "araçlarını kullan; serbest SQL yok, analiz için automic_history şablonları. Hata analizinde: "
+        "hatalıları bul → automic_execution detail → workflow ise children → reports → report → "
+        "automic_history error_signatures. Kaynak gecikmesini (source_lag_sec) yanıtta belirt."
+    ),
     "windows": (
         "\n\nBU SOHBET KAPSAMI: YALNIZCA Windows sunucular (WinRM). "
         "Linux SSH, OpenShift veya vCenter karıştırma.\n"
@@ -261,6 +287,16 @@ _PLATFORM_HINTS = {
         "linked_server_id varsa o host için Linux get_* (OS CPU/disk) kullanılabilir; "
         "bunu cell/ASM metriği diye yazma.\n"
         "infra_overview yalnızca Exadata özeti döner."
+    ),
+    "automic": (
+        "\n\nBU SOHBET KAPSAMI: Automic / UC4 iş yükü otomasyonu (READ-ONLY). "
+        "Linux SSH, Windows WinRM, vCenter veya OpenShift araçlarını kullanma; "
+        "yalnızca automic_* araçları. Automic'e yazma/başlatma/durdurma YOK.\n"
+        "Çalışma arama → automic_search_executions (kullanıcı ADI ile: user=<ad>, userID değil). RunID detay/rapor/alt adım → automic_execution. "
+        "Aktif işler → automic_active. Nesne/script/sürüm → automic_object. "
+        "Trend/analiz → automic_history. Entegrasyon sağlığı → automic_status. "
+        "Agent özeti → automic_agent. Serbest SQL yok; tablo/grafik backend bileşenleriyle gelir.\n"
+        "Detaylı Automic sohbeti için /automation/chat sayfası da kullanılabilir."
     ),
 }
 
@@ -302,6 +338,14 @@ def _has_unaddressed_cross_domain_clause(message: str, domains: Optional[frozens
     return True
 
 
+def _policy_supports_think(model: str) -> bool:
+    try:
+        from app.services.llm_chat_policy import supports_think_level
+        return supports_think_level(model)
+    except Exception:
+        return False
+
+
 def _tool_result_to_text(result: Any) -> str:
     try:
         from app.services.chat_data_status import annotate_payload
@@ -326,8 +370,19 @@ def run_read_only_tool_loop(
     planning_depth: bool = False,
     system_addendum: Optional[str] = None,
     output_directive: Optional[str] = None,
+    extra_ctx: Optional[Dict[str, Any]] = None,
+    llm_policy: Optional[Dict[str, Any]] = None,
 ) -> Iterator[Dict[str, Any]]:
     """READ_ONLY tool-calling döngüsü — generator.
+
+    llm_policy (opsiyonel, Adım 6b — şimdilik yalnız Automic sohbeti):
+      depth            "simple" | "analysis" | "default" → think seviyesi / num_predict
+      stream_final     True → araç çağırmayan son tur canlı akıtılır ({"type":"token"}),
+                       ayrı bir "final" LLM turu gerekmez
+      result_transform callable(name, result) -> str — LLM'e giden araç sonucu metni
+                       (satır/token sınırı + maskeleme); yapılandırılmış sonuç tam kalır
+      runtime_context  sistem mesajının EN SONUNA eklenen dinamik blok (prefix cache)
+      base_prompt      genel SYSTEM_PROMPT yerine kullanılacak modüle özgü ince taban prompt (Adım 6c)
 
     system_addendum: Unified module-first persona / join sözleşmesi (opsiyonel).
     output_directive: kullanıcının /table, /json, /brief komutu (chat_output_directives.
@@ -367,7 +422,9 @@ def run_read_only_tool_loop(
         OutputDirective(output_directive) if output_directive else OutputDirective.NONE
     )
 
-    sys_content = SYSTEM_PROMPT
+    _pol: Dict[str, Any] = dict(llm_policy or {})
+    # Modüle özgü ince taban prompt (Automic): genel OpenShift/vCenter ağırlıklı SYSTEM_PROMPT yerine geçer.
+    sys_content = str(_pol.get("base_prompt") or "") or SYSTEM_PROMPT
     plat = (platform or "").strip().lower()
     if plat in _PLATFORM_HINTS:
         sys_content += _PLATFORM_HINTS[plat]
@@ -384,6 +441,8 @@ def run_read_only_tool_loop(
         sys_content += _PLATFORM_HINTS.get("exadata", "")
     elif plat == "unified" and domains and "linux" in domains and "vcenter" not in domains and "openshift" not in domains:
         sys_content += _PLATFORM_HINTS.get("linux", "")
+    elif plat == "unified" and domains and "automic" in domains:
+        sys_content += _PLATFORM_HINTS.get("automic", "")
 
     db_first = tool_policy.should_use_db_first(platform=plat, domains=domains)
     escalate_live = False
@@ -417,6 +476,9 @@ def run_read_only_tool_loop(
         sys_content += "\n\nKULLANILABİLİR SUNUCULAR/KÜMELER:\n" + server_summary[:4000]
     if context_str:
         sys_content += "\n\nBAĞLAM (bu turda zaten toplanmış canlı veri — varsa önce buna bak):\n" + _budgeted_context(context_str)
+    if _pol.get("runtime_context"):
+        # Dinamik / istek-özel her şey EN SONDA: sabit ön ek byte-identical → prefix cache
+        sys_content += "\n\n" + str(_pol["runtime_context"])
 
     # Kapsam BİR KEZ çözülür ve bu istek boyunca taşınır (prefetch, render,
     # snapshot ipucu hepsi aynı nesneyi kullanır). Eskiden extract_entity_filters
@@ -463,9 +525,14 @@ def run_read_only_tool_loop(
     except Exception as e:
         logger.debug("virt inventory contract atlandı: %s", e)
 
+    _user_content = user_message
+    if _pol.get("user_suffix"):
+        # Yanıt boyu gibi kısa yönergeler üretim noktasına yakın (kullanıcı mesajının sonu) durur;
+        # sabit sistem ön eki etkilenmez.
+        _user_content = f"{user_message}\n\n{_pol['user_suffix']}"
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": sys_content},
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": _user_content},
     ]
 
     tool_texts: List[str] = []
@@ -474,7 +541,9 @@ def run_read_only_tool_loop(
     used_tools = False
     successful_tool_runs = 0
     exec_ctx: Dict[str, Any] = {
+        **(extra_ctx or {}),
         "platform": plat or "unified",
+        "domains": set(domains) if domains is not None else None,
         "user_message": user_message or "",
         "message": user_message or "",
     }
@@ -742,6 +811,25 @@ def run_read_only_tool_loop(
             return False
         return kind != "conceptual"
 
+    _xform = _pol.get("result_transform")
+
+    def _llm_result_text(name: str, result: Any, default_text: str) -> str:
+        """LLM'e giden araç sonucu: policy varsa küçültülmüş/maskelenmiş metin."""
+        if _xform is None:
+            return default_text
+        try:
+            try:
+                from app.services.chat_data_status import annotate_payload
+                annotated = annotate_payload(result)
+            except Exception:
+                annotated = result
+            return _xform(name, annotated)
+        except Exception as exc:
+            logger.warning("[UnifiedToolChat] sonuç dönüştürücü hata (%s): %s", name, exc)
+            return default_text
+
+    _final_info: Dict[str, Any] = {}
+
     def _finalize(max_steps_reached: bool = False, early_stop: bool = False) -> Dict[str, Any]:
         if used_tools and tools_used:
             try:
@@ -850,7 +938,16 @@ def run_read_only_tool_loop(
             out["max_steps_reached"] = True
         if early_stop:
             out["early_stop"] = True
+        if _final_info:
+            out["final_text"] = _final_info.get("text") or ""
+            out["final_streamed"] = bool(_final_info.get("streamed"))
+            out["final_done_reason"] = _final_info.get("done_reason")
         return out
+
+    _answer_started = False
+    _think_on = bool(_pol) and _policy_supports_think(model)
+    _obs_seen = 0
+    _obs_last_note: Optional[str] = None
 
     for _step in range(max(1, max_steps)):
         # Kullanıcı iptali: araç turları arasında kontrol. Tek bir tur 30-90 sn
@@ -868,11 +965,71 @@ def run_read_only_tool_loop(
             _out["cancelled"] = True
             yield _out
             return
+        # Araç turu bitti, sıradaki LLM çağrısından ÖNCE: çağıran (Automic "neden" cevabı) araç sonuçlarından kod üretimli
+        # bölümü hemen akıtabilir ve modele kısa bir yönerge ekleyebilir (policy["observer"]).
+        _obs_fn = _pol.get("observer")
+        if _obs_fn and used_tools and len(structured_results) != _obs_seen:
+            _obs_seen = len(structured_results)
+            yield {"type": "tools_done", "structured_results": list(structured_results)}
+            try:
+                _note = _obs_fn(list(structured_results))
+            except Exception as _e:
+                logger.debug("observer hatası: %s", _e)
+                _note = None
+            if _note and _note != _obs_last_note:
+                _obs_last_note = _note
+                messages.append({"role": "system", "content": _note})
         if db_first and not escalate_live and _step >= tool_policy.DB_FIRST_MAX_STEPS:
             _unlock_live(f"faz adımı doldu ({tool_policy.DB_FIRST_MAX_STEPS})")
 
         step_specs = _active_specs(_step)
-        llm = chat_with_tools(model, messages, step_specs, timeout=90)
+        if not _pol:
+            llm = chat_with_tools(model, messages, step_specs, timeout=90)
+        else:
+            from app.services import llm_chat_policy as _lcp
+            _depth = _pol.get("depth") or "default"
+            _think = _np = None
+            if _think_on:
+                _think = _lcp.think_level(_depth, tool_selection=not used_tools, sticky=_pol.get("think_sticky"))
+                _np = _lcp.num_predict_for(_think)
+            # Nudge (kanıt / eksik cümle) uygulanacaksa bu turun cevabı kullanıcıya gitmemeli
+            _will_nudge = False
+            try:
+                if not used_tools and not _nudged and _needs_tool_evidence():
+                    _will_nudge = True
+                elif used_tools and not _clause_nudged:
+                    from app.services.chat_clause_check import uncovered_clause_labels
+                    _will_nudge = bool(uncovered_clause_labels(user_message, tools_used))
+            except Exception:
+                _will_nudge = False
+            _live = bool(_pol.get("stream_final")) and used_tools and not _will_nudge
+            try:
+                from app.services.agent.llm import set_turn_temperature as _set_temp
+                _set_temp(_lcp.temperature_for(
+                    answer_turn=bool(used_tools), override=_pol.get("temperature_answer")))
+            except Exception:
+                pass
+            if _live:
+                from app.services.agent.llm import chat_with_tools_stream
+                llm = {"content": "", "tool_calls": [], "error": "stream sonuç üretmedi"}
+                for _ev in chat_with_tools_stream(
+                    model, messages, step_specs, timeout=90, think=_think, num_predict=_np,
+                ):
+                    if _ev.get("type") == "token":
+                        if not _answer_started:
+                            _answer_started = True
+                            yield {
+                                "type": "answer_start",
+                                "structured_results": list(structured_results),
+                                "tools_used": list(tools_used),
+                            }
+                        yield {"type": "token", "text": _ev.get("text") or ""}
+                    elif _ev.get("type") == "result":
+                        llm = _ev
+            else:
+                llm = chat_with_tools(
+                    model, messages, step_specs, timeout=90, think=_think, num_predict=_np,
+                )
         if llm.get("error"):
             if used_tools:
                 # Önceki adımlarda araçlar başarıyla çağrılmış (structured_results/
@@ -945,6 +1102,12 @@ def run_read_only_tool_loop(
                     )
                 except Exception as _cm_e:
                     logger.debug("coverage miss kaydı atlandı: %s", _cm_e)
+            if _pol:
+                _final_info.update(
+                    text=llm.get("content") or "",
+                    streamed=bool(llm.get("streamed_chars")),
+                    done_reason=llm.get("done_reason"),
+                )
             yield _finalize()
             return
 
@@ -1049,7 +1212,9 @@ def run_read_only_tool_loop(
                         "error": f"Bilinmeyen veya bu sohbette izinli olmayan araç: {name}"
                     }, ensure_ascii=False)})
                     continue
-                if domains is not None and not (tool.domains & domains):
+                if (domains is not None and not (tool.domains & domains)) or (
+                    domains is None and (tool.domains & tool_mod._EXPLICIT_ONLY_DOMAINS)
+                ):
                     messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": json.dumps({
                         "error": f"'{name}' bu sohbet platformunda kullanılamaz"
                     }, ensure_ascii=False)})
@@ -1057,16 +1222,37 @@ def run_read_only_tool_loop(
 
                 label = tool.preview(db, args, exec_ctx)
                 yield {"type": "tool_call", "tool": name, "args": args, "label": label}
+                _tool_t0 = time.perf_counter()
                 result = tool.execute(db, args, exec_ctx)
+                _tool_ms = (time.perf_counter() - _tool_t0) * 1000
                 used_tools = True
                 successful_tool_runs += 1
                 if name and name not in tools_used:
                     tools_used.append(name)
                 result_text = _tool_result_to_text(result)
-                messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": result_text})
-                tool_texts.append(f"[{label}]\n{result_text[:_MAX_TOOL_TEXT_CHARS]}")
+                llm_text = _llm_result_text(name, result, result_text)
+                messages.append({"role": "tool", "tool_call_id": tc_id, "name": name, "content": llm_text})
+                tool_texts.append(f"[{label}]\n{llm_text[:_MAX_TOOL_TEXT_CHARS]}")
                 structured_results.append({"tool": name, "args": args, "result": result})
-                yield {"type": "tool_result", "tool": name}
+                try:
+                    from app.services import chat_request_metrics as crm
+                    rows_n = 0
+                    if isinstance(result, dict):
+                        data = result.get("data") or result.get("rows") or result.get("items")
+                        if isinstance(data, list):
+                            rows_n = len(data)
+                        elif isinstance(result.get("count"), int):
+                            rows_n = int(result["count"])
+                    crm.record_tool(
+                        name or label or "tool",
+                        duration_ms=_tool_ms,
+                        rows=rows_n,
+                        chars=len(result_text or ""),
+                        triggered_by="llm",
+                    )
+                except Exception:
+                    pass
+                yield {"type": "tool_result", "tool": name, "count": _record_count(result)}
 
                 if db_first and not escalate_live and tool_policy.result_needs_live_escalation(name, result):
                     _unlock_live(f"{name} sonucu yetersiz/stale/boş")

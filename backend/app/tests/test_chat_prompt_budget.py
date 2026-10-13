@@ -12,8 +12,8 @@ import app.services.llm_context_budget as b
 
 @pytest.fixture(autouse=True)
 def _cap_32k(monkeypatch):
-    monkeypatch.setattr(b, "get_gateway_hard_cap_tokens", lambda: 32768)
-    monkeypatch.setattr(b, "get_context_token_budget", lambda: 32768)
+    monkeypatch.setattr(b, "get_gateway_hard_cap_tokens", lambda **_k: 32768)
+    monkeypatch.setattr(b, "get_context_token_budget", lambda **_k: 32768)
 
 
 # Bölüm başlıkları ("BAGLAM:\n" vb.) bütçe dışıdır — küçük pay bırakılır.

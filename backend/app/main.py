@@ -547,6 +547,8 @@ async def startup_tasks():
                 _s.MANAGEMENT_SERVER_IP = _rows["management_server_ip"]
             if _rows.get("ollama_active_model"):
                 _s.OLLAMA_DEFAULT_MODEL = _rows["ollama_active_model"]
+            if _rows.get("agent_active_model"):
+                _s.AGENT_MODEL = _rows["agent_active_model"]
             if _rows.get("prometheus_url"):
                 _s.PROMETHEUS_URL = _rows["prometheus_url"]
             if _rows.get("pushgateway_url") is not None:

@@ -77,6 +77,8 @@ def _note_remote_status(status_code: int, body: str = "") -> None:
     """Uzak yanıtın devre kesiciye etkisi (4xx istek hatası sayılmaz)."""
     if status_code == 200:
         llm_availability.record_success()
+    elif status_code == 500 and "error parsing tool call" in (body or "").lower():
+        return      # model çıktısı (bozuk tool-call JSON) hatası: sunucu arızası değil, devre kesiciyi açmasın
     elif llm_availability.is_retryable_status(status_code):
         llm_availability.record_failure(f"HTTP {status_code}: {(body or '')[:200]}")
 
@@ -227,10 +229,33 @@ def _normalize_messages_ollama(messages: List[Dict[str, Any]]) -> List[Dict[str,
 
 
 def active_model_label(requested_model: Optional[str] = None) -> str:
-    """UI/loglarda gösterilecek 'şu an kullanılan model' etiketi."""
+    """UI/loglarda gösterilecek 'şu an kullanılan model' etiketi.
+
+    Öncelik: çağıranın modeli → uzak sabit model → AppSettings aktif model → .env default.
+    """
+    if requested_model:
+        if remote_llm_enabled():
+            return _resolve_model(requested_model) or requested_model
+        return requested_model
     if remote_llm_enabled():
-        return _resolve_model(requested_model) or "(uzak model)"
-    return requested_model or settings.OLLAMA_DEFAULT_MODEL
+        fixed = (settings.REMOTE_LLM_MODEL or "").strip()
+        if fixed:
+            return fixed
+    try:
+        from app.core.database import SessionLocal
+        from app.models.app_settings import AppSettings
+        db = SessionLocal()
+        try:
+            row = db.query(AppSettings).filter(AppSettings.key == "ollama_active_model").first()
+            if row and row.value:
+                if settings.OLLAMA_DEFAULT_MODEL != row.value:
+                    settings.OLLAMA_DEFAULT_MODEL = row.value
+                return row.value
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return settings.OLLAMA_DEFAULT_MODEL
 
 
 def resolve_model_for_tier(
@@ -336,15 +361,47 @@ def chat_sync(
     tools: Optional[List[Dict[str, Any]]] = None,
     options: Optional[Dict[str, Any]] = None,
     timeout: int = 120,
+    ai_source: Any = None,
+    think: Optional[str] = None,
+) -> _SyncChatResult:
+    """Etkinlik kaydı (llm_activity) ile sarılmış chat_sync."""
+    from app.services import llm_activity, llm_scheduler
+    with llm_scheduler.slot("chat_sync") as _lease, llm_activity.track("chat_sync", model, lease=_lease):
+        return _chat_sync_impl(
+            model, messages, tools=tools, options=options, timeout=timeout,
+            ai_source=ai_source, think=think,
+        )
+
+
+def _chat_sync_impl(
+    model: str,
+    messages: List[Dict[str, Any]],
+    *,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    options: Optional[Dict[str, Any]] = None,
+    timeout: int = 120,
+    ai_source: Any = None,
+    think: Optional[str] = None,
 ) -> _SyncChatResult:
     """
     Ollama /api/chat ile aynı sözleşmeye sahip senkron sohbet çağrısı.
     Dönüş: .status_code, .json() -> {"message": {"content", "tool_calls"?}}
 
-    Sıra (final stream ile aynı): anahtarlı Groq/OpenAI/OpenRouter → REMOTE_LLM → Ollama.
+    Sıra: anahtarlı Groq/OpenAI/OpenRouter → REMOTE_LLM (native Ollama veya
+    OpenAI /v1) → yerel Ollama.
+
+    ``ai_source``: opsiyonel AI kaynağı (bütçe/yetenek profili kaynağa göre).
+    Şimdilik varsayılan kaynak kullanılır; UI/modül eşlemesi yok.
     """
-    messages, _ = budget.enforce_messages_budget(messages, label="chat_sync")
+    from app.services.llm_ai_source import resolve_ai_source
     from app.services.llm_external import resolve_external_chat_target
+    from app.services.llm_transport import is_remote_ollama, ollama_request_base
+
+    src = resolve_ai_source(ai_source)
+    messages, _ = budget.enforce_messages_budget(
+        messages, label="chat_sync", ai_source=src,
+    )
+
     target = resolve_external_chat_target(model)
     if target:
         return _openai_compatible_chat_sync(
@@ -358,9 +415,9 @@ def chat_sync(
             verify=True,
             record_circuit=False,
         )
-    if remote_llm_enabled():
+    # REMOTE_LLM OpenAI-uyumlu (Bifrost vb.) — native Ollama değilse
+    if remote_llm_enabled() and not is_remote_ollama(ai_source=src):
         if llm_availability.is_open():
-            # Yerel modele sessizce düşmüyoruz — istek hızlıca reddedilir.
             return _SyncChatResult(503, llm_availability.friendly_error())
         return _openai_compatible_chat_sync(
             url=_remote_chat_url(),
@@ -374,8 +431,15 @@ def chat_sync(
             record_circuit=True,
         )
 
+    from app.services.ollama_runtime import apply_ollama_payload
+
+    remote_native = remote_llm_enabled() and is_remote_ollama(ai_source=src)
+    if remote_native and llm_availability.is_open():
+        return _SyncChatResult(503, llm_availability.friendly_error())
+
+    base = ollama_request_base(ai_source=src)
     payload = {
-        "model": model,
+        "model": _resolve_model(model) if remote_native else model,
         "messages": _normalize_messages_ollama(messages),
         "stream": False,
     }
@@ -383,13 +447,182 @@ def chat_sync(
         payload["options"] = options
     if tools:
         payload["tools"] = tools
-    resp = requests.post(f"{settings.OLLAMA_URL.rstrip('/')}/api/chat", json=payload, timeout=timeout)
+    if think:
+        payload["think"] = think
+    payload = apply_ollama_payload(payload, include_num_ctx=True, ai_source=src)
+    verify = remote_llm_ssl_verify() if remote_native else True
+    try:
+        resp = requests.post(
+            f"{base}/api/chat", json=payload,
+            timeout=_requests_timeout(timeout) if remote_native else timeout,
+            verify=verify,
+        )
+    except Exception as e:
+        logger.error("[LLMGateway] Ollama chat_sync hatası: %s", e)
+        if remote_native:
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            return _SyncChatResult(599, llm_availability.friendly_error(str(e)))
+        return _SyncChatResult(599, str(e))
+    if remote_native:
+        _note_remote_status(resp.status_code, resp.text)
     if resp.status_code == 200:
         try:
             llm_usage.record(resp.json())
         except Exception:
             pass
     return resp
+
+
+def chat_stream_iter(
+    model: str,
+    messages: List[Dict[str, Any]],
+    *,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    options: Optional[Dict[str, Any]] = None,
+    timeout: int = 120,
+    ai_source: Any = None,
+    think: Optional[str] = None,
+):
+    """Ollama /api/chat stream=True — senkron üreteç (araç döngüsü thread'inde kullanılır).
+
+    Olaylar:
+      {"type": "thinking", "text": str}      — reasoning delta (kullanıcıya gösterilmez)
+      {"type": "content",  "text": str}      — görünür yanıt delta
+      {"type": "tool_calls", "calls": [...]} — modelin istediği araç çağrıları
+      {"type": "done", "data": {...}}        — son chunk (done_reason, *_count, *_duration)
+      {"type": "error", "status": int, "text": str}
+
+    Ollama-native olmayan hedeflerde (harici / OpenAI-uyumlu uzak) akış yerine tek seferlik
+    `chat_sync` sonucu tek `content` + `done` olarak üretilir (davranış aynı kalır).
+    """
+    from app.services import llm_activity, llm_scheduler
+    with llm_scheduler.slot("chat_stream") as _lease, llm_activity.track("chat_stream", model, lease=_lease):
+        yield from _chat_stream_iter_impl(
+            model, messages, tools=tools, options=options, timeout=timeout,
+            ai_source=ai_source, think=think,
+        )
+
+
+def _chat_stream_iter_impl(
+    model, messages, *, tools, options, timeout, ai_source, think,
+):
+    from app.services.llm_ai_source import resolve_ai_source
+    from app.services.llm_external import resolve_external_chat_target
+    from app.services.llm_transport import is_remote_ollama, ollama_request_base
+
+    src = resolve_ai_source(ai_source)
+    non_native = bool(resolve_external_chat_target(model)) or (
+        remote_llm_enabled() and not is_remote_ollama(ai_source=src)
+    )
+    if non_native:
+        resp = _chat_sync_impl(
+            model, messages, tools=tools, options=options, timeout=timeout,
+            ai_source=ai_source, think=think,
+        )
+        if resp.status_code != 200:
+            yield {"type": "error", "status": resp.status_code, "text": (resp.text or "")[:500]}
+            return
+        data = resp.json()
+        msg = data.get("message") or {}
+        if msg.get("thinking"):
+            yield {"type": "thinking", "text": msg.get("thinking") or ""}
+        if msg.get("content"):
+            yield {"type": "content", "text": msg.get("content") or ""}
+        if msg.get("tool_calls"):
+            yield {"type": "tool_calls", "calls": msg.get("tool_calls")}
+        yield {"type": "done", "data": data}
+        return
+
+    from app.services.ollama_runtime import apply_ollama_payload
+
+    messages, _ = budget.enforce_messages_budget(
+        messages, label="chat_stream", ai_source=src,
+    )
+    remote_native = remote_llm_enabled() and is_remote_ollama(ai_source=src)
+    if remote_native and llm_availability.is_open():
+        yield {"type": "error", "status": 503, "text": llm_availability.friendly_error()}
+        return
+    base = ollama_request_base(ai_source=src)
+    payload: Dict[str, Any] = {
+        "model": _resolve_model(model) if remote_native else model,
+        "messages": _normalize_messages_ollama(messages),
+        "stream": True,
+    }
+    if options:
+        payload["options"] = options
+    if tools:
+        payload["tools"] = tools
+    if think:
+        payload["think"] = think
+    payload = apply_ollama_payload(payload, include_num_ctx=True, ai_source=src)
+    verify = remote_llm_ssl_verify() if remote_native else True
+    try:
+        resp = requests.post(
+            f"{base}/api/chat", json=payload, stream=True,
+            timeout=_requests_timeout(timeout) if remote_native else timeout,
+            verify=verify,
+        )
+    except Exception as e:
+        logger.error("[LLMGateway] Ollama chat_stream hatası: %s", e)
+        if remote_native:
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+        yield {"type": "error", "status": 599, "text": str(e)}
+        return
+    try:
+        if resp.status_code != 200:
+            body = ""
+            try:
+                body = resp.text
+            except Exception:
+                pass
+            if remote_native:
+                _note_remote_status(resp.status_code, body)
+            yield {"type": "error", "status": resp.status_code, "text": body[:500]}
+            return
+        if remote_native:
+            llm_availability.record_success()
+        tool_calls: List[Dict[str, Any]] = []
+        try:
+            for line in resp.iter_lines():
+                if chat_cancel.is_cancelled():
+                    logger.info("[LLMGateway] chat_stream kullanıcı iptaliyle kapatıldı")
+                    yield {"type": "done", "data": {"done": True, "done_reason": "cancelled"}}
+                    return
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except Exception:
+                    continue
+                if chunk.get("error"):
+                    yield {"type": "error", "status": 500, "text": str(chunk.get("error"))[:500]}
+                    return
+                msg = chunk.get("message") or {}
+                if msg.get("thinking"):
+                    yield {"type": "thinking", "text": msg["thinking"]}
+                if msg.get("content"):
+                    yield {"type": "content", "text": msg["content"]}
+                if msg.get("tool_calls"):
+                    tool_calls.extend(msg["tool_calls"])
+                if chunk.get("done"):
+                    try:
+                        llm_usage.record(chunk)
+                    except Exception:
+                        pass
+                    if tool_calls:
+                        yield {"type": "tool_calls", "calls": tool_calls}
+                    yield {"type": "done", "data": chunk}
+                    return
+        except Exception as e:
+            logger.error("[LLMGateway] Ollama chat_stream okuma hatası: %s", e)
+            if remote_native:
+                llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            yield {"type": "error", "status": 599, "text": str(e)}
+    finally:
+        try:
+            resp.close()
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -404,13 +637,70 @@ async def generate_async(
     system: Optional[str] = None,
     options: Optional[Dict[str, Any]] = None,
     timeout: Optional[float] = None,
+    ai_source: Any = None,
+) -> Dict[str, Any]:
+    from app.services import llm_activity, llm_scheduler
+    async with llm_scheduler.aslot("generate_async") as _lease:
+      with llm_activity.track("generate_async", model, lease=_lease):
+        return await _generate_async_impl(
+            client, model=model, prompt=prompt, system=system, options=options,
+            timeout=timeout, ai_source=ai_source,
+        )
+
+
+async def _generate_async_impl(
+    client: httpx.AsyncClient,
+    *,
+    model: str,
+    prompt: str,
+    system: Optional[str] = None,
+    options: Optional[Dict[str, Any]] = None,
+    timeout: Optional[float] = None,
+    ai_source: Any = None,
 ) -> Dict[str, Any]:
     """
     Ollama /api/generate (stream=False) ile aynı sözleşmeye sahip async çağrı.
     Dönüş: {"response": str, "done": True}
+
+    ``ai_source``: opsiyonel; şimdilik varsayılan kaynak.
     """
-    prompt, _ = budget.enforce_prompt_budget(prompt, system=system, label="generate_async")
-    if remote_llm_enabled():
+    from app.services.llm_ai_source import resolve_ai_source
+    from app.services.llm_external import resolve_external_chat_target
+    from app.services.llm_transport import is_remote_ollama, ollama_request_base
+
+    src = resolve_ai_source(ai_source)
+    prompt, _ = budget.enforce_prompt_budget(
+        prompt, system=system, label="generate_async", ai_source=src,
+    )
+
+    target = resolve_external_chat_target(model)
+    if target:
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        payload: Dict[str, Any] = {"model": target.model, "messages": messages}
+        temp = (options or {}).get("temperature")
+        if temp is not None:
+            payload["temperature"] = temp
+        try:
+            async with httpx.AsyncClient(verify=True) as ext_client:
+                resp = await ext_client.post(
+                    target.url, headers=target.headers(), json=payload,
+                    timeout=_httpx_timeout(timeout),
+                )
+        except Exception as e:
+            logger.error("[LLMGateway] harici generate hatası: %s", e)
+            return {"response": "", "done": True, "error": str(e)}
+        if resp.status_code != 200:
+            return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
+        data = resp.json()
+        llm_usage.record(data)
+        choice = (data.get("choices") or [{}])[0]
+        text = (choice.get("message", {}) or {}).get("content", "")
+        return {"response": text, "done": True}
+
+    if remote_llm_enabled() and not is_remote_ollama(ai_source=src):
         if llm_availability.is_open():
             return {
                 "response": "", "done": True,
@@ -421,13 +711,10 @@ async def generate_async(
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        payload: Dict[str, Any] = {"model": _resolve_model(model), "messages": messages}
+        payload = {"model": _resolve_model(model), "messages": messages}
         temp = (options or {}).get("temperature")
         if temp is not None:
             payload["temperature"] = temp
-        # Not: burada CALLER'ın (yerel Ollama için oluşturulmuş, verify=True) client'ı değil,
-        # REMOTE_LLM_VERIFY_SSL'e göre kendi kısa ömürlü client'ımızı kullanıyoruz — kurumsal
-        # self-signed gateway'lerde CERTIFICATE_VERIFY_FAILED hatasını önlemek için.
         try:
             async with httpx.AsyncClient(verify=remote_llm_ssl_verify()) as remote_client:
                 resp = await remote_client.post(
@@ -452,12 +739,50 @@ async def generate_async(
         text = (choice.get("message", {}) or {}).get("content", "")
         return {"response": text, "done": True}
 
-    payload = {"model": model, "prompt": prompt, "stream": False}
+    from app.services.ollama_runtime import apply_ollama_payload
+
+    remote_native = remote_llm_enabled() and is_remote_ollama(ai_source=src)
+    if remote_native and llm_availability.is_open():
+        return {
+            "response": "", "done": True,
+            "error": llm_availability.friendly_error(),
+            "remote_unavailable": True,
+        }
+
+    base = ollama_request_base(ai_source=src)
+    payload = {
+        "model": _resolve_model(model) if remote_native else model,
+        "prompt": prompt,
+        "stream": False,
+    }
     if system:
         payload["system"] = system
     if options:
         payload["options"] = options
-    resp = await client.post(f"{settings.OLLAMA_URL.rstrip('/')}/api/generate", json=payload, timeout=timeout)
+    payload = apply_ollama_payload(payload, include_num_ctx=True, ai_source=src)
+    verify = remote_llm_ssl_verify() if remote_native else True
+    try:
+        if remote_native:
+            async with httpx.AsyncClient(verify=verify) as ollama_client:
+                resp = await ollama_client.post(
+                    f"{base}/api/generate", json=payload, timeout=_httpx_timeout(timeout),
+                )
+        else:
+            resp = await client.post(
+                f"{base}/api/generate", json=payload, timeout=timeout,
+            )
+    except Exception as e:
+        logger.error("[LLMGateway] Ollama generate hatası: %s", e)
+        if remote_native:
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            return {
+                "response": "", "done": True,
+                "error": llm_availability.friendly_error(str(e)),
+                "remote_unavailable": True,
+            }
+        return {"response": "", "done": True, "error": str(e)}
+    if remote_native:
+        _note_remote_status(resp.status_code, resp.text)
     if resp.status_code != 200:
         return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
     data = resp.json()
@@ -472,10 +797,65 @@ def generate_sync(
     system: Optional[str] = None,
     options: Optional[Dict[str, Any]] = None,
     timeout: Optional[float] = None,
+    ai_source: Any = None,
 ) -> Dict[str, Any]:
-    """generate_async'in senkron (requests tabanlı) eşleniği."""
-    prompt, _ = budget.enforce_prompt_budget(prompt, system=system, label="generate_sync")
-    if remote_llm_enabled():
+    from app.services import llm_activity, llm_scheduler
+    with llm_scheduler.slot("generate_sync") as _lease, llm_activity.track("generate_sync", model, lease=_lease):
+        return _generate_sync_impl(
+            model=model, prompt=prompt, system=system, options=options,
+            timeout=timeout, ai_source=ai_source,
+        )
+
+
+def _generate_sync_impl(
+    *,
+    model: str,
+    prompt: str,
+    system: Optional[str] = None,
+    options: Optional[Dict[str, Any]] = None,
+    timeout: Optional[float] = None,
+    ai_source: Any = None,
+) -> Dict[str, Any]:
+    """generate_async'in senkron (requests tabanlı) eşleniği.
+
+    ``ai_source``: opsiyonel; şimdilik varsayılan kaynak.
+    """
+    from app.services.llm_ai_source import resolve_ai_source
+    from app.services.llm_external import resolve_external_chat_target
+    from app.services.llm_transport import is_remote_ollama, ollama_request_base
+
+    src = resolve_ai_source(ai_source)
+    prompt, _ = budget.enforce_prompt_budget(
+        prompt, system=system, label="generate_sync", ai_source=src,
+    )
+
+    target = resolve_external_chat_target(model)
+    if target:
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        payload: Dict[str, Any] = {"model": target.model, "messages": messages}
+        temp = (options or {}).get("temperature")
+        if temp is not None:
+            payload["temperature"] = temp
+        try:
+            resp = requests.post(
+                target.url, headers=target.headers(), json=payload,
+                timeout=_requests_timeout(timeout), verify=True,
+            )
+        except Exception as e:
+            logger.error("[LLMGateway] harici generate_sync hatası: %s", e)
+            return {"response": "", "done": True, "error": str(e)}
+        if resp.status_code != 200:
+            return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
+        data = resp.json()
+        llm_usage.record(data)
+        choice = (data.get("choices") or [{}])[0]
+        text = (choice.get("message", {}) or {}).get("content", "")
+        return {"response": text, "done": True}
+
+    if remote_llm_enabled() and not is_remote_ollama(ai_source=src):
         if llm_availability.is_open():
             return {
                 "response": "", "done": True,
@@ -486,7 +866,7 @@ def generate_sync(
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        payload: Dict[str, Any] = {"model": _resolve_model(model), "messages": messages}
+        payload = {"model": _resolve_model(model), "messages": messages}
         temp = (options or {}).get("temperature")
         if temp is not None:
             payload["temperature"] = temp
@@ -514,12 +894,46 @@ def generate_sync(
         text = (choice.get("message", {}) or {}).get("content", "")
         return {"response": text, "done": True}
 
-    payload = {"model": model, "prompt": prompt, "stream": False}
+    from app.services.ollama_runtime import apply_ollama_payload
+
+    remote_native = remote_llm_enabled() and is_remote_ollama(ai_source=src)
+    if remote_native and llm_availability.is_open():
+        return {
+            "response": "", "done": True,
+            "error": llm_availability.friendly_error(),
+            "remote_unavailable": True,
+        }
+
+    base = ollama_request_base(ai_source=src)
+    payload = {
+        "model": _resolve_model(model) if remote_native else model,
+        "prompt": prompt,
+        "stream": False,
+    }
     if system:
         payload["system"] = system
     if options:
         payload["options"] = options
-    resp = requests.post(f"{settings.OLLAMA_URL.rstrip('/')}/api/generate", json=payload, timeout=timeout)
+    payload = apply_ollama_payload(payload, include_num_ctx=True, ai_source=src)
+    verify = remote_llm_ssl_verify() if remote_native else True
+    try:
+        resp = requests.post(
+            f"{base}/api/generate", json=payload,
+            timeout=_requests_timeout(timeout) if remote_native else timeout,
+            verify=verify,
+        )
+    except Exception as e:
+        logger.error("[LLMGateway] Ollama generate_sync hatası: %s", e)
+        if remote_native:
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            return {
+                "response": "", "done": True,
+                "error": llm_availability.friendly_error(str(e)),
+                "remote_unavailable": True,
+            }
+        return {"response": "", "done": True, "error": str(e)}
+    if remote_native:
+        _note_remote_status(resp.status_code, resp.text)
     if resp.status_code != 200:
         return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
     data = resp.json()
@@ -539,15 +953,93 @@ async def stream_generate(
     system: Optional[str] = None,
     options: Optional[Dict[str, Any]] = None,
     timeout: Optional[float] = None,
+    ai_source: Any = None,
+    think: Optional[str] = None,
+) -> AsyncIterator[Dict[str, Any]]:
+    from app.services import llm_activity, llm_scheduler
+    async with llm_scheduler.aslot("stream_generate") as _lease:
+      with llm_activity.track("stream_generate", model, lease=_lease):
+        async for chunk in _stream_generate_impl(
+            client, model=model, prompt=prompt, system=system, options=options,
+            timeout=timeout, ai_source=ai_source, think=think,
+        ):
+            yield chunk
+
+
+async def _stream_generate_impl(
+    client: httpx.AsyncClient,
+    *,
+    model: str,
+    prompt: str,
+    system: Optional[str] = None,
+    options: Optional[Dict[str, Any]] = None,
+    timeout: Optional[float] = None,
+    ai_source: Any = None,
+    think: Optional[str] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """
     Ollama /api/generate (stream=True) ile aynı sözleşmeye sahip async üreteç.
     Her adımda {"response": <delta metin>, "done": bool} verir.
+
+    ``ai_source``: opsiyonel; şimdilik varsayılan kaynak.
     """
     global _stream_usage_supported
 
-    prompt, _ = budget.enforce_prompt_budget(prompt, system=system, label="stream_generate")
-    if remote_llm_enabled():
+    from app.services.llm_ai_source import resolve_ai_source
+    from app.services.llm_external import resolve_external_chat_target
+    from app.services.llm_transport import is_remote_ollama, ollama_request_base
+
+    src = resolve_ai_source(ai_source)
+    prompt, _ = budget.enforce_prompt_budget(
+        prompt, system=system, label="stream_generate", ai_source=src,
+    )
+
+    target = resolve_external_chat_target(model)
+    if target:
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        payload: Dict[str, Any] = {
+            "model": target.model, "messages": messages, "stream": True, "max_tokens": 3000,
+        }
+        temp = (options or {}).get("temperature")
+        if temp is not None:
+            payload["temperature"] = temp
+        try:
+            req_timeout = _httpx_timeout(timeout)
+            async with httpx.AsyncClient(verify=True, timeout=req_timeout) as ext_client:
+                async with ext_client.stream(
+                    "POST", target.url, headers=target.headers(), json=payload, timeout=req_timeout,
+                ) as resp:
+                    if resp.status_code != 200:
+                        body = (await resp.aread()).decode(errors="ignore")
+                        yield {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {body[:300]}"}
+                        return
+                    async for line in resp.aiter_lines():
+                        if chat_cancel.is_cancelled():
+                            yield {"response": "", "done": True, "cancelled": True}
+                            return
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:].strip()
+                        if data == "[DONE]":
+                            yield {"response": "", "done": True}
+                            return
+                        try:
+                            chunk = json.loads(data)
+                            token = chunk["choices"][0]["delta"].get("content", "")
+                        except Exception:
+                            continue
+                        if token:
+                            yield {"response": token, "done": False}
+                    yield {"response": "", "done": True}
+        except Exception as e:
+            logger.error("[LLMGateway] harici stream hatası: %s", e)
+            yield {"response": "", "done": True, "error": str(e)}
+        return
+
+    if remote_llm_enabled() and not is_remote_ollama(ai_source=src):
         if llm_availability.is_open():
             yield {
                 "response": "", "done": True,
@@ -559,23 +1051,19 @@ async def stream_generate(
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        payload: Dict[str, Any] = {"model": _resolve_model(model), "messages": messages, "stream": True}
+        payload = {"model": _resolve_model(model), "messages": messages, "stream": True}
         temp = (options or {}).get("temperature")
         if temp is not None:
             payload["temperature"] = temp
-        # Token sayımı için son chunk'ta usage istenir. Desteklemeyen gateway
-        # 400 dönerse alan kaldırılıp aynı istek bir kez yeniden denenir ve
-        # bir daha hiç gönderilmez (sohbet bu yüzden bozulmaz).
         if _stream_usage_supported:
             payload["stream_options"] = {"include_usage": True}
         try:
-            # Not: CALLER'ın client'ı (yerel Ollama için verify=True ile oluşturulmuş) yerine
-            # REMOTE_LLM_VERIFY_SSL'e göre kendi kısa ömürlü client'ımızı kullanıyoruz —
-            # kurumsal self-signed gateway'lerde CERTIFICATE_VERIFY_FAILED hatasını önlemek için.
             req_timeout = _httpx_timeout(timeout)
             async with httpx.AsyncClient(verify=remote_llm_ssl_verify(), timeout=req_timeout) as remote_client:
                 for attempt in (1, 2):
-                    async with remote_client.stream("POST", _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=req_timeout) as resp:
+                    async with remote_client.stream(
+                        "POST", _remote_chat_url(), headers=_remote_headers(), json=payload, timeout=req_timeout,
+                    ) as resp:
                         if resp.status_code != 200:
                             body = (await resp.aread()).decode(errors="ignore")
                             if attempt == 1 and resp.status_code == 400 and "stream_options" in payload:
@@ -591,10 +1079,6 @@ async def stream_generate(
                             return
                         llm_availability.record_success()
                         async for line in resp.aiter_lines():
-                            # Kullanıcı iptali: `return` ile çıkmak `async with
-                            # client.stream(...)` bloğunu kapatır → HTTP bağlantısı
-                            # düşer ve uzak model üretimi fiilen durur (aksi hâlde
-                            # iptalden sonra da token faturası işlemeye devam eder).
                             if chat_cancel.is_cancelled():
                                 logger.info("[LLMGateway] uzak stream kullanıcı iptaliyle kapatıldı")
                                 yield {"response": "", "done": True, "cancelled": True}
@@ -630,29 +1114,87 @@ async def stream_generate(
             }
         return
 
-    payload = {"model": model, "prompt": prompt, "stream": True}
+    from app.services.ollama_runtime import apply_ollama_payload
+
+    remote_native = remote_llm_enabled() and is_remote_ollama(ai_source=src)
+    if remote_native and llm_availability.is_open():
+        yield {
+            "response": "", "done": True,
+            "error": llm_availability.friendly_error(),
+            "remote_unavailable": True,
+        }
+        return
+
+    base = ollama_request_base(ai_source=src)
+    payload = {
+        "model": _resolve_model(model) if remote_native else model,
+        "prompt": prompt,
+        "stream": True,
+    }
     if system:
         payload["system"] = system
     if options:
         payload["options"] = options
-    async with client.stream("POST", f"{settings.OLLAMA_URL.rstrip('/')}/api/generate", json=payload, timeout=timeout) as resp:
-        if resp.status_code != 200:
-            body = await resp.aread()
-            yield {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {body.decode(errors='ignore')[:300]}"}
-            return
-        async for line in resp.aiter_lines():
-            if chat_cancel.is_cancelled():
-                logger.info("[LLMGateway] yerel stream kullanıcı iptaliyle kapatıldı")
-                yield {"response": "", "done": True, "cancelled": True}
+    if think:
+        payload["think"] = think
+    payload = apply_ollama_payload(payload, include_num_ctx=True, ai_source=src)
+    verify = remote_llm_ssl_verify() if remote_native else True
+    req_timeout = _httpx_timeout(timeout) if remote_native else timeout
+
+    async def _iter_ollama_stream(stream_client: httpx.AsyncClient):
+        async with stream_client.stream(
+            "POST", f"{base}/api/generate", json=payload, timeout=req_timeout,
+        ) as resp:
+            if resp.status_code != 200:
+                body = await resp.aread()
+                if remote_native:
+                    _note_remote_status(resp.status_code, body.decode(errors="ignore"))
+                yield {
+                    "response": "", "done": True,
+                    "error": f"HTTP {resp.status_code}: {body.decode(errors='ignore')[:300]}",
+                }
                 return
-            if not line.strip():
-                continue
-            try:
-                chunk = json.loads(line)
-            except Exception:
-                continue
-            if chunk.get("done"):
-                llm_usage.record(chunk)
-            yield chunk
-            if chunk.get("done"):
-                return
+            if remote_native:
+                llm_availability.record_success()
+            async for line in resp.aiter_lines():
+                if chat_cancel.is_cancelled():
+                    logger.info("[LLMGateway] Ollama stream kullanıcı iptaliyle kapatıldı")
+                    yield {"response": "", "done": True, "cancelled": True}
+                    return
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except Exception:
+                    continue
+                if chunk.get("response") and not chunk.get("done"):
+                    try:
+                        from app.services import chat_request_metrics as crm
+                        crm.note_first_token()
+                    except Exception:
+                        pass
+                if chunk.get("done"):
+                    llm_usage.record(chunk)
+                yield chunk
+                if chunk.get("done"):
+                    return
+
+    try:
+        if remote_native:
+            async with httpx.AsyncClient(verify=verify, timeout=_httpx_timeout(timeout)) as ollama_client:
+                async for chunk in _iter_ollama_stream(ollama_client):
+                    yield chunk
+        else:
+            async for chunk in _iter_ollama_stream(client):
+                yield chunk
+    except Exception as e:
+        logger.error("[LLMGateway] Ollama stream hatası: %s", e)
+        if remote_native:
+            llm_availability.record_failure(f"{type(e).__name__}: {e}")
+            yield {
+                "response": "", "done": True,
+                "error": llm_availability.friendly_error(str(e)),
+                "remote_unavailable": True,
+            }
+        else:
+            yield {"response": "", "done": True, "error": str(e)}

@@ -517,16 +517,24 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     },
     "llm_context_token_budget": {
         "default": "32768", "type": "str",
-        "choices": ["8192", "16384", "32768", "49152", "65536", "128000"],
+        "choices": ["4096", "8192", "16384", "32768", "49152", "65536", "98304", "128000", "131072"],
+        "min": 4096, "max": 131072,
         "group": "llm_context", "label": "LLM context token bütçesi",
         "help": "Uzak/yerel modele gönderilen toplam context üst sınırı (token). "
                 "Model limitinden düşük veya eşit seçin (örn. gpt-oss-120b → 32768). "
-                "Aşımda bağlam otomatik kısaltılır.",
+                "Aşımda bağlam otomatik kısaltılır. Aralık: 4096–131072. "
+                "Yeniden başlatma gerekmez — bir sonraki istekten itibaren geçerli.",
+        "notes": [
+            "Değişiklik sonrası ilk istekte model yeniden yüklenir.",
+            "Büyük değerler daha fazla GPU belleği gerektirir; bellek yetmezse model CPU'ya taşar.",
+            "Küçük değerlerde konuşma geçmişi ve araç sonuçları daha fazla kırpılır.",
+        ],
         "env": "LLM_CONTEXT_TOKEN_BUDGET",
     },
     "llm_context_hard_cap_tokens": {
         "default": "32768", "type": "str",
-        "choices": ["8192", "16384", "32768", "49152", "65536", "128000"],
+        "choices": ["4096", "8192", "16384", "32768", "49152", "65536", "98304", "128000", "131072"],
+        "min": 4096, "max": 131072,
         "group": "llm_context", "label": "Gateway/model gerçek context tavanı (güvenlik sınırı)",
         "help": "Uzak gateway'in (Bifrost/LiteLLM) arkasındaki modelin GERÇEK maksimum "
                 "context penceresi (ör. gpt-oss-120b → 32768). 'LLM context token bütçesi' "
@@ -534,8 +542,159 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
                 "kadar büyük seçilirse seçilsin gateway'e asla model limitini aşan bir "
                 "istek gönderilmez (HTTP 400 'exceeds model's maximum context length' "
                 "hatasına karşı sabit koruma). Model/gateway değişip pencere büyürse "
-                "(ör. 64K/128K) yalnızca bu ayarı güncellemeniz yeterlidir.",
+                "(ör. 64K/128K) yalnızca bu ayarı güncellemeniz yeterlidir. "
+                "Aralık: 4096–131072. Yeniden başlatma gerekmez.",
+        "notes": [
+            "Değişiklik sonrası ilk istekte model yeniden yüklenir.",
+            "Büyük değerler daha fazla GPU belleği gerektirir; bellek yetmezse model CPU'ya taşar.",
+            "Küçük değerlerde konuşma geçmişi ve araç sonuçları daha fazla kırpılır.",
+        ],
         "env": "LLM_CONTEXT_HARD_CAP_TOKENS",
+    },
+    "ollama_keep_alive": {
+        "default": "-1", "type": "str",
+        "choices": ["-1", "0", "60", "300", "600", "1800", "10m", "1h", "24h"],
+        "group": "llm_context", "label": "Ollama keep_alive",
+        "help": "Chat ve embedding dahil tüm Ollama isteklerinde gönderilir. "
+                "Müşteri Ollama sunucu varsayılanına güvenilmez. "
+                "-1: süresiz (önerilen), 0: hemen boşalt, sayı: saniye "
+                "veya '10m', '24h' gibi süre. Yeniden başlatma gerekmez — "
+                "bir sonraki istekten itibaren geçerli.",
+        "notes": [
+            "Değişiklik sonrası ilk istekte model yeniden yüklenir.",
+        ],
+        "env": "OLLAMA_KEEP_ALIVE",
+    },
+    # ── LLM sohbet performansı (Adım 6b) ─────────────────────────────
+    "llm_think_tool_selection": {
+        "default": "low", "type": "str", "choices": ["low", "medium", "high"],
+        "group": "llm_chat", "label": "Düşünme seviyesi — araç seçimi turu",
+        "help": "gpt-oss (Ollama native) için araç seçimi turlarında (ilk tur) gönderilen think seviyesi.",
+        "env": "LLM_THINK_TOOL_SELECTION",
+    },
+    "llm_think_simple": {
+        "default": "low", "type": "str", "choices": ["low", "medium", "high"],
+        "group": "llm_chat", "label": "Düşünme seviyesi — basit veri sorusu",
+        "help": "Niyet=data ve basit soru (kaç / ne zaman / listele / hangi …) için cevap turu.",
+        "env": "LLM_THINK_SIMPLE",
+    },
+    "llm_think_analysis": {
+        "default": "medium", "type": "str", "choices": ["low", "medium", "high"],
+        "group": "llm_chat", "label": "Düşünme seviyesi — analiz sorusu",
+        "help": "Neden / karşılaştırma / ortak nokta / trend / değişim soruları için cevap turu.",
+        "env": "LLM_THINK_ANALYSIS",
+    },
+    "llm_think_default": {
+        "default": "medium", "type": "str", "choices": ["low", "medium", "high"],
+        "group": "llm_chat", "label": "Düşünme seviyesi — sınıflandırılamayan soru",
+        "help": "Basit/analiz ayrımı yapılamadığında kullanılır (emin değilse medium).",
+        "env": "LLM_THINK_DEFAULT",
+    },
+    "llm_temperature_tools": {
+        "default": 0.1, "type": "float", "min": 0.0, "max": 1.5,
+        "group": "llm_chat", "label": "Sıcaklık — araç seçim turu",
+        "help": "Araç çağrısı seçilen LLM turlarının temperature değeri (Automic sohbeti). Düşük = daha tutarlı araç argümanı.",
+        "env": "LLM_TEMPERATURE_TOOLS",
+    },
+    "llm_temperature_answer": {
+        "default": 0.2, "type": "float", "min": 0.0, "max": 1.5,
+        "group": "llm_chat", "label": "Sıcaklık — cevap turu",
+        "help": ("Araçlar çalıştıktan sonraki cevap turlarının (canlı akış ve ayrı final turu) temperature değeri. "
+                 "Model varsayılanı (gpt-oss) 1.0'dır. Adım 7 A/B (core 10 soru × N=5): 0.0 → 40/50, 0.1 → 40/50, 0.2 → 43/50, 1.0 → 42/50 (fark gürültü içinde; 0.2 en yüksek geçme + ortalama süre 15.6 sn)."),
+        "env": "LLM_TEMPERATURE_ANSWER",
+    },
+    "llm_think_sticky": {
+        "default": False, "type": "bool", "min": 0, "max": 1,
+        "group": "llm_chat", "label": "Düşünme seviyesi istek boyunca sabit (prefix cache)",
+        "help": (
+            "gpt-oss şablonunda 'Reasoning: <seviye>' prompt'un başındadır; turlar arasında "
+            "seviye değişirse KV/prefix cache baştan geçersiz olur. Açıkken tüm turlar soru "
+            "derinliğine göre cevap seviyesini kullanır; kapalıyken araç seçim turu "
+            "llm_think_tool_selection seviyesinde çalışır."
+        ),
+        "env": "LLM_THINK_STICKY",
+    },
+    "llm_max_concurrent": {
+        "default": 1, "type": "int", "min": 0, "max": 16,
+        "group": "llm_chat", "label": "Eşzamanlı LLM çağrısı sınırı (semafor)",
+        "help": (
+            "Ollama Parallel değeriyle aynı olmalı (varsayılan 1). Sınır dolunca çağrılar kuyrukta bekler; "
+            "kullanıcı sohbeti arka plan işlerinden (rapor, özet, backfill, analiz) önceliklidir. 0 = kapalı."
+        ),
+        "env": "LLM_MAX_CONCURRENT",
+    },
+    "llm_sched_bg_max_wait_sec": {
+        "default": 120, "type": "int", "min": 1, "max": 3600,
+        "group": "llm_chat", "label": "Arka plan çağrısı en uzun kuyruk beklemesi (sn)",
+        "help": "Sohbet beklerken arka plan çağrısı en fazla bu kadar bekler (açlık koruması), sonra devam eder.",
+        "env": "LLM_SCHED_BG_MAX_WAIT_SEC",
+    },
+    "llm_sched_max_wait_sec": {
+        "default": 600, "type": "int", "min": 5, "max": 7200,
+        "group": "llm_chat", "label": "Sohbet çağrısı en uzun kuyruk beklemesi (sn)",
+        "help": "Güvenlik sınırı: slot bu sürede alınamazsa çağrı slotsuz devam eder (kilitlenme önleme).",
+        "env": "LLM_SCHED_MAX_WAIT_SEC",
+    },
+    "llm_num_predict_low": {
+        "default": 1536, "type": "int", "min": 256, "max": 32768,
+        "group": "llm_chat", "label": "num_predict — think=low",
+        "help": "Üretim üst sınırı (gpt-oss'ta düşünme tokenlarını da kapsar).",
+        "env": "LLM_NUM_PREDICT_LOW",
+    },
+    "llm_num_predict_medium": {
+        "default": 3072, "type": "int", "min": 256, "max": 32768,
+        "group": "llm_chat", "label": "num_predict — think=medium",
+        "help": "Üretim üst sınırı (düşünme dahil).",
+        "env": "LLM_NUM_PREDICT_MEDIUM",
+    },
+    "llm_num_predict_high": {
+        "default": 6144, "type": "int", "min": 256, "max": 32768,
+        "group": "llm_chat", "label": "num_predict — think=high",
+        "help": "Üretim üst sınırı (düşünme dahil).",
+        "env": "LLM_NUM_PREDICT_HIGH",
+    },
+    "llm_chat_stream_final": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "llm_chat", "label": "Araç döngüsünün son turunu doğrudan stream et",
+        "help": "Açıkken araç çağırmayan son tur cevabı kullanıcıya akıtılır; ayrı bir final turu çalışmaz.",
+        "env": "LLM_CHAT_STREAM_FINAL",
+    },
+    "llm_tool_result_max_rows": {
+        "default": 20, "type": "int", "min": 3, "max": 500,
+        "group": "llm_chat", "label": "LLM'e giden araç sonucu satır sınırı",
+        "help": "Liste alanları bu kadar satıra kısaltılır (toplam kayıt notu eklenir). UI bileşenleri tam veriyle üretilir.",
+        "env": "LLM_TOOL_RESULT_MAX_ROWS",
+    },
+    "llm_tool_result_max_tokens": {
+        "default": 3000, "type": "int", "min": 300, "max": 30000,
+        "group": "llm_chat", "label": "Tek araç sonucu token sınırı (LLM)",
+        "help": "Tek bir araç sonucunun modele gidecek tahmini token üst sınırı.",
+        "env": "LLM_TOOL_RESULT_MAX_TOKENS",
+    },
+    "llm_tool_results_total_max_tokens": {
+        "default": 7000, "type": "int", "min": 500, "max": 60000,
+        "group": "llm_chat", "label": "Tüm araç sonuçları toplam token sınırı (LLM)",
+        "help": "Bir isteğin tüm araç sonuçları için toplam tahmini token sınırı.",
+        "env": "LLM_TOOL_RESULTS_TOTAL_MAX_TOKENS",
+    },
+    "llm_ctx_warn_ratio_pct": {
+        "default": 70, "type": "int", "min": 30, "max": 95,
+        "group": "llm_chat", "label": "Prompt / num_ctx uyarı eşiği (%)",
+        "help": "Bir turun promptu num_ctx'in bu yüzdesini aşarsa loglanır ve araç sonuçları daha da küçültülür.",
+        "env": "LLM_CTX_WARN_RATIO_PCT",
+    },
+    "llm_transport_mode": {
+        "default": "auto", "type": "str",
+        "choices": ["auto", "ollama", "openai"],
+        "group": "llm_context", "label": "REMOTE_LLM taşıma modu",
+        "help": "REMOTE_LLM etkinken isteklerin nasıl gönderileceği. "
+                "auto: adres Ollama ise (GET /api/version) native /api/chat|/api/generate "
+                "(keep_alive + num_ctx); aksi halde OpenAI /v1/chat/completions. "
+                "ollama / openai: algılamayı ezer. Yeniden başlatma gerekmez.",
+        "notes": [
+            "Ollama OpenAI-uyumlu /v1 arkasında bile native taşıma keep_alive/num_ctx sağlar.",
+        ],
+        "env": "LLM_TRANSPORT_MODE",
     },
     # ── RAG Reranker (HuggingFace cross-encoder) ─────────────────────
     "rag_reranker_enabled": {
@@ -614,6 +773,7 @@ GROUP_LABELS = {
     "linux_chat": "Linux Chat (agentic)",
     "virt_chat": "Sanallaştırma Chat",
     "llm_context": "LLM / Context",
+    "llm_chat": "LLM sohbet performansı (think / num_predict / araç sonucu)",
     "rag_reranker": "RAG Reranker (HuggingFace)",
     "proxy": "Proxy / Nginx",
     "api_cache": "API önbellek (Redis)",
@@ -650,9 +810,18 @@ def _coerce(raw: Any, meta: dict) -> Any:
         if t == "str":
             val = str(raw).strip()
             choices = meta.get("choices")
-            if choices and val not in choices:
+            if choices and val not in [str(c) for c in choices]:
                 return default
-            max_len = meta.get("max")
+            lo, hi = meta.get("min"), meta.get("max")
+            # Sayısal aralık (context token): min/max token sınırı
+            if lo is not None and hi is not None and val.lstrip("-").isdigit():
+                try:
+                    n = int(val)
+                    if n < int(lo) or n > int(hi):
+                        return default
+                except ValueError:
+                    return default
+            max_len = meta.get("max_len")
             if max_len and len(val) > int(max_len):
                 val = val[: int(max_len)]
             return val or default
@@ -668,6 +837,48 @@ def _coerce(raw: Any, meta: dict) -> Any:
         return val
     except (TypeError, ValueError):
         return default
+
+
+def validate_advanced_value(key: str, raw: Any) -> Any:
+    """Değeri doğrula; geçersizse ValueError (API 400 için).
+
+    ``_coerce`` sessizce default'a düşer; kayıt öncesi açık hata için bunu kullanın.
+    """
+    meta = ADVANCED_SCHEMA.get(key)
+    if not meta:
+        raise ValueError(f"Bilinmeyen ayar: {key}")
+    if raw is None or raw == "":
+        raise ValueError(f"{key}: boş değer")
+    t = meta["type"]
+    if t == "str":
+        val = str(raw).strip()
+        choices = meta.get("choices")
+        if choices and val not in [str(c) for c in choices]:
+            raise ValueError(
+                f"{meta.get('label') or key}: geçersiz değer '{val}'. "
+                f"Seçenekler: {', '.join(str(c) for c in choices)}"
+            )
+        lo, hi = meta.get("min"), meta.get("max")
+        if lo is not None and hi is not None and val.lstrip("-").isdigit():
+            n = int(val)
+            if n < int(lo) or n > int(hi):
+                raise ValueError(
+                    f"{meta.get('label') or key}: {n} aralık dışında "
+                    f"({lo}–{hi})"
+                )
+        return _coerce(val, meta)
+    coerced = _coerce(raw, meta)
+    if t in ("int", "float"):
+        lo, hi = meta.get("min"), meta.get("max")
+        try:
+            n = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{meta.get('label') or key}: sayı bekleniyor") from exc
+        if lo is not None and n < lo:
+            raise ValueError(f"{meta.get('label') or key}: en az {lo}")
+        if hi is not None and n > hi:
+            raise ValueError(f"{meta.get('label') or key}: en fazla {hi}")
+    return coerced
 
 
 def _load_db_map() -> Dict[str, str]:
@@ -752,6 +963,7 @@ def list_advanced_settings() -> List[dict]:
             "help": meta.get("help", ""),
             "env": meta.get("env"),
             "choices": meta.get("choices"),
+            "notes": list(meta.get("notes") or []),
             "requires_restart": bool(meta.get("requires_restart")),
             "restart_target": meta.get("restart_target") or "",
         })

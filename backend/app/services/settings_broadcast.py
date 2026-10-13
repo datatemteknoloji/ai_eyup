@@ -27,6 +27,14 @@ def reload_runtime_settings_from_db() -> None:
         finally:
             db.close()
 
+        # Aktif chat/agent modeli (Ayarlar → Ollama) — .env fallback'inin üzerine yaz
+        if rows.get("ollama_active_model"):
+            cfg.OLLAMA_DEFAULT_MODEL = rows["ollama_active_model"]
+            os.environ["OLLAMA_DEFAULT_MODEL"] = rows["ollama_active_model"]
+        if rows.get("agent_active_model"):
+            cfg.AGENT_MODEL = rows["agent_active_model"]
+            os.environ["AGENT_MODEL"] = rows["agent_active_model"]
+
         if rows.get("remote_llm_enabled") is not None:
             cfg.REMOTE_LLM_ENABLED = rows["remote_llm_enabled"].lower() == "true"
             os.environ["REMOTE_LLM_ENABLED"] = "true" if cfg.REMOTE_LLM_ENABLED else "false"

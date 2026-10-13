@@ -106,6 +106,31 @@ export const PlatformStatusTab: React.FC = () => {
     refetchInterval: 8000,
   })
 
+  type LlmHealth = {
+    ok?: boolean
+    reachable?: boolean
+    provider?: string
+    message?: string
+    model?: string
+    model_loaded?: boolean
+    vram_ratio?: number | null
+    loaded_context_length?: number | null
+    configured_num_ctx?: number
+    effective_num_ctx?: number
+    transport?: string
+    warnings?: string[]
+    errors?: string[]
+  }
+  const llmQ = useQuery<LlmHealth>({
+    queryKey: ['platform-llm-health'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/platform/llm-health`)
+      if (!r.ok) throw new Error(await readError(r, t('pu_req_fail')))
+      return r.json()
+    },
+    refetchInterval: 15000,
+  })
+
   const restartMut = useMutation({
     mutationFn: async (name: string) => {
       const r = await fetch(`${API_BASE_URL}/platform/containers/${encodeURIComponent(name)}/restart`, {
@@ -277,11 +302,11 @@ export const PlatformStatusTab: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => refetch()}
-            disabled={isFetching}
+            onClick={() => { refetch(); llmQ.refetch() }}
+            disabled={isFetching || llmQ.isFetching}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/[0.08] text-slate-200 hover:bg-white/[0.1] disabled:opacity-50"
           >
-            <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
+            <RefreshCw size={14} className={isFetching || llmQ.isFetching ? 'animate-spin' : ''} />
             {t('refresh_action')}
           </button>
           {expanded && (
@@ -300,6 +325,48 @@ export const PlatformStatusTab: React.FC = () => {
       {error && (
         <div className="shrink-0 rounded-[10px] border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
           {(error as Error).message}
+        </div>
+      )}
+
+      {llmQ.data && (
+        <div className={`shrink-0 rounded-xl border px-4 py-3 text-sm ${
+          llmQ.data.ok || llmQ.data.provider === 'remote' || llmQ.data.provider === 'remote_openai'
+            ? 'border-emerald-500/25 bg-emerald-500/8 text-emerald-100'
+            : 'border-rose-500/25 bg-rose-500/8 text-rose-100'
+        }`}>
+          <div className="font-medium text-white mb-1">{t('ps_llm_title')}</div>
+          {llmQ.data.provider === 'remote_openai' || llmQ.data.provider === 'remote' ? (
+            <ul className="text-slate-300 text-xs space-y-0.5">
+              {llmQ.data.message && <li>{llmQ.data.message}</li>}
+              {llmQ.data.effective_num_ctx != null && (
+                <li>{t('ps_llm_effective', { n: String(llmQ.data.effective_num_ctx) })}</li>
+              )}
+            </ul>
+          ) : (
+            <ul className="text-xs space-y-0.5 text-slate-300">
+              <li>{llmQ.data.model || '—'} · {
+                llmQ.data.model_loaded ? t('ps_llm_loaded') : t('ps_llm_not_loaded')
+              }{llmQ.data.transport ? ` · ${llmQ.data.transport}` : ''}</li>
+              {llmQ.data.vram_ratio != null && (
+                <li>{t('ps_llm_vram', { n: String(Math.round(llmQ.data.vram_ratio)) })}</li>
+              )}
+              {llmQ.data.effective_num_ctx != null && (
+                <li>{t('ps_llm_effective', { n: String(llmQ.data.effective_num_ctx) })}</li>
+              )}
+              {llmQ.data.loaded_context_length != null && (
+                <li>{t('ps_llm_ctx', {
+                  loaded: String(llmQ.data.loaded_context_length),
+                  cfg: String(llmQ.data.configured_num_ctx ?? '—'),
+                })}</li>
+              )}
+              {(llmQ.data.warnings || []).map((w, i) => (
+                <li key={`w-${i}`} className="text-amber-200">⚠ {w}</li>
+              ))}
+              {(llmQ.data.errors || []).map((w, i) => (
+                <li key={`e-${i}`} className="text-rose-300">{w}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

@@ -310,7 +310,6 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db)):
         ssh_results = []
 
         try:
-            ollama_url = settings.OLLAMA_URL
             # Kullanıcının seçtiği model veya default model
             model = request.model or settings.OLLAMA_DEFAULT_MODEL
             # Basit ve net prompt oluştur
@@ -341,100 +340,52 @@ KULLANICI SORUSU: {message}
 
 YANIT (Markdown formatinda, Turkce):"""
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{ollama_url}/api/generate",
-                    json={
-                        "model": model,
-                        "prompt": prompt,
-                        "stream": False,
-                    },
+            from app.services import llm_gateway
+
+            data = llm_gateway.generate_sync(model=model, prompt=prompt, timeout=120.0)
+            if data.get("error"):
+                logger.error("LLM gateway error: %s", data.get("error"))
+                error_response = (
+                    f"AI servisi yanıt veremedi: {data.get('error')}. "
+                    "Ollama / REMOTE_LLM yapılandırmasını kontrol edin."
+                )
+                err_msg = ChatMessage(
+                    session_id=session_id,
+                    role="assistant",
+                    content=error_response,
+                )
+                db.add(err_msg)
+                session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if session:
+                    session.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                return ChatResponse(
+                    response=error_response,
+                    commands=None,
+                    suggestions=None,
+                    session_id=session_id,
                 )
 
-                if response.status_code == 200:
-                    data = response.json()
-                    ai_response = data.get("response", "Yanıt alınamadı")
-
-                    assistant_msg = ChatMessage(
-                        session_id=session_id,
-                        role="assistant",
-                        content=ai_response,
-                    )
-                    db.add(assistant_msg)
-                    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-                    if session:
-                        session.updated_at = datetime.now(timezone.utc)
-                    db.commit()
-
-                    return ChatResponse(
-                        response=ai_response,
-                        commands=None,
-                        suggestions=None,
-                        session_id=session_id,
-                    )
-                else:
-                    logger.error(f"Ollama error: {response.status_code} - {response.text}")
-                    error_response = (
-                        f"AI servisi yanıt veremedi (HTTP {response.status_code}). "
-                        "Ollama servisinin çalıştığından emin olun."
-                    )
-                    err_msg = ChatMessage(
-                        session_id=session_id,
-                        role="assistant",
-                        content=error_response,
-                    )
-                    db.add(err_msg)
-                    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-                    if session:
-                        session.updated_at = datetime.now(timezone.utc)
-                    db.commit()
-                    return ChatResponse(
-                        response=error_response,
-                        commands=None,
-                        suggestions=None,
-                        session_id=session_id,
-                    )
-        except httpx.TimeoutException:
-            logger.error("Ollama timeout")
-            error_response = "AI servisi zaman aşımına uğradı. Lütfen tekrar deneyin."
-            err_msg = ChatMessage(
+            ai_response = data.get("response", "Yanıt alınamadı")
+            assistant_msg = ChatMessage(
                 session_id=session_id,
                 role="assistant",
-                content=error_response,
+                content=ai_response,
             )
-            db.add(err_msg)
+            db.add(assistant_msg)
             session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
             if session:
                 session.updated_at = datetime.now(timezone.utc)
             db.commit()
             return ChatResponse(
-                response=error_response,
+                response=ai_response,
                 commands=None,
                 suggestions=None,
                 session_id=session_id,
             )
-        except httpx.ConnectError:
-            logger.error("Ollama connection error")
-            error_response = "AI servisine bağlanılamadı. Ollama servisinin çalıştığından emin olun."
-            err_msg = ChatMessage(
-                session_id=session_id,
-                role="assistant",
-                content=error_response,
-            )
-            db.add(err_msg)
-            session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-            if session:
-                session.updated_at = datetime.now(timezone.utc)
-            db.commit()
-            return ChatResponse(
-                response=error_response,
-                commands=None,
-                suggestions=None,
-                session_id=session_id,
-            )
-        except Exception as e:
-            logger.error(f"Ollama error: {e}")
-            error_response = f"AI servisi hatası: {str(e)}"
+        except Exception as llm_exc:
+            logger.error("LLM gateway exception: %s", llm_exc)
+            error_response = "AI servisine bağlanılamadı. Ollama / REMOTE_LLM servisini kontrol edin."
             err_msg = ChatMessage(
                 session_id=session_id,
                 role="assistant",

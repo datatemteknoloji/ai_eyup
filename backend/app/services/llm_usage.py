@@ -64,6 +64,11 @@ def parse_usage(data: Any) -> Optional[Dict[str, int]]:
 
 def record(data: Any) -> None:
     """Model yanıtını (dict) ver; usage varsa aktif kapsama eklenir."""
+    try:
+        from app.services import chat_request_metrics as crm
+        crm.record_ollama_stats(data)
+    except Exception:
+        pass
     acc = _current.get()
     if acc is None:
         return

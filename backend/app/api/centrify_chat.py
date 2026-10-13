@@ -822,103 +822,38 @@ def _run_tool_if_needed(message: str) -> Optional[str]:
 # ── LLM streaming ────────────────────────────────────────────
 
 
-async def _stream_ollama(prompt: str, model: str):
-    """Ollama /api/chat streaming — system/user role ayrımı destekler."""
-    ollama_url = getattr(settings, "OLLAMA_URL", "") or "http://localhost:11434"
-    url = f"{ollama_url.rstrip('/')}/api/chat"
-
-    # prompt'u system ve user kısımlarına ayır
+def _split_centrify_prompt(prompt: str) -> tuple:
+    """prompt → (system_part, user_part)."""
     if "\n\nKullanıcı: " in prompt:
         idx = prompt.rfind("\n\nKullanıcı: ")
         system_part = prompt[:idx]
         user_part = prompt[idx:].replace("\n\nKullanıcı: ", "").replace("\n\nAsistan:", "").strip()
-    else:
-        system_part = ""
-        user_part = prompt
+        return system_part, user_part
+    return "", prompt
 
-    messages = []
-    if system_part:
-        messages.append({"role": "system", "content": system_part})
-    messages.append({"role": "user", "content": user_part})
 
-    payload = {"model": model, "messages": messages, "stream": True}
+async def _stream_via_gateway(prompt: str, model: str):
+    """Centrify final stream — tek çıkış llm_gateway (harici / REMOTE / Ollama)."""
+    from app.services import llm_gateway
+
+    system_part, user_part = _split_centrify_prompt(prompt)
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream("POST", url, json=payload) as resp:
-                if resp.status_code != 200:
-                    body = (await resp.aread()).decode(errors="replace")[:300]
-                    yield f"data: {json.dumps({'token': f'[Ollama Hatası {resp.status_code}] {body}'})}\n\n"
+            async for chunk in llm_gateway.stream_generate(
+                client,
+                model=model,
+                prompt=user_part,
+                system=system_part or None,
+                timeout=120.0,
+            ):
+                if chunk.get("error"):
+                    yield f"data: {json.dumps({'token': str(chunk['error'])})}\n\n"
                     return
-                async for line in resp.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        data = json.loads(line)
-                        msg = data.get("message", {})
-                        token = msg.get("content", "")
-                        if token:
-                            yield f"data: {json.dumps({'token': token})}\n\n"
-                        if data.get("done"):
-                            break
-                    except json.JSONDecodeError:
-                        continue
-    except Exception as exc:
-        yield f"data: {json.dumps({'token': f'Ollama bağlantı hatası ({ollama_url}): {exc}'})}\n\n"
-
-
-async def _stream_remote_llm(prompt: str, model: str):
-    """REMOTE_LLM (OpenAI-uyumlu) streaming."""
-    from app.services.llm_external import resolve_external_chat_target
-    target = resolve_external_chat_target(model)
-    if not target:
-        if remote_llm_enabled():
-            url = (settings.REMOTE_LLM_URL or "").rstrip("/")
-            api_key = settings.REMOTE_LLM_API_KEY or ""
-            model_name = settings.REMOTE_LLM_MODEL or model
-            if not url or not api_key:
-                yield f"data: {json.dumps({'token': 'LLM API anahtarı veya URL yapılandırılmamış. Ayarlar → AI bölümünü kontrol edin.'})}\n\n"
-                return
-            url = url + "/chat/completions"
-        else:
-            yield f"data: {json.dumps({'token': 'LLM yapılandırması bulunamadı. Ayarlar → AI bölümünden Ollama veya Remote LLM yapılandırın.'})}\n\n"
-            return
-    else:
-        url = target.url
-        api_key = target.api_key
-        model_name = target.model
-
-    if not api_key or not api_key.strip():
-        yield f"data: {json.dumps({'token': 'LLM API anahtarı boş. Ayarlar → AI bölümünü kontrol edin.'})}\n\n"
-        return
-
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = {
-        "model": model_name,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": True,
-        "max_tokens": 2048,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream("POST", url, json=payload, headers=headers) as resp:
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    yield f"data: {json.dumps({'token': f'[API Hatası {resp.status_code}]'})}\n\n"
+                token = chunk.get("response") or ""
+                if token:
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+                if chunk.get("done"):
                     return
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        token = delta.get("content", "")
-                        if token:
-                            yield f"data: {json.dumps({'token': token})}\n\n"
-                    except json.JSONDecodeError:
-                        continue
     except Exception as exc:
         yield f"data: {json.dumps({'token': f'LLM bağlantı hatası: {exc}'})}\n\n"
 
@@ -1003,12 +938,17 @@ async def centrify_chat_stream(
             # LLM yapılandırılmamışsa tool/context sonuçlarını doğrudan göster
             from app.services.llm_external import resolve_external_chat_target as _resolve
             _ext = _resolve(model)
-            _has_remote = remote_llm_enabled() and bool((settings.REMOTE_LLM_API_KEY or "").strip())
+            from app.services.llm_transport import is_remote_ollama, ollama_request_base
+            _has_remote = remote_llm_enabled() and (
+                bool((settings.REMOTE_LLM_API_KEY or "").strip())
+                or bool((settings.REMOTE_LLM_VIRTUAL_KEY or "").strip())
+                or is_remote_ollama()
+            )
             _has_ollama_chat = False
-            if provider == "ollama":
+            if provider == "ollama" and not remote_llm_enabled():
                 try:
                     import httpx as _hx
-                    _ollama_url = getattr(settings, "OLLAMA_URL", "") or "http://localhost:11434"
+                    _ollama_url = ollama_request_base() or "http://localhost:11434"
                     _r = _hx.get(f"{_ollama_url.rstrip('/')}/api/tags", timeout=3)
                     _models = [m.get("name", "") for m in _r.json().get("models", [])]
                     _has_ollama_chat = any(not ("embed" in n or "nomic" in n) for n in _models)
@@ -1032,12 +972,7 @@ async def centrify_chat_stream(
                     sdb2.close()
                 return
 
-            if provider == "ollama":
-                gen = _stream_ollama(prompt, model)
-            else:
-                gen = _stream_remote_llm(prompt, model)
-
-            async for chunk in gen:
+            async for chunk in _stream_via_gateway(prompt, model):
                 full_response.append(chunk)
                 yield chunk
 

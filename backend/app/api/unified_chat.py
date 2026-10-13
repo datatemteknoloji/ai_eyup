@@ -108,6 +108,7 @@ class UnifiedChatRequest(BaseModel):
 _CHAT_MODULE_MAP = {
     "linux": "linux", "exadata": "exadata", "windows": "windows",
     "virt": "virtualization", "openshift": "openshift",
+    "automic": "automation",
 }
 
 

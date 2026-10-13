@@ -27,6 +27,15 @@ def platform_capability(_admin: User = Depends(require_role("admin"))):
     return ps.capability()
 
 
+@router.get("/llm-health")
+async def platform_llm_health(_admin: User = Depends(require_role("admin"))):
+    """Monitoring: taşıma + etkin bütçe + Ollama /api/ps — uyarılar erişimi engellemez."""
+    import asyncio
+    from app.services.llm_transport import build_llm_health
+
+    return await asyncio.to_thread(build_llm_health)
+
+
 @router.get("/containers")
 def platform_containers(_admin: User = Depends(require_role("admin"))):
     return ps.list_stack_status()

@@ -1356,8 +1356,26 @@ interface AdvancedSettingItem {
   help: string
   env?: string
   choices?: string[]
+  notes?: string[]
   requires_restart?: boolean
   restart_target?: string
+}
+
+type AdvLlmHealth = {
+  ok?: boolean
+  provider?: string
+  message?: string
+  model?: string
+  model_loaded?: boolean
+  vram_ratio?: number | null
+  loaded_context_length?: number | null
+  configured_num_ctx?: number
+  effective_num_ctx?: number
+  transport?: string
+  transport_mode?: string
+  discovered_context_length?: number | null
+  warnings?: string[]
+  errors?: string[]
 }
 
 interface AdvancedGroup {
@@ -1373,6 +1391,7 @@ const AdvancedSettingsTab: React.FC = () => {
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [llmHealth, setLlmHealth] = useState<AdvLlmHealth | null>(null)
 
   const { data, isLoading, error } = useQuery<{ groups: AdvancedGroup[]; settings: AdvancedSettingItem[] }>({
     queryKey: ['advanced-settings'],
@@ -1408,15 +1427,22 @@ const AdvancedSettingsTab: React.FC = () => {
       })
       if (!res.ok) {
         const bodyText = await res.text()
-        throw new Error(bodyText || t('set_save_fail'))
+        let detail = bodyText
+        try {
+          const j = JSON.parse(bodyText)
+          detail = typeof j?.detail === 'string' ? j.detail : bodyText
+        } catch { /* plain text */ }
+        throw new Error(detail || t('set_save_fail'))
       }
       return res.json()
     },
     onSuccess: (r) => {
       queryClient.invalidateQueries({ queryKey: ['advanced-settings'] })
+      queryClient.invalidateQueries({ queryKey: ['platform-llm-health'] })
       const restart = Array.isArray(r?.restart_needed) && r.restart_needed.length > 0
       setSaveMsg(r.message || (restart ? t('set_saved_recreate') : t('saved')))
-      setTimeout(() => setSaveMsg(null), restart ? 12000 : 4000)
+      setLlmHealth(r.llm_health || null)
+      setTimeout(() => setSaveMsg(null), restart ? 12000 : 6000)
     },
   })
 
@@ -1501,6 +1527,52 @@ const AdvancedSettingsTab: React.FC = () => {
           {(saveMutation.error as Error).message}
         </div>
       )}
+      {llmHealth && (
+        <div className={`mb-4 p-3 rounded-lg text-sm border ${
+          llmHealth.ok || llmHealth.provider === 'remote' || llmHealth.provider === 'remote_openai'
+            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-100'
+            : 'bg-rose-500/10 border-rose-500/30 text-rose-100'
+        }`}>
+          <div className="font-medium text-white mb-1">{t('ps_llm_title')}</div>
+          {llmHealth.provider === 'remote_openai' || llmHealth.provider === 'remote' ? (
+            <ul className="text-xs space-y-0.5 text-slate-300">
+              {llmHealth.message && <li>{llmHealth.message}</li>}
+              {llmHealth.effective_num_ctx != null && (
+                <li>{t('ps_llm_effective', { n: String(llmHealth.effective_num_ctx) })}</li>
+              )}
+              {(llmHealth.warnings || []).map((w, i) => (
+                <li key={`hw-${i}`} className="text-amber-200">⚠ {w}</li>
+              ))}
+            </ul>
+          ) : (
+            <ul className="text-xs space-y-0.5 text-slate-300">
+              <li>
+                {llmHealth.model || '—'} ·{' '}
+                {llmHealth.model_loaded ? t('ps_llm_loaded') : t('ps_llm_not_loaded')}
+                {llmHealth.transport ? ` · ${llmHealth.transport}` : ''}
+              </li>
+              {llmHealth.vram_ratio != null && (
+                <li>{t('ps_llm_vram', { n: String(Math.round(llmHealth.vram_ratio)) })}</li>
+              )}
+              {llmHealth.effective_num_ctx != null && (
+                <li>{t('ps_llm_effective', { n: String(llmHealth.effective_num_ctx) })}</li>
+              )}
+              {llmHealth.loaded_context_length != null && (
+                <li>{t('ps_llm_ctx', {
+                  loaded: String(llmHealth.loaded_context_length),
+                  cfg: String(llmHealth.configured_num_ctx ?? '—'),
+                })}</li>
+              )}
+              {(llmHealth.warnings || []).map((w, i) => (
+                <li key={`hw-${i}`} className="text-amber-200">⚠ {w}</li>
+              ))}
+              {(llmHealth.errors || []).map((w, i) => (
+                <li key={`he-${i}`} className="text-rose-300">{w}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <div className="space-y-6">
         {(data?.groups || []).map(group => (
@@ -1527,7 +1599,7 @@ const AdvancedSettingsTab: React.FC = () => {
                       <option value="true">{t('enabled')}</option>
                       <option value="false">{t('disabled')}</option>
                     </select>
-                  ) : s.type === 'str' && s.choices && s.choices.length > 0 ? (
+                  ) : s.choices && s.choices.length > 0 ? (
                     <select
                       value={draft[s.key] ?? ''}
                       disabled={!isAdmin}
@@ -1560,9 +1632,16 @@ const AdvancedSettingsTab: React.FC = () => {
                   )}
                   <p className="text-xs text-slate-500 mt-1">
                     {s.help}
-                    {s.type !== 'str' && s.type !== 'bool' && s.min != null && s.max != null ? ` (${s.min}–${s.max})` : ''}
+                    {s.min != null && s.max != null ? ` (${s.min}–${s.max})` : ''}
                     {s.env ? ` · env: ${s.env}` : ''}
                   </p>
+                  {s.notes && s.notes.length > 0 && (
+                    <ul className="mt-1.5 space-y-0.5 text-xs text-amber-200/90 list-disc list-inside">
+                      {s.notes.map((n, i) => (
+                        <li key={i}>{n}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               ))}
             </div>
@@ -1602,6 +1681,39 @@ const Settings: React.FC = () => {
     },
     enabled: isAdmin && activeTab === 'about',
     staleTime: 30000,
+  })
+  const [chatPerfId, setChatPerfId] = useState<string | null>(null)
+  const { data: chatPerfList } = useQuery<{
+    ok: boolean
+    count: number
+    items: Array<{
+      request_id?: string
+      module?: string
+      intent?: string
+      message?: string
+      total_ms?: number
+      rag_ms?: number
+      llm_turns?: Array<unknown>
+      tools?: Array<unknown>
+    }>
+  }>({
+    queryKey: ['chat-request-metrics'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/settings/chat-request-metrics?limit=20`)
+      if (!r.ok) return { ok: false, count: 0, items: [] }
+      return r.json()
+    },
+    enabled: isAdmin && activeTab === 'about',
+    staleTime: 15000,
+  })
+  const { data: chatPerfDetail } = useQuery<{ ok: boolean; item?: Record<string, unknown> }>({
+    queryKey: ['chat-request-metrics', chatPerfId],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/settings/chat-request-metrics/${chatPerfId}`)
+      if (!r.ok) return { ok: false }
+      return r.json()
+    },
+    enabled: isAdmin && activeTab === 'about' && !!chatPerfId,
   })
   const [showForm, setShowForm] = useState(false)
   const [editingCred, setEditingCred] = useState<Credential | null>(null)
@@ -1644,6 +1756,10 @@ const Settings: React.FC = () => {
   const [metricRetentionDays, setMetricRetentionDays] = useState<number>(30)
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('chat_selected_model') || 'llama3.2:3b')
   const [modelSaved, setModelSaved] = useState(false)
+  const [ollamaTesting, setOllamaTesting] = useState(false)
+  const [ollamaTestMsg, setOllamaTestMsg] = useState<{
+    ok: boolean; text: string; warnings?: string[]; errors?: string[]
+  } | null>(null)
   const [retentionSaved, setRetentionSaved] = useState(false)
   const { data: modelsData } = useQuery<{ success: boolean; models: AIModel[]; default: string }>({
     queryKey: ['ai-models'],
@@ -2618,7 +2734,7 @@ const Settings: React.FC = () => {
                       </select>
                       <p className="text-xs text-slate-500 mt-1">{t('set_model_hint')}</p>
                     </div>
-                    <div className="flex items-center gap-3 mt-4">
+                    <div className="flex flex-wrap items-center gap-3 mt-4">
                       <button
                         onClick={async () => {
                           localStorage.setItem('chat_selected_model', selectedModel)
@@ -2633,12 +2749,60 @@ const Settings: React.FC = () => {
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
                         {t('save')}
                       </button>
+                      <button
+                        type="button"
+                        disabled={ollamaTesting}
+                        onClick={async () => {
+                          setOllamaTesting(true)
+                          setOllamaTestMsg(null)
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/settings/ollama/test`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ model: selectedModel }),
+                            })
+                            const data = await res.json().catch(() => ({}))
+                            if (!res.ok) {
+                              throw new Error(typeof data.detail === 'string' ? data.detail : t('set_test_fail'))
+                            }
+                            setOllamaTestMsg({
+                              ok: Boolean(data.ok),
+                              text: data.message || (data.ok ? 'OK' : t('audit_st_failed')),
+                              warnings: data.warnings || data.health?.warnings || [],
+                              errors: data.errors || data.health?.errors || [],
+                            })
+                          } catch (e: any) {
+                            setOllamaTestMsg({ ok: false, text: e.message || t('set_test_fail') })
+                          } finally {
+                            setOllamaTesting(false)
+                          }
+                        }}
+                        className="px-4 py-2 bg-white/[0.07] hover:bg-white/[0.12] text-slate-200 text-sm font-medium rounded-lg border border-white/[0.08] disabled:opacity-50"
+                      >
+                        {ollamaTesting ? t('set_testing') : t('set_ollama_test')}
+                      </button>
                       {modelSaved && (
                         <span className="text-green-400 text-sm flex items-center gap-1">
                           {t('set_model_saved')}
                         </span>
                       )}
                     </div>
+                    {ollamaTestMsg && (
+                      <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${
+                        ollamaTestMsg.ok
+                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                          : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                      }`}>
+                        <p>{ollamaTestMsg.text}</p>
+                        {(ollamaTestMsg.warnings || []).map((w, i) => (
+                          <p key={i} className="mt-1 text-amber-200 text-xs">⚠ {w}</p>
+                        ))}
+                        {(ollamaTestMsg.errors || []).map((w, i) => (
+                          <p key={i} className="mt-1 text-rose-300 text-xs">{w}</p>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-slate-500 mt-2">{t('set_ollama_test_hint')}</p>
                   </div>
 
 
@@ -3669,6 +3833,7 @@ const Settings: React.FC = () => {
                         ['virtualization', 'set_guide_virt'],
                         ['windows', 'set_guide_windows'],
                         ['openshift', 'set_guide_openshift'],
+                        ['automation', 'set_guide_automation'],
                         ['ai-architecture', 'set_guide_ai_arch'],
                       ] as const).map(([pack, label]) => (
                         <button
@@ -3714,6 +3879,57 @@ const Settings: React.FC = () => {
                       ))}
                     </div>
                     {guideErr && <p className="text-xs text-red-400 mt-2">{guideErr}</p>}
+                    <div className="mt-6 pt-5 border-t border-white/[0.06]">
+                      <p className="text-sm font-medium text-slate-200">{t('set_chat_perf_title')}</p>
+                      <p className="text-xs text-slate-400 mt-1 mb-3">{t('set_chat_perf_desc')}</p>
+                      {(chatPerfList?.count || 0) === 0 ? (
+                        <p className="text-xs text-slate-500">{t('set_chat_perf_empty')}</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs text-left">
+                            <thead>
+                              <tr className="text-slate-400 border-b border-white/10">
+                                <th className="py-1.5 pr-3 font-medium">{t('set_chat_perf_req')}</th>
+                                <th className="py-1.5 pr-3 font-medium">{t('set_chat_perf_mod')}</th>
+                                <th className="py-1.5 pr-3 font-medium">{t('set_chat_perf_intent')}</th>
+                                <th className="py-1.5 pr-3 font-medium">{t('set_chat_perf_total')}</th>
+                                <th className="py-1.5 pr-3 font-medium">{t('set_chat_perf_turns')}</th>
+                                <th className="py-1.5 pr-3 font-medium">{t('set_chat_perf_rag')}</th>
+                                <th className="py-1.5 pr-3 font-medium">{t('set_chat_perf_tools')}</th>
+                                <th className="py-1.5 font-medium">{t('set_chat_perf_detail')}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(chatPerfList?.items || []).map((row) => (
+                                <tr key={row.request_id} className="border-b border-white/[0.04] text-slate-300">
+                                  <td className="py-1.5 pr-3 max-w-[10rem] truncate font-mono" title={row.message || ''}>{row.request_id}</td>
+                                  <td className="py-1.5 pr-3">{row.module || '—'}</td>
+                                  <td className="py-1.5 pr-3">{row.intent || '—'}</td>
+                                  <td className="py-1.5 pr-3">{row.total_ms ?? '—'}</td>
+                                  <td className="py-1.5 pr-3">{row.llm_turns?.length ?? 0}</td>
+                                  <td className="py-1.5 pr-3">{row.rag_ms ?? 0}</td>
+                                  <td className="py-1.5 pr-3">{row.tools?.length ?? 0}</td>
+                                  <td className="py-1.5">
+                                    <button
+                                      type="button"
+                                      className="text-blue-300 hover:underline"
+                                      onClick={() => setChatPerfId(row.request_id || null)}
+                                    >
+                                      {t('set_chat_perf_detail')}
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {chatPerfDetail?.item && (
+                        <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-black/40 p-3 text-[10px] text-slate-300 border border-white/[0.06]">
+                          {JSON.stringify(chatPerfDetail.item, null, 2)}
+                        </pre>
+                      )}
+                    </div>
                     <div className="mt-6 pt-5 border-t border-white/[0.06]">
                       <p className="text-sm font-medium text-slate-200">{t('set_coverage_title')}</p>
                       <p className="text-xs text-slate-400 mt-1 mb-3">{t('set_coverage_desc')}</p>

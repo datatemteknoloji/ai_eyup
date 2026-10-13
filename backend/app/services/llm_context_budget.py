@@ -42,8 +42,16 @@ _cal_state: Dict[str, Any] = {"ratio": None, "samples": 0, "last_observed": None
 _HARD_CAP_SAFETY_TOKENS = 2000
 
 
-def get_context_token_budget() -> int:
-    """Kullanıcının/adminin İSTEDİĞİ context bütçesi (Gelişmiş Ayarlar)."""
+def get_context_token_budget(*, ai_source: Any = None) -> int:
+    """Kullanıcının/adminin İSTEDİĞİ context bütçesi (Gelişmiş Ayarlar veya AiSource)."""
+    if ai_source is not None:
+        try:
+            from app.services.llm_ai_source import resolve_ai_source
+            src = resolve_ai_source(ai_source)
+            if src.context_token_budget is not None:
+                return max(2048, int(src.context_token_budget))
+        except Exception:
+            pass
     try:
         from app.services.runtime_settings import get_setting
         raw = get_setting("llm_context_token_budget")
@@ -52,14 +60,23 @@ def get_context_token_budget() -> int:
         return 32768
 
 
-def get_gateway_hard_cap_tokens() -> int:
+def get_gateway_hard_cap_tokens(*, ai_source: Any = None) -> int:
     """Gateway/model'in GERÇEK maksimum context penceresi (güvenlik tavanı).
 
     `llm_context_token_budget` bunu aşarsa otomatik olarak buna kırpılır —
     böylece bütçe ayarı ne kadar büyük seçilirse seçilsin gateway'e model
     limitini aşan istek gitmez. Model/gateway değişip pencere büyürse
     (32K → 64K/128K) yalnızca bu ayar güncellenir, kod değişmez.
+    AiSource.context_hard_cap_tokens doluysa o kullanılır.
     """
+    if ai_source is not None:
+        try:
+            from app.services.llm_ai_source import resolve_ai_source
+            src = resolve_ai_source(ai_source)
+            if src.context_hard_cap_tokens is not None:
+                return max(2048, int(src.context_hard_cap_tokens))
+        except Exception:
+            pass
     try:
         from app.services.runtime_settings import get_setting
         raw = get_setting("llm_context_hard_cap_tokens")
@@ -68,10 +85,23 @@ def get_gateway_hard_cap_tokens() -> int:
         return 32768
 
 
-def get_input_token_budget(*, reserve: int = _DEFAULT_RESERVE_TOKENS) -> int:
-    """Efektif input bütçesi = min(istenen bütçe, gateway hard-cap − güvenlik payı) − rezerv."""
-    desired = get_context_token_budget()
-    hard_cap = max(2048, get_gateway_hard_cap_tokens() - _HARD_CAP_SAFETY_TOKENS)
+def get_input_token_budget(
+    *,
+    reserve: int = _DEFAULT_RESERVE_TOKENS,
+    ai_source: Any = None,
+) -> int:
+    """Efektif input bütçesi = min(istenen bütçe, gerçek tavan − güvenlik payı) − rezerv.
+
+    Gerçek tavan: keşfedilen model context (varsa) ile hard-cap ayarının küçüğü.
+    """
+    desired = get_context_token_budget(ai_source=ai_source)
+    try:
+        from app.services.llm_transport import get_real_context_ceiling
+        # Hot path: keşif ağı yok — yalnız önbellekteki gerçek context
+        real = int(get_real_context_ceiling(allow_discover=False, ai_source=ai_source))
+    except Exception:
+        real = int(get_gateway_hard_cap_tokens(ai_source=ai_source))
+    hard_cap = max(2048, real - _HARD_CAP_SAFETY_TOKENS)
     effective_total = min(desired, hard_cap)
     return max(2048, effective_total - reserve)
 
@@ -317,14 +347,18 @@ _MIDDLE_MARKER = "\n\n…(model context penceresine sığması için orta bölü
 _GATE_SLACK_TOKENS = 16
 
 
-def get_payload_hard_limit(*, reserve: int = _DEFAULT_RESERVE_TOKENS) -> int:
+def get_payload_hard_limit(
+    *,
+    reserve: int = _DEFAULT_RESERVE_TOKENS,
+    ai_source: Any = None,
+) -> int:
     """Gateway'e gidebilecek en fazla INPUT token'ı.
 
     hard-cap − tokenizer güvenlik payı − çıkış (completion) rezervi. Bu, hangi
     bütçe ayarı seçilmiş olursa olsun modelin kendi penceresine göre hesaplanan
     mutlak tavandır.
     """
-    cap = max(2048, get_gateway_hard_cap_tokens() - _HARD_CAP_SAFETY_TOKENS)
+    cap = max(2048, get_gateway_hard_cap_tokens(ai_source=ai_source) - _HARD_CAP_SAFETY_TOKENS)
     return max(1024, cap - max(0, reserve))
 
 
@@ -349,6 +383,7 @@ def enforce_prompt_budget(
     system: Optional[str] = None,
     label: str = "",
     reserve: Optional[int] = None,
+    ai_source: Any = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Tek string prompt için son kapı — hard limit aşılıyorsa ortadan kırpar.
 
@@ -357,7 +392,9 @@ def enforce_prompt_budget(
     kurulduktan sonra büyüdüyse) bu fonksiyon modelin "context length
     exceeded" hatasını sessiz veri kaybı yerine kontrollü kırpmaya çevirir.
     """
-    limit = get_payload_hard_limit(reserve=reserve or _DEFAULT_RESERVE_TOKENS)
+    limit = get_payload_hard_limit(
+        reserve=reserve or _DEFAULT_RESERVE_TOKENS, ai_source=ai_source,
+    )
     t_system = estimate_tokens(system or "")
     t_prompt = estimate_tokens(prompt or "")
     total = t_system + t_prompt
@@ -414,6 +451,7 @@ def enforce_messages_budget(
     *,
     label: str = "",
     reserve: Optional[int] = None,
+    ai_source: Any = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Chat (messages) payload'ı için son kapı.
 
@@ -423,7 +461,9 @@ def enforce_messages_budget(
     çıktıları ve eski mesajlar, en son (mecbur kalınırsa) son kullanıcı
     mesajı ve system.
     """
-    limit = get_payload_hard_limit(reserve=reserve or _DEFAULT_RESERVE_TOKENS)
+    limit = get_payload_hard_limit(
+        reserve=reserve or _DEFAULT_RESERVE_TOKENS, ai_source=ai_source,
+    )
     if not messages:
         return messages, {"limit": limit, "total_tokens": 0, "final_tokens": 0, "truncated": False}
 

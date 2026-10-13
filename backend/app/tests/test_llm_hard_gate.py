@@ -9,8 +9,8 @@ import app.services.llm_context_budget as m
 
 
 def _cap_32k(monkeypatch):
-    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda: 32768)
-    monkeypatch.setattr(m, "get_context_token_budget", lambda: 32768)
+    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda **_k: 32768)
+    monkeypatch.setattr(m, "get_context_token_budget", lambda **_k: 32768)
 
 
 # ── enforce_prompt_budget ───────────────────────────────────────────────────
@@ -39,7 +39,7 @@ def test_prompt_gate_truncates_over_hard_cap(monkeypatch):
 
 
 def test_prompt_gate_limit_follows_hard_cap(monkeypatch):
-    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda: 131072)
+    monkeypatch.setattr(m, "get_gateway_hard_cap_tokens", lambda **_k: 131072)
     assert m.get_payload_hard_limit() > 100000
 
 

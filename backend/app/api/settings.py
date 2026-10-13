@@ -656,18 +656,77 @@ class AdvancedSettingsUpdate(BaseModel):
     settings: dict  # key -> value
 
 
+_LLM_RUNTIME_KEYS = frozenset({
+    "llm_context_token_budget",
+    "llm_context_hard_cap_tokens",
+    "ollama_keep_alive",
+    "llm_transport_mode",
+})
+
+
 @router.put("/advanced")
 async def put_advanced_settings(
     body: AdvancedSettingsUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_role("admin")),
+    admin: User = Depends(require_role("admin")),
 ):
-    """Gelişmiş ayarları kaydet. Çoğu restart gerektirmez; process worker ayarları recreate ister."""
-    from app.services.runtime_settings import save_advanced_settings, ADVANCED_SCHEMA
+    """Gelişmiş ayarları kaydet. Çoğu restart gerektirmez; process worker ayarları recreate ister.
+
+    LLM context / keep_alive: yeniden başlatma yok; broadcast ile bir sonraki istekten geçerli.
+    Bu anahtarlar kaydedilince Ollama sağlık kontrolü otomatik çalışır (uyarılar erişimi engellemez).
+    """
+    from app.services.audit import record_audit
+    from app.services.runtime_settings import (
+        ADVANCED_SCHEMA,
+        get_setting,
+        save_advanced_settings,
+        validate_advanced_value,
+    )
+    from app.services.settings_broadcast import broadcast_settings_reload, reload_runtime_settings_from_db
+
     if not isinstance(body.settings, dict) or not body.settings:
         raise HTTPException(status_code=400, detail="settings sözlüğü gerekli")
     unknown = [k for k in body.settings if k not in ADVANCED_SCHEMA]
-    saved = save_advanced_settings(body.settings, db)
+
+    # Açık doğrulama (sessiz default yerine 400)
+    validated: dict = {}
+    errors: list = []
+    for key, raw in body.settings.items():
+        if key not in ADVANCED_SCHEMA:
+            continue
+        try:
+            validated[key] = validate_advanced_value(key, raw)
+        except ValueError as exc:
+            errors.append(str(exc))
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+
+    before = {k: get_setting(k) for k in validated}
+    saved = save_advanced_settings(validated, db)
+    try:
+        reload_runtime_settings_from_db()
+        broadcast_settings_reload()
+    except Exception as exc:
+        logger.debug("advanced settings broadcast: %s", exc)
+
+    changed = {
+        k: {"from": before.get(k), "to": saved.get(k)}
+        for k in saved
+        if str(before.get(k)) != str(saved.get(k))
+    }
+    record_audit(
+        db,
+        category="settings",
+        action="settings.advanced.update",
+        status="success",
+        actor=admin,
+        summary=f"Gelişmiş ayarlar güncellendi ({len(changed)} değişiklik)",
+        target_type="advanced_settings",
+        detail={"changed": changed, "saved_keys": list(saved.keys())},
+        ip_address=request.client.host if request.client else None,
+    )
+
     restart_needed = [
         {
             "key": k,
@@ -677,6 +736,7 @@ async def put_advanced_settings(
         for k in saved
         if ADVANCED_SCHEMA.get(k, {}).get("requires_restart")
     ]
+    llm_runtime_changed = bool(changed.keys() & _LLM_RUNTIME_KEYS)
     if restart_needed:
         targets = sorted({x["target"] for x in restart_needed})
         msg = (
@@ -684,17 +744,41 @@ async def put_advanced_settings(
             f"uygulamak için recreate: {', '.join(targets)} "
             f"(örn. docker compose up -d --force-recreate {' '.join(targets)})."
         )
+        if llm_runtime_changed:
+            msg += " keep_alive / context yeniden başlatma olmadan bir sonraki istekten geçerli."
+    elif llm_runtime_changed:
+        msg = (
+            f"{len(saved)} ayar kaydedildi. "
+            "keep_alive / context bir sonraki istekten itibaren geçerli (yeniden başlatma yok)."
+        )
     else:
         msg = (
             f"{len(saved)} ayar kaydedildi. "
             "Arka plan görevleri bir sonraki döngüde yeni aralığı kullanır."
         )
+
+    llm_health = None
+    if llm_runtime_changed:
+        try:
+            import asyncio
+            from app.services.llm_transport import build_llm_health, clear_transport_caches
+
+            clear_transport_caches()
+            llm_health = await asyncio.to_thread(build_llm_health)
+        except Exception as exc:
+            llm_health = {
+                "ok": False,
+                "errors": [str(exc)[:300]],
+                "warnings": [],
+            }
+
     return {
         "success": True,
         "saved": saved,
         "unknown_keys": unknown,
         "restart_needed": restart_needed,
         "message": msg,
+        "llm_health": llm_health,
     }
 
 
@@ -1308,7 +1392,24 @@ async def set_ollama_model(payload: dict, db: Session = Depends(get_db)):
     # Agent tool-calling modeli de aynı değere yazılır; .env AGENT_MODEL yalnızca
     # agent_active_model yokken fallback kalır.
     _upsert("agent_active_model", model)
+    # Uzak gateway açıksa sabit model adını da hizala (chat _resolve_model önce bunu kullanır)
+    from app.core.config import settings as _cfg
+    remote_row = db.query(AppSettings).filter(AppSettings.key == "remote_llm_enabled").first()
+    remote_on = _cfg.REMOTE_LLM_ENABLED or (remote_row and (remote_row.value or "").lower() == "true")
+    if remote_on:
+        _upsert("remote_llm_model", model)
     db.commit()
+    _cfg.OLLAMA_DEFAULT_MODEL = model
+    _cfg.AGENT_MODEL = model
+    if remote_on:
+        _cfg.REMOTE_LLM_ENABLED = True
+        _cfg.REMOTE_LLM_MODEL = model
+    try:
+        from app.services.settings_broadcast import broadcast_settings_reload, reload_runtime_settings_from_db
+        reload_runtime_settings_from_db()
+        broadcast_settings_reload()
+    except Exception as _bc:
+        logger.debug("ollama-model broadcast: %s", _bc)
     logger.info("Aktif Ollama + agent modeli guncellendi: %s", model)
     return {"success": True, "model": model, "agent_model": model}
 
@@ -1400,6 +1501,61 @@ async def set_remote_llm(
         "verify_ssl": verify_ssl,
         "ca_bundle": ca_bundle,
         "virtual_key_set": bool(settings.REMOTE_LLM_VIRTUAL_KEY),
+    }
+
+
+@router.get("/ollama/health")
+async def ollama_health_ep(
+    model: Optional[str] = None,
+    _user: User = Depends(require_role("admin")),
+):
+    """LLM sağlık özeti (taşıma + etkin bütçe + /api/ps) — uyarılar erişimi engellemez."""
+    import asyncio
+    from app.services.llm_transport import build_llm_health
+
+    return await asyncio.to_thread(build_llm_health, model=model)
+
+
+@router.post("/ollama/test")
+async def ollama_test_ep(
+    payload: Optional[dict] = None,
+    _user: User = Depends(require_role("admin")),
+):
+    """LLM bağlantı testi — kurulum / Ayarlar → AI.
+
+    Body opsiyonel: {model?}. Uyarılar (VRAM/context) erişimi engellemez; ok=reachable.
+    """
+    import asyncio
+    from app.services.llm_transport import build_llm_health
+
+    body = payload or {}
+    health = await asyncio.to_thread(build_llm_health, model=(body.get("model") or None))
+    msg_parts = []
+    transport = health.get("transport") or health.get("provider") or "ollama"
+    if health.get("provider") in ("remote_openai",) or transport == "openai":
+        msg_parts.append("REMOTE_LLM OpenAI-uyumlu")
+    elif health.get("reachable"):
+        msg_parts.append("Ollama erişilebilir")
+    else:
+        msg_parts.append("Ollama erişilemiyor")
+    if health.get("model_loaded"):
+        msg_parts.append("model bellekte")
+    elif health.get("reachable") and health.get("provider") not in ("remote_openai",):
+        msg_parts.append("model henüz bellekte değil")
+    if health.get("vram_ratio") is not None:
+        msg_parts.append(f"VRAM %{health['vram_ratio']:.0f}")
+    if health.get("effective_num_ctx") is not None:
+        msg_parts.append(f"etkin bütçe {health['effective_num_ctx']}")
+    if health.get("loaded_context_length") is not None:
+        msg_parts.append(
+            f"context {health['loaded_context_length']} (etkin {health.get('configured_num_ctx')})"
+        )
+    return {
+        "ok": bool(health.get("ok")),
+        "message": "; ".join(msg_parts),
+        "health": health,
+        "warnings": health.get("warnings") or [],
+        "errors": health.get("errors") or [],
     }
 
 
@@ -2585,6 +2741,54 @@ def chat_coverage_misses(
     """Kanıtsız 'veri yok' / araçsız cevap kalıpları (admin)."""
     from app.services.chat_coverage import coverage_miss_summary
     return coverage_miss_summary(db, limit=max(1, min(limit, 200)))
+
+
+@router.get("/chat-request-metrics")
+def chat_request_metrics_list(
+    limit: int = 50,
+    module: Optional[str] = None,
+    _admin: User = Depends(require_role("admin")),
+):
+    """Son sohbet istek performans ölçümleri (admin ring buffer)."""
+    from app.services import chat_request_metrics as crm
+    items = crm.list_recent(module=module, limit=max(1, min(limit, 200)))
+    return {"ok": True, "count": len(items), "items": items}
+
+
+@router.get("/chat-request-metrics/{request_id}")
+def chat_request_metrics_detail(
+    request_id: str,
+    _admin: User = Depends(require_role("admin")),
+):
+    """Tek sohbet isteği ölçüm detayı (admin)."""
+    from app.services import chat_request_metrics as crm
+    item = crm.get_request(request_id)
+    if not item:
+        raise HTTPException(404, detail="İstek ölçümü bulunamadı")
+    return {"ok": True, "item": item}
+
+
+@router.get("/llm-activity")
+def llm_activity_list(
+    limit: int = 100,
+    since_minutes: Optional[int] = None,
+    _admin: User = Depends(require_role("admin")),
+):
+    """Son LLM çağrıları (çağıran modül/iş + süre) — Ollama kuyruk teşhisi (admin).
+
+    `by_caller`: çağıran bazında çağrı sayısı ve toplam süre (arka plan işleri vs sohbet).
+    """
+    import time as _time
+    from app.services import llm_activity, llm_scheduler
+    since = (_time.time() - since_minutes * 60) if since_minutes else None
+    items = llm_activity.recent(limit=max(1, min(limit, 500)), since=since)
+    by_caller: Dict[str, Dict[str, Any]] = {}
+    for x in items:
+        c = by_caller.setdefault(x.get("caller") or "unknown", {"calls": 0, "total_ms": 0.0})
+        c["calls"] += 1
+        c["total_ms"] = round(c["total_ms"] + float(x.get("duration_ms") or 0), 1)
+    return {"ok": True, "count": len(items), "by_caller": by_caller, "scheduler": llm_scheduler.state(),
+            "items": items}
 
 
 @router.get("/product-guide/catalog")
