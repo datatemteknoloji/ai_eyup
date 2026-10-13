@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import { API_BASE_URL } from '../../config/api'
 import { useT } from '../../i18n/LocaleProvider'
+import { formatChartTick } from '../../utils/chartTime'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#a3e635', '#f97316', '#38bdf8']
 
@@ -292,7 +293,7 @@ function ChartCard({
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis
                 dataKey="t"
-                tickFormatter={(v) => new Date(Number(v) * 1000).toLocaleTimeString()}
+                tickFormatter={(v) => formatChartTick(v)}
                 stroke="#64748b"
                 fontSize={9}
               />
@@ -754,7 +755,7 @@ export const OcpPromView: React.FC<{ sourceId?: string }> = ({ sourceId }) => {
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                   <XAxis
                     dataKey="t"
-                    tickFormatter={(v) => new Date(Number(v) * 1000).toLocaleTimeString()}
+                    tickFormatter={(v) => formatChartTick(v)}
                     stroke="#64748b"
                     fontSize={10}
                   />

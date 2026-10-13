@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import { useTheme } from '../theme/ThemeProvider'
 import { niceTimeTicks, niceYDomain } from '../utils/chatChartScale'
+import { parseApiTime } from '../utils/chartTime'
 
 export interface ChatChartSeries {
   metric_name: string
@@ -49,8 +50,8 @@ function formatValue(v: number, unit: string): string {
 
 /** Pencere uzunluğuna göre eksen: saatlik / gün+saat / gün+ay. */
 export function formatChartTick(ts: string, spanMs: number): string {
-  const d = new Date(ts)
-  if (Number.isNaN(d.getTime())) return ts
+  const d = parseApiTime(ts)
+  if (!d) return String(ts ?? '')
   const loc = 'tr-TR'
   if (spanMs <= 36 * 3600 * 1000) {
     return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' })
@@ -65,8 +66,8 @@ export function formatChartTick(ts: string, spanMs: number): string {
 }
 
 function formatChartTooltipLabel(ts: string, spanMs: number): string {
-  const d = new Date(ts)
-  if (Number.isNaN(d.getTime())) return ts
+  const d = parseApiTime(ts)
+  if (!d) return String(ts ?? '')
   if (spanMs <= 36 * 3600 * 1000) {
     return d.toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
   }

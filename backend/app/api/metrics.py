@@ -8,6 +8,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 from app.core.database import get_db
 from app.core.config import settings
+from app.core.timeutil import to_iso, utc_now
 from app.models.metric import MetricData, MetricAggregation, MetricThreshold
 from app.models.server import Server
 from app.services.metric_collector import MetricCollector
@@ -217,19 +218,19 @@ async def get_metric_history(
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
     
-    start_time = datetime.utcnow() - timedelta(hours=hours)
+    start_time = utc_now() - timedelta(hours=hours)
     points = _history_from_cagg_or_raw(db, server_id, metric_name, start_time, hours)
 
     return {
         "server_id": server_id,
         "hostname": server.hostname,
         "metric_name": metric_name,
-        "start_time": start_time.isoformat(),
+        "start_time": to_iso(start_time),
         "data_points": len(points),
         "resolution": "hourly" if hours > 6 else "raw",
         "data": [
             {
-                "timestamp": p["timestamp"].isoformat() if hasattr(p["timestamp"], "isoformat") else str(p["timestamp"]),
+                "timestamp": to_iso(p["timestamp"]) if hasattr(p["timestamp"], "isoformat") else str(p["timestamp"]),
                 "value": p["value"],
                 "unit": p.get("unit"),
             }
@@ -250,7 +251,7 @@ async def get_aggregated_metrics(
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
     
-    start_time = datetime.utcnow() - timedelta(days=days)
+    start_time = utc_now() - timedelta(days=days)
     
     aggregations = db.query(MetricAggregation).filter(
         MetricAggregation.server_id == server_id,

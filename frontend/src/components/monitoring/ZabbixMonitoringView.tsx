@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { API_BASE_URL } from '../../config/api'
 import { useT } from '../../i18n/LocaleProvider'
+import { formatChartLabel, formatChartTick } from '../../utils/chartTime'
 import {
   CHART_COLORS, CatMetric, RANGE_OPTS, ZbxHost, ZbxProblem, ZbxSeries, ZbxTab,
   chartRows, fmtNum, fmtUnit, qs, severityMeta,
@@ -146,7 +147,7 @@ function SeriesChart({
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
           <XAxis
             dataKey="t"
-            tickFormatter={(v) => new Date(Number(v) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            tickFormatter={(v) => formatChartTick(v)}
             stroke="#64748b"
             tick={{ fontSize: 10, fill: '#9aabcb' }}
             axisLine={false}
@@ -167,7 +168,7 @@ function SeriesChart({
               background: '#0d1422', border: '1px solid rgba(255,255,255,0.11)',
               borderRadius: 8, fontSize: 11, color: '#e8edf5',
             }}
-            labelFormatter={(v) => new Date(Number(v) * 1000).toLocaleString()}
+            labelFormatter={(v) => formatChartLabel(v)}
             formatter={(val: number, name: string) => [fmtUnit(val, unit), name]}
           />
           <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
@@ -864,7 +865,7 @@ export const ZabbixMonitoringView: React.FC<{
                     <td className="px-3 py-2 text-[var(--text-primary)]">{p.name}</td>
                     <td className="px-3 py-2 text-[var(--text-muted)]">{(p.hosts || []).join(', ') || '—'}</td>
                     <td className="px-3 py-2 font-mono text-[var(--text-muted)] whitespace-nowrap">
-                      {p.clock ? new Date(Number(p.clock) * 1000).toLocaleString() : '—'}
+                      {p.clock ? formatChartLabel(Number(p.clock)) : '—'}
                     </td>
                   </tr>
                 ))}

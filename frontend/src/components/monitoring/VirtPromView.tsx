@@ -8,6 +8,7 @@ import {
 } from 'recharts'
 import { API_BASE_URL } from '../../config/api'
 import { useT } from '../../i18n/LocaleProvider'
+import { formatChartLabel, formatChartTick } from '../../utils/chartTime'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#a3e635', '#f97316', '#38bdf8']
 const RANGES = [
@@ -143,18 +144,12 @@ export const VirtPromView: React.FC<{ sourceId?: string }> = ({ sourceId }) => {
               <XAxis
                 dataKey="t"
                 tick={{ fill: '#64748b', fontSize: 10 }}
-                tickFormatter={(v) => {
-                  const d = new Date(typeof v === 'number' && v < 1e12 ? v * 1000 : v)
-                  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-                }}
+                tickFormatter={(v) => formatChartTick(v, undefined, 'tr-TR')}
               />
               <YAxis tick={{ fill: '#64748b', fontSize: 10 }} width={48} />
               <Tooltip
                 contentStyle={{ background: '#0d1422', border: '1px solid #334155', fontSize: 12 }}
-                labelFormatter={(v) => {
-                  const d = new Date(typeof v === 'number' && v < 1e12 ? v * 1000 : v)
-                  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString('tr-TR')
-                }}
+                labelFormatter={(v) => formatChartLabel(v, 'tr-TR')}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               {(series.data?.series || []).map((s, i) => (

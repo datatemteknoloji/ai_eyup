@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import { API_BASE_URL } from '../config/api'
 import { useT } from '../i18n/LocaleProvider'
+import { formatChartLabel, formatChartTick } from '../utils/chartTime'
 import { MonitoringShell, type MonitoringDataMode } from '../components/monitoring/MonitoringShell'
 import { OcpPromView } from '../components/monitoring/OcpPromView'
 
@@ -120,21 +121,12 @@ function OcpChart({
           <XAxis
             dataKey="t"
             tick={{ fill: '#64748b', fontSize: 10 }}
-            tickFormatter={(v) => {
-              try {
-                const d = new Date(String(v))
-                return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
-              } catch {
-                return String(v).slice(11, 16)
-              }
-            }}
+            tickFormatter={(v) => formatChartTick(v, undefined, 'tr-TR')}
           />
           <YAxis tick={{ fill: '#64748b', fontSize: 10 }} width={48} unit={unit ? ` ${unit}` : ''} />
           <Tooltip
             contentStyle={{ background: '#0d1422', border: '1px solid #1e293b', borderRadius: 8, fontSize: 12 }}
-            labelFormatter={(v) => {
-              try { return new Date(String(v)).toLocaleString('tr-TR') } catch { return String(v) }
-            }}
+            labelFormatter={(v) => formatChartLabel(v, 'tr-TR')}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           {series.map((s, i) => {
@@ -407,7 +399,7 @@ const OpenShiftMonitoring: React.FC<{
               </span>
               <span className="text-slate-500 whitespace-nowrap hidden md:inline">
                 {src?.last_sample
-                  ? `${t('ocpm_last_sample')}: ${new Date(src.last_sample).toLocaleString('tr-TR')}`
+                  ? `${t('ocpm_last_sample')}: ${formatChartLabel(src.last_sample, 'tr-TR')}`
                   : ''}
                 {src?.age_min != null ? ` · ${src.age_min} dk` : ''}
               </span>
@@ -622,7 +614,7 @@ const OpenShiftMonitoring: React.FC<{
             </div>
             <p className="text-[11px] text-slate-500 mb-3">
               {t('ocpm_chart_hint')}
-              {series0.data?.as_of ? ` · ${t('ocpm_last_sample')}: ${new Date(series0.data.as_of).toLocaleString('tr-TR')}` : ''}
+              {series0.data?.as_of ? ` · ${t('ocpm_last_sample')}: ${formatChartLabel(series0.data.as_of, 'tr-TR')}` : ''}
               {(series0.data?.series || []).some((s) => s.outside_window) ? ` · ${t('ocpm_outside_window')}` : ''}
             </p>
             <div className="grid md:grid-cols-2 gap-4">

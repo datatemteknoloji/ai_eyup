@@ -8,6 +8,7 @@ import {
 } from 'recharts'
 import { API_BASE_URL } from '../../config/api'
 import { useT } from '../../i18n/LocaleProvider'
+import { formatChartLabel, formatChartTick } from '../../utils/chartTime'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#a3e635', '#f97316', '#38bdf8']
 
@@ -195,14 +196,14 @@ export const CustomMetricExplorer: React.FC<{
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                   <XAxis
                     dataKey="t"
-                    tickFormatter={(v) => new Date(Number(v) * 1000).toLocaleTimeString()}
+                    tickFormatter={(v) => formatChartTick(v)}
                     stroke="#64748b"
                     fontSize={10}
                   />
                   <YAxis stroke="#64748b" fontSize={10} width={48} />
                   <Tooltip
                     contentStyle={{ background: '#0d1422', border: '1px solid rgba(255,255,255,0.1)' }}
-                    labelFormatter={(v) => new Date(Number(v) * 1000).toLocaleString()}
+                    labelFormatter={(v) => formatChartLabel(v)}
                   />
                   <Legend />
                   {(seriesData?.series || []).map((s, i) => (

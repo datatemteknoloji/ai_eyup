@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from sqlalchemy import and_, func, text
 from sqlalchemy.orm import Session
 
+from app.core.timeutil import to_iso, utc_now
 from app.models.metric import MetricData
 from app.models.server import Server
 from app.services.platform_scope import get_windows_server_ids
@@ -203,7 +204,7 @@ def overview(db: Session) -> Dict[str, Any]:
                 f"Mem {_r(mem) if mem is not None else '—'}% · "
                 f"Disk {_r(disk) if disk is not None else '—'}%"
             ),
-            "as_of": ts.isoformat() if ts else None,
+            "as_of": to_iso(ts) if ts else None,
         })
 
     age_min = None
@@ -254,7 +255,7 @@ def overview(db: Session) -> Dict[str, Any]:
         },
         "data_source": {
             "state": "connected" if metrics_ok else ("missing" if servers else "empty"),
-            "last_sample": last_ts.isoformat() if last_ts else None,
+            "last_sample": to_iso(last_ts) if last_ts else None,
             "age_min": age_min,
             "stale": bool(age_min is not None and age_min >= STALE_MINUTES),
             "metrics_available": metrics_ok,
@@ -311,7 +312,7 @@ def query_series(
     spec = RANGE_SPEC[rk]
     minutes = int(spec["minutes"])
     bucket = spec.get("bucket")
-    start = datetime.utcnow() - timedelta(minutes=minutes)
+    start = utc_now() - timedelta(minutes=minutes)
 
     # ids: "srv:12" veya ham server_id
     server_ids: List[int] = []
@@ -357,7 +358,7 @@ def query_series(
                 sql, {"bucket": bucket, "sid": sid, "mname": col, "start": start}
             ).mappings().all()
             points = [
-                {"t": r["t"].isoformat() if hasattr(r["t"], "isoformat") else str(r["t"]), "v": _r(r["v"], 3)}
+                {"t": to_iso(r["t"]) if hasattr(r["t"], "isoformat") else str(r["t"]), "v": _r(r["v"], 3)}
                 for r in rows
             ]
         else:
@@ -373,7 +374,7 @@ def query_series(
             )
             points = [
                 {
-                    "t": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                    "t": to_iso(ts) if hasattr(ts, "isoformat") else str(ts),
                     "v": _r(val, 3),
                 }
                 for ts, val in rows

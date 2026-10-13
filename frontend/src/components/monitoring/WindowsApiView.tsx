@@ -13,9 +13,10 @@ import {
 } from 'recharts'
 import { API_BASE_URL } from '../../config/api'
 import { useT } from '../../i18n/LocaleProvider'
+import { formatChartLabel, formatChartTick } from '../../utils/chartTime'
 import WindowsLiveMetrics from '../../pages/WindowsLiveMetrics'
-
 import { MethodBadge } from '../insights/MethodBadge'
+
 const RANGES = ['15m', '30m', '1h', '2h', '8h', '24h', '7d', '30d'] as const
 const MAX_SEL = 8
 const COLORS = [
@@ -96,18 +97,12 @@ function WinChart({
           <XAxis
             dataKey="t"
             tick={{ fill: '#64748b', fontSize: 10 }}
-            tickFormatter={(v) => {
-              const d = new Date(v)
-              return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-            }}
+            tickFormatter={(v) => formatChartTick(v, undefined, 'tr-TR')}
           />
           <YAxis tick={{ fill: '#64748b', fontSize: 10 }} width={44} />
           <Tooltip
             contentStyle={{ background: '#0d1422', border: '1px solid #334155', fontSize: 12 }}
-            labelFormatter={(v) => {
-              const d = new Date(v)
-              return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString('tr-TR')
-            }}
+            labelFormatter={(v) => formatChartLabel(v, 'tr-TR')}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           {series.map((s, i) => (
@@ -284,7 +279,7 @@ export const WindowsApiView: React.FC = () => {
             </span>
             <span className="text-slate-500 hidden md:inline">
               {src?.last_sample
-                ? `${t('wmn_last_sample')}: ${new Date(src.last_sample).toLocaleString('tr-TR')}`
+                ? `${t('wmn_last_sample')}: ${formatChartLabel(src.last_sample, 'tr-TR')}`
                 : ''}
               {src?.age_min != null ? ` · ${src.age_min} dk` : ''}
             </span>

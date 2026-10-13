@@ -10,14 +10,103 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
 import httpx
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.core.config import settings, apply_promql_job
+from app.core.timeutil import from_unix, utc_now
 from app.models.server import Server
 from app.models.metric import MetricData
 from app.services.platform_scope import is_windows_server, is_vm
 from app.services.monitoring.prometheus_metrics import WINDOWS_EXPORTER_PORT
 
 logger = logging.getLogger(__name__)
+
+_TZ_BACKFILL_KEY = "ainew:metric_data_tz_backfill_v1"
+
+
+def _maybe_backfill_metric_data_tz_skew(db: Session) -> None:
+    """Naive UTC→timestamptz (session TZ) kaymasını bir kez düzelt.
+
+    Offset dinamik: (yerel duvar − UTC duvar). Redis anahtarı ile tek sefer;
+    yalnızca max(timestamp) hâlâ ~offset kadar gerideyse uygular.
+    """
+    try:
+        from app.core.redis_client import get_redis
+        r = get_redis()
+        if r is not None and r.get(_TZ_BACKFILL_KEY):
+            return
+    except Exception:
+        r = None
+    try:
+        offset_sec = db.execute(text(
+            "SELECT EXTRACT(EPOCH FROM (now()::timestamp - (now() AT TIME ZONE 'UTC')))"
+        )).scalar()
+        offset_sec = int(float(offset_sec or 0))
+        if abs(offset_sec) < 60:
+            if r is not None:
+                r.set(_TZ_BACKFILL_KEY, "noop")
+            return
+        lag = db.execute(text(
+            "SELECT EXTRACT(EPOCH FROM (now() - max(timestamp))) FROM metric_data"
+        )).scalar()
+        lag = float(lag or 0)
+        if lag < abs(offset_sec) * 0.6:
+            if r is not None:
+                r.set(_TZ_BACKFILL_KEY, f"skip_lag:{int(lag)}")
+            return
+        if r is not None:
+            r.set(_TZ_BACKFILL_KEY, "running")
+        # Hypertable: boyut sütununu chunk içinde tutarak UPDATE (sıkıştırılmışları aç)
+        try:
+            compressed = db.execute(text("""
+                SELECT format('%I.%I', chunk_schema, chunk_name)
+                FROM timescaledb_information.chunks
+                WHERE hypertable_name = 'metric_data' AND is_compressed
+            """)).scalars().all()
+            for ch in compressed:
+                try:
+                    db.execute(text(f"SELECT decompress_chunk('{ch}'::regclass)"))
+                    db.commit()
+                except Exception as dexc:
+                    logger.debug("decompress %s: %s", ch, dexc)
+                    db.rollback()
+        except Exception as iexc:
+            logger.debug("chunk list: %s", iexc)
+            db.rollback()
+        chunks = db.execute(text("""
+            SELECT format('%I.%I', chunk_schema, chunk_name), range_start, range_end
+            FROM timescaledb_information.chunks
+            WHERE hypertable_name = 'metric_data' AND NOT is_compressed
+        """)).all()
+        n = 0
+        for name, rs, re in chunks:
+            try:
+                res = db.execute(text(f"""
+                    UPDATE ONLY {name}
+                    SET timestamp = timestamp + make_interval(secs => :sec)
+                    WHERE timestamp + make_interval(secs => :sec) < :re
+                      AND timestamp >= :rs
+                """), {"sec": offset_sec, "re": re, "rs": rs})
+                db.commit()
+                n += int(res.rowcount or 0)
+            except Exception as uexc:
+                logger.debug("chunk update %s: %s", name, uexc)
+                db.rollback()
+        logger.info("metric_data TZ backfill: offset=%ss rows=%s lag_was=%ss", offset_sec, n, int(lag))
+        if r is not None:
+            r.set(_TZ_BACKFILL_KEY, f"ok:{offset_sec}:{n}")
+    except Exception as exc:
+        logger.warning("metric_data TZ backfill atlandı: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
+            if r is not None:
+                r.delete(_TZ_BACKFILL_KEY)
+        except Exception:
+            pass
+
 
 _REGEX_SPECIAL_CHARS = ".^$*+?{}[]|()"
 
@@ -297,7 +386,7 @@ def _vmware_metric_row_dicts(
     now: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
     """VMware snapshot satırlarını bulk_insert mapping olarak üretir (commit yok)."""
-    ts = now or datetime.utcnow()
+    ts = now or utc_now()
     pairs: List[Tuple[str, float, str]] = []
     if cpu_percent is not None:
         pairs.append(("cpu_usage_percent", cpu_percent, "percent"))
@@ -430,7 +519,7 @@ class MetricSyncService:
                 return 0
 
         synced_count = 0
-        end_time = datetime.utcnow()
+        end_time = utc_now()
         start_time = end_time - timedelta(minutes=minutes)
 
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -476,7 +565,7 @@ class MetricSyncService:
                                     "value": float_val,
                                     "unit": unit,
                                     "labels": category,
-                                    "timestamp": datetime.utcfromtimestamp(float(ts)),
+                                    "timestamp": from_unix(float(ts)),
                                 })
                             except Exception:
                                 pass
@@ -546,7 +635,7 @@ class MetricSyncService:
         total = 0
         synced_ids: set = set()
         pending: List[Dict[str, Any]] = []
-        end_time = datetime.utcnow()
+        end_time = utc_now()
         start_time = end_time - timedelta(minutes=minutes)
         chunk_size = MetricSyncService._BATCH_CHUNK_SIZE
 
@@ -607,7 +696,7 @@ class MetricSyncService:
                                             "value": float_val,
                                             "unit": unit,
                                             "labels": category,
-                                            "timestamp": datetime.utcfromtimestamp(float(ts)),
+                                            "timestamp": from_unix(float(ts)),
                                         })
                                         synced_ids.add(srv.id)
                                     except Exception:
@@ -746,7 +835,7 @@ class MetricSyncService:
                         except Exception as ie:
                             logger.debug("VMware batch disk iops skip hyp=%s: %s", hyp_id, ie)
 
-                    now = datetime.utcnow()
+                    now = utc_now()
                     pending_rows: List[Dict[str, Any]] = []
                     for srv, stats, perf_vm in resolved:
                         cpu_p, mem_p, mu, mt = _vmware_cpu_mem_from_live(stats)
@@ -863,6 +952,7 @@ class MetricSyncService:
         vCenter'dan alınır; Prometheus'a hiç sorgu atılmaz.
         """
         from sqlalchemy import or_
+        _maybe_backfill_metric_data_tz_skew(db)
         candidates = db.query(Server).filter(
             or_(Server.status == "ONLINE", Server.hypervisor_id.isnot(None))
         ).all()

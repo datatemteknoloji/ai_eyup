@@ -10,6 +10,7 @@ import {
 import { API_BASE_URL } from '../config/api'
 import { useT } from '../i18n/LocaleProvider'
 import { MethodBadge } from '../components/insights/MethodBadge'
+import { formatChartLabel, formatChartTick, parseApiTime } from '../utils/chartTime'
 import { MonitoringShell, type MonitoringDataMode } from '../components/monitoring/MonitoringShell'
 import { VirtPromView } from '../components/monitoring/VirtPromView'
 import { CHART_COLORS } from '../components/monitoring/zabbix/zbxUi'
@@ -110,9 +111,9 @@ function Panel({ children, className = '', method }: { children: React.ReactNode
 }
 
 function minuteKey(iso: string) {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  d.setSeconds(0, 0)
+  const d = parseApiTime(iso)
+  if (!d) return iso
+  d.setUTCSeconds(0, 0)
   return d.toISOString()
 }
 
@@ -139,7 +140,7 @@ function VirtChart({
     })
     const times = Object.keys(byMin).sort()
     const data = times.map((t) => ({
-      time: new Date(t).toLocaleString('tr-TR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      time: formatChartTick(t, 48 * 3600_000, 'tr-TR'),
       ...byMin[t],
     }))
     return { chartData: data, keys }
@@ -500,7 +501,7 @@ const VirtMonitoring: React.FC<{
           </span>
           <span className="text-slate-500 whitespace-nowrap hidden md:inline">
             {src?.last_host_sync
-              ? `${t('vmn_last_sync')}: ${new Date(src.last_host_sync).toLocaleString('tr-TR')}`
+              ? `${t('vmn_last_sync')}: ${formatChartLabel(src.last_host_sync, 'tr-TR')}`
               : ''}
             {src?.host_age_min != null ? ` · ${src.host_age_min} dk` : ''}
           </span>
@@ -700,7 +701,7 @@ const VirtMonitoring: React.FC<{
         </div>
         <p className="text-[11px] text-slate-500 mb-3">
           {t('vmn_chart_hint')} · {t('vmn_source_vcenter')}
-          {series0.data?.as_of ? ` · ${t('vmn_last_sample')}: ${new Date(series0.data.as_of).toLocaleString('tr-TR')}` : ''}
+          {series0.data?.as_of ? ` · ${t('vmn_last_sample')}: ${formatChartLabel(series0.data.as_of, 'tr-TR')}` : ''}
           {(series0.data?.series || []).some((s: any) => s.outside_window) ? ` · ${t('vmn_outside_window')}` : ''}
         </p>
         <div className="grid md:grid-cols-2 gap-4">
@@ -783,9 +784,9 @@ const VirtMonitoring: React.FC<{
               <div className="text-[11px] text-slate-500">
                 30g {deltaTxt(c.trend_30d)} · {t('vmn_headroom')} {c.headroom ?? '—'}%
                 {c.days_to_80 != null ? ` · ${t('vmn_days_to')} ~${Math.round(c.days_to_80)}` : ''}
-              </div>
                 {c.days_to_80_range ? ` (${t('vmn_range')} ${Math.round(c.days_to_80_range.fastest)}–${c.days_to_80_range.slowest == null ? '∞' : Math.round(c.days_to_80_range.slowest)})` : ''}
                 {c.days_to_80 == null && c.current != null && c.current < 80 && c.trend_confidence && ['none', 'low'].includes(c.trend_confidence) ? ` · ${t('vmn_runway_unsure')}` : ''}
+              </div>
             </div>
           ))}
         </Panel>
@@ -813,7 +814,7 @@ const VirtMonitoring: React.FC<{
           {(ov?.timeline || []).map((e: any) => (
             <div key={e.id} className="flex gap-3 text-sm">
               <span className="font-mono text-[11px] text-slate-500 w-36 shrink-0">
-                {e.time ? new Date(e.time).toLocaleString('tr-TR') : '—'}
+                {e.time ? formatChartLabel(e.time, 'tr-TR') : '—'}
               </span>
               <span className={`text-[11px] font-bold uppercase w-16 ${tone(e.severity)}`}>{e.severity}</span>
               <span className="text-slate-300">{e.title}</span>
