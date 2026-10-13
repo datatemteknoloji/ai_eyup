@@ -1,0 +1,9 @@
+# Üretim imajına test, hata ayıklama ve cache dosyaları girmez
+app/tests/
+tests/
+app/tools/
+app/services/centrify/winrm_adapter_fake.py
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+*.log
