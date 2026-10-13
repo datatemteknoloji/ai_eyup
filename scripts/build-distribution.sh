@@ -126,6 +126,22 @@ rsync -a \
   --exclude 'PROJE_OZETI.md' \
   --exclude 'backend/static/node_exporter/arm64/' \
   --exclude 'backend/static/node_exporter/armv7/' \
+  --exclude '/backend/app/tests/' \
+  --exclude '/backend/tests/' \
+  --exclude '/backend/app/tools/' \
+  --exclude '/backend/app/services/centrify/winrm_adapter_fake.py' \
+  --exclude '/scripts/automic_plant_adversarial.py' \
+  --exclude '/scripts/automic_questions.py' \
+  --exclude '/scripts/automic_chat_bench.py' \
+  --exclude '/scripts/automic_quality.py' \
+  --exclude '/scripts/automic_rescore.py' \
+  --exclude '/scripts/test_automic_quality.py' \
+  --exclude '/scripts/test_admin_chat_e2e_1000.py' \
+  --exclude '/scripts/test_linux_inventory_nl_1000.py' \
+  --exclude '/docs/release/karar-gunlugu-*.md' \
+  --exclude '*.log' \
+  --exclude '*.tmp' \
+  --exclude '.pytest_cache/' \
   ./ "$STAGE"/
 
 # ── 2. Production deployment varlıklarını deploy/ içinden yerleştir ─────────
