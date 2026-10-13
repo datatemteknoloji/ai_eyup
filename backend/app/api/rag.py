@@ -26,6 +26,7 @@ from app.services.rag_store import (
     list_runbook_documents,
     delete_runbook_by_title,
     COLLECTION_RUNBOOK,
+    COLLECTION_AUTOMIC,
     COLLECTION_INCIDENTS,
     COLLECTION_METRICS,
     COLLECTION_KNOWLEDGE,
@@ -302,6 +303,7 @@ async def rag_status(
         def _collection_snapshot() -> dict:
             return {
                 "runbook": count_collection(COLLECTION_RUNBOOK),
+                "automic": count_collection(COLLECTION_AUTOMIC),
                 "incidents": count_collection(COLLECTION_INCIDENTS),
                 "metrics": count_collection(COLLECTION_METRICS),
                 "knowledge": count_collection(COLLECTION_KNOWLEDGE),

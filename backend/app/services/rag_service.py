@@ -9,12 +9,12 @@ from typing import List, Optional, Sequence, Tuple
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.services.embedding import get_embedding
+from app.services.embedding import embed_model_name, embed_text, get_embedding
 from app.services.rag_store import (
+    EMBEDDING_DIM,
     add_chunks,
     upsert_chunks,
-    query_collection,
-    lexical_search_collection,
+    hybrid_search_collection,
     format_runbook_hits,
     clear_collection,
     count_collection,
@@ -25,7 +25,14 @@ from app.services.rag_store import (
     COLLECTION_INCIDENTS,
     COLLECTION_METRICS,
     COLLECTION_KNOWLEDGE,
+    COLLECTION_AUTOMIC,
+    collection_for_document_title,
+    module_for_collection,
 )
+
+
+def _store_model_dim():
+    return embed_model_name(), EMBEDDING_DIM
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +166,14 @@ async def ingest_runbook(title: str, content: str) -> int:
     )
     embeddings = await get_embeddings_batch(chunks)
     ids = [str(__import__("uuid").uuid4()) for _ in chunks]
-    metadatas = [{"title": title or "Runbook", "index": i} for i in range(len(chunks))]
+    coll = collection_for_document_title(title or "")
+    mod = module_for_collection(coll)
+    metadatas = []
+    for i in range(len(chunks)):
+        meta = {"title": title or "Runbook", "index": i}
+        if mod:
+            meta["module"] = mod
+        metadatas.append(meta)
     chunks, embeddings, metadatas, ids = _filter_valid_embeddings(chunks, embeddings, metadatas, ids)
     if not chunks:
         detail = get_last_embed_error() or "Ollama embedding sıfır vektör döndü"
@@ -169,7 +183,11 @@ async def ingest_runbook(title: str, content: str) -> int:
             f"Embedding başarısız ({url} / {model}). {detail}. "
             f"Kontrol: `ollama pull {model}` ve OLLAMA_URL erişimi. Runbook eklenemedi."
         )
-    add_chunks(COLLECTION_RUNBOOK, ids=ids, documents=chunks, metadatas=metadatas, embeddings=embeddings)
+    model, dim = _store_model_dim()
+    add_chunks(
+        coll, ids=ids, documents=chunks, metadatas=metadatas,
+        embeddings=embeddings, embedding_model=model, embedding_dim=dim,
+    )
     return len(chunks)
 
 
@@ -188,7 +206,12 @@ async def ingest_runbook_pages(title: str, pages: Sequence[Tuple[int, str]]) -> 
             pn = 0
         for i, chunk in enumerate(chunk_text(text.strip())):
             all_chunks.append(chunk)
-            metadatas.append({"title": title or "Runbook", "index": i, "page": pn})
+            meta = {"title": title or "Runbook", "index": i, "page": pn}
+            coll_tmp = collection_for_document_title(title or "")
+            mod = module_for_collection(coll_tmp)
+            if mod:
+                meta["module"] = mod
+            metadatas.append(meta)
     if not all_chunks:
         return 0
     from app.services.embedding import get_embeddings_batch, get_last_embed_error
@@ -209,7 +232,12 @@ async def ingest_runbook_pages(title: str, pages: Sequence[Tuple[int, str]]) -> 
             f"Embedding başarısız ({url} / {model}). {detail}. "
             f"Kontrol: `ollama pull {model}` ve OLLAMA_URL erişimi. Runbook eklenemedi."
         )
-    add_chunks(COLLECTION_RUNBOOK, ids=ids, documents=all_chunks, metadatas=metadatas, embeddings=embeddings)
+    model, dim = _store_model_dim()
+    coll = collection_for_document_title(title or "")
+    add_chunks(
+        coll, ids=ids, documents=all_chunks, metadatas=metadatas,
+        embeddings=embeddings, embedding_model=model, embedding_dim=dim,
+    )
     return len(all_chunks)
 
 
@@ -218,22 +246,35 @@ async def ingest_runbook_append(title: str, content: str) -> int:
 
 
 async def search_runbook_documents(query: str, top_k: int = 8) -> dict:
-    """Ayarlar RAG: semantik arama; embedding yoksa ILIKE yedek."""
+    """Ayarlar RAG: hibrit (vektör + FTS); embed yoksa yalnız tam metin."""
     q = (query or "").strip()
     if not q:
         return {"hits": [], "mode": "empty"}
     k = min(max(1, int(top_k or 8)), 20)
-    mode = "vector"
-    hits: List[dict] = []
+    model, dim = _store_model_dim()
+    emb_vec = None
+    mode = "fts"
     try:
-        emb = await get_embedding(q)
-        if not emb or all(abs(float(x)) < 1e-12 for x in emb):
-            raise RuntimeError("zero embedding")
-        hits = query_collection(COLLECTION_RUNBOOK, emb, n_results=k)
+        res = await embed_text(q)
+        if res.usable_for_vector_search and res.vector:
+            emb_vec = res.vector
+            mode = "hybrid"
+        else:
+            logger.info(
+                "Runbook vektör atlandı → FTS: %s",
+                res.error or "unusable",
+            )
     except Exception as e:
-        logger.info("Runbook vektör arama atlandı, metin araması: %s", e)
-        mode = "lexical"
-        hits = lexical_search_collection(COLLECTION_RUNBOOK, q, n_results=k)
+        logger.info("Runbook vektör arama atlandı, FTS: %s", e)
+    hits = hybrid_search_collection(
+        COLLECTION_RUNBOOK, q,
+        query_embedding=emb_vec,
+        embedding_model=model,
+        embedding_dim=dim,
+        n_results=k,
+    )
+    if emb_vec and not any(h.get("source") == "vector" for h in hits):
+        mode = "fts"
     return {"hits": format_runbook_hits(hits), "mode": mode}
 
 
@@ -301,7 +342,11 @@ async def ingest_incidents_from_db(db: Session, *, force_full: bool = False) -> 
     if not texts:
         detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
         raise RuntimeError(f"Incident RAG ingest: {detail}")
-    upsert_chunks(COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    model, dim = _store_model_dim()
+    upsert_chunks(
+        COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas,
+        embeddings=embeddings, embedding_model=model, embedding_dim=dim,
+    )
     if do_full:
         _last_full_incident_ingest = now_mono
         try:
@@ -354,7 +399,11 @@ async def ingest_events_from_db(db: Session, limit: int = 2000) -> int:
     if not texts:
         detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
         raise RuntimeError(f"Event RAG ingest: {detail}")
-    upsert_chunks(COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    model, dim = _store_model_dim()
+    upsert_chunks(
+        COLLECTION_INCIDENTS, ids=ids, documents=texts, metadatas=metadatas,
+        embeddings=embeddings, embedding_model=model, embedding_dim=dim,
+    )
     try:
         # Retention ile DB'den silinmiş event'lerin chunk'ları (SQL tarafında)
         res = prune_orphan_source_chunks(
@@ -390,7 +439,11 @@ async def ingest_metric_descriptions(items: List[dict]) -> int:
     if not documents:
         detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
         raise RuntimeError(f"Metrik RAG ingest: {detail}")
-    add_chunks(COLLECTION_METRICS, ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings)
+    model, dim = _store_model_dim()
+    add_chunks(
+        COLLECTION_METRICS, ids=ids, documents=documents, metadatas=metadatas,
+        embeddings=embeddings, embedding_model=model, embedding_dim=dim,
+    )
     return len(ids)
 
 
@@ -488,7 +541,11 @@ async def ingest_knowledge_from_db(db: Session, *, force: bool = False) -> int:
     if not texts:
         detail = get_last_embed_error() or "Ollama embedding başarısız (sıfır vektör)"
         raise RuntimeError(f"Bilgi Bankası RAG ingest: {detail}")
-    upsert_chunks(COLLECTION_KNOWLEDGE, ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+    model, dim = _store_model_dim()
+    upsert_chunks(
+        COLLECTION_KNOWLEDGE, ids=ids, documents=texts, metadatas=metadatas,
+        embeddings=embeddings, embedding_model=model, embedding_dim=dim,
+    )
     for prefix in ("kb_", "inv_", "apps_"):
         try:
             pruned = prune_ids_not_in_keep(
@@ -627,9 +684,8 @@ def format_knowledge_facts_for_servers(
 async def get_runbook_context(message: str, top_k: Optional[int] = None) -> str:
     top_k = top_k or settings.RAG_RUNBOOK_TOP_K
     try:
-        emb = await get_embedding(message)
         return await _format_collection_context(
-            message, COLLECTION_RUNBOOK, emb, top_k, joiner="\n\n---\n\n"
+            message, COLLECTION_RUNBOOK, top_k, joiner="\n\n---\n\n"
         )
     except Exception as e:
         logger.warning(f"Runbook RAG error: {e}")
@@ -639,9 +695,8 @@ async def get_runbook_context(message: str, top_k: Optional[int] = None) -> str:
 async def get_incidents_context(message: str, top_k: Optional[int] = None) -> str:
     top_k = top_k or settings.RAG_INCIDENTS_TOP_K
     try:
-        emb = await get_embedding(message)
         return await _format_collection_context(
-            message, COLLECTION_INCIDENTS, emb, top_k, joiner="\n\n---\n\n"
+            message, COLLECTION_INCIDENTS, top_k, joiner="\n\n---\n\n"
         )
     except Exception as e:
         logger.warning(f"Incidents RAG error: {e}")
@@ -651,9 +706,8 @@ async def get_incidents_context(message: str, top_k: Optional[int] = None) -> st
 async def get_metrics_context(message: str, top_k: Optional[int] = None) -> str:
     top_k = top_k or settings.RAG_METRICS_TOP_K
     try:
-        emb = await get_embedding(message)
         return await _format_collection_context(
-            message, COLLECTION_METRICS, emb, top_k, joiner="\n\n"
+            message, COLLECTION_METRICS, top_k, joiner="\n\n"
         )
     except Exception as e:
         logger.warning(f"Metrics RAG error: {e}")
@@ -663,9 +717,8 @@ async def get_metrics_context(message: str, top_k: Optional[int] = None) -> str:
 async def get_knowledge_context(message: str, top_k: Optional[int] = None) -> str:
     top_k = top_k or settings.RAG_KNOWLEDGE_TOP_K
     try:
-        emb = await get_embedding(message)
         return await _format_collection_context(
-            message, COLLECTION_KNOWLEDGE, emb, top_k, joiner="\n\n---\n\n"
+            message, COLLECTION_KNOWLEDGE, top_k, joiner="\n\n---\n\n"
         )
     except Exception as e:
         logger.warning(f"Knowledge RAG error: {e}")
@@ -675,14 +728,32 @@ async def get_knowledge_context(message: str, top_k: Optional[int] = None) -> st
 async def _format_collection_context(
     message: str,
     collection: str,
-    emb: Optional[List[float]],
     top_k: int,
     *,
     joiner: str,
+    query_embedding: Optional[List[float]] = None,
+    embedding_usable: bool = True,
 ) -> str:
-    if not emb or all(abs(float(x)) < 1e-12 for x in emb):
-        return ""
-    hits = query_collection(collection, query_embedding=emb, n_results=_candidate_k(top_k))
+    """Hibrit arama: vektör (aynı model) + FTS. Embed yoksa yalnız FTS — boş dönmez."""
+    model, dim = _store_model_dim()
+    emb = query_embedding
+    if emb is None and embedding_usable:
+        try:
+            res = await embed_text(message)
+            if res.usable_for_vector_search and res.vector:
+                emb = res.vector
+            elif res.error:
+                logger.info("RAG %s vektör yok → FTS: %s", collection, res.error)
+        except Exception as e:
+            logger.info("RAG %s embed hata → FTS: %s", collection, e)
+    hits = hybrid_search_collection(
+        collection,
+        message,
+        query_embedding=emb,
+        embedding_model=model,
+        embedding_dim=dim,
+        n_results=_candidate_k(top_k),
+    )
     hits = await _rerank_hits(message, hits, top_k)
     if not hits:
         return ""
@@ -698,25 +769,22 @@ async def get_rag_context_for_message(
     collections: Optional[Sequence[str]] = None,
 ) -> dict:
     """
-    Chat RAG: runbook (PDF), incidents, metrics, knowledge (Bilgi Bankası semantik).
+    Chat RAG: runbook, incidents, metrics, knowledge — hibrit (vektör+FTS).
 
-    Dalga 3: soru için tek embedding; dört koleksiyon aynı vektörle sorgulanır
-    (önceki 4× embed kalkar). Rerank hâlâ koleksiyon başına best-effort.
-
-    Seçili sunucu fact'leri Chat tarafında zaten get_learned_facts_block ile gelir;
-    burada varsayılan olarak semantik knowledge_facts araması kullanılır (filo geneli).
-    include_server_facts=True ise seçili sunucu kayıtları da eklenir (preview / özel yollar).
+    Tek embed denemesi; başarısızsa koleksiyonlar FTS ile doldurulur (sessiz boş yok).
     """
-    import asyncio as _asyncio
-
-    empty = {"runbook": "", "incidents": "", "metrics": "", "knowledge": ""}
+    emb = None
+    usable = True
     try:
-        emb = await get_embedding(message)
+        res = await embed_text(message)
+        if res.usable_for_vector_search and res.vector:
+            emb = res.vector
+        else:
+            usable = False
+            logger.info("RAG chat embed kullanılamadı → FTS: %s", res.error)
     except Exception as e:
-        logger.warning("RAG tek embed hatası: %s", e)
-        return empty
-    if not emb or all(abs(float(x)) < 1e-12 for x in emb):
-        return empty
+        usable = False
+        logger.warning("RAG tek embed hatası → FTS: %s", e)
 
     rb_k = settings.RAG_RUNBOOK_TOP_K
     inc_k = settings.RAG_INCIDENTS_TOP_K
@@ -730,19 +798,23 @@ async def get_rag_context_for_message(
     knowledge = ""
     if want is None or "runbook" in want:
         runbook = await _format_collection_context(
-            message, COLLECTION_RUNBOOK, emb, rb_k, joiner="\n\n---\n\n"
+            message, COLLECTION_RUNBOOK, rb_k, joiner="\n\n---\n\n",
+            query_embedding=emb, embedding_usable=usable,
         )
     if want is None or "incidents" in want:
         incidents = await _format_collection_context(
-            message, COLLECTION_INCIDENTS, emb, inc_k, joiner="\n\n---\n\n"
+            message, COLLECTION_INCIDENTS, inc_k, joiner="\n\n---\n\n",
+            query_embedding=emb, embedding_usable=usable,
         )
     if want is None or "metric_descriptions" in want or "metrics" in (want or ()):
         metrics = await _format_collection_context(
-            message, COLLECTION_METRICS, emb, met_k, joiner="\n\n"
+            message, COLLECTION_METRICS, met_k, joiner="\n\n",
+            query_embedding=emb, embedding_usable=usable,
         )
     if want is None or "knowledge_facts" in want or "knowledge" in (want or ()):
         knowledge = await _format_collection_context(
-            message, COLLECTION_KNOWLEDGE, emb, kn_k, joiner="\n\n---\n\n"
+            message, COLLECTION_KNOWLEDGE, kn_k, joiner="\n\n---\n\n",
+            query_embedding=emb, embedding_usable=usable,
         )
     if include_server_facts and db is not None and server_ids:
         try:

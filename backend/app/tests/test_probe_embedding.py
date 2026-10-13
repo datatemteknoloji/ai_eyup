@@ -64,14 +64,17 @@ async def test_probe_full_calls_embed():
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
 
+    fake = emb.EmbedResult(
+        vector=[0.1] * 768,
+        model="nomic-embed-text",
+        dim=768,
+        source="ollama_embed",
+        usable_for_vector_search=True,
+    )
     with patch.object(emb.httpx, "AsyncClient", return_value=client):
         with patch.object(emb, "embed_base_url", return_value="http://ollama:11434"):
             with patch.object(emb, "embed_model_name", return_value="nomic-embed-text"):
-                with patch.object(
-                    emb,
-                    "_post_embed",
-                    AsyncMock(return_value=([0.1] * 768, None)),
-                ) as post:
+                with patch.object(emb, "embed_text", AsyncMock(return_value=fake)) as post:
                     out = await emb.probe_embedding(mode="full")
 
     assert out["ok"] is True

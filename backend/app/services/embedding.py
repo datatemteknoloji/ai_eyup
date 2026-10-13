@@ -2,17 +2,19 @@
 Embedding servisi — RAG için metin vektörleme.
 
 Öncelik:
-  1) EMBEDDING_URL veya OLLAMA_URL → Ollama /api/embeddings (+ /api/embed fallback)
-  2) Aynı tabanda OpenAI-uyumlu /v1/embeddings (yeni Ollama / gateway)
-  3) REMOTE_LLM açıkysa REMOTE_LLM_URL /v1/embeddings
+  1) EMBEDDING_URL veya OLLAMA_URL → Ollama /api/embed (truncate=false) → /api/embeddings
+  2) Aynı tabanda OpenAI-uyumlu /v1/embeddings
+  3) REMOTE_LLM açıkysa REMOTE_LLM_URL /v1/embeddings (aynı model adı; veri çıkışı loglanır)
 
-Varsayılan model: nomic-embed-text (768 boyut).
+Varsayılan model: nomic-embed-text (768 boyut). Boyut uyuşmazlığında pad/kırp yok.
+Yedek zincirinde farklı modele düşülürse vektör kullanılmaz (çağıran FTS'e geçer).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -22,56 +24,48 @@ from app.core.config import remote_llm_enabled, remote_llm_ssl_verify, settings
 logger = logging.getLogger(__name__)
 
 OLLAMA_EMBED_TIMEOUT = float(os.getenv("OLLAMA_EMBED_TIMEOUT", "180"))
-# Büyük PDF'lerde sıralı embed dakikalar sürer; paralel sınırla hızlandır.
-# Varsayılan 4: GPU'da yeterli, CPU-only (uzak chat + yerel nomic) için 8 thrashing yapar.
 EMBED_CONCURRENCY = max(1, min(int(os.getenv("OLLAMA_EMBED_CONCURRENCY", "4")), 32))
+EXPECTED_EMBED_DIM = 768
+
+_last_embed_error: Optional[str] = None
+_last_embed_meta: Dict[str, Any] = {}
+
+
+@dataclass
+class EmbedResult:
+    vector: Optional[List[float]] = None
+    model: str = ""
+    dim: int = 0
+    source: str = "failed"  # ollama_embed | ollama_embeddings | ollama_v1 | remote_v1 | failed
+    error: Optional[str] = None
+    usable_for_vector_search: bool = False
+    extras: Dict[str, Any] = field(default_factory=dict)
 
 
 def embed_keep_alive() -> Any:
-    """Ollama'ya gönderilecek keep_alive.
-
-    Varsayılan ``-1``: nomic modelini unload etme (Stopping… / soğuk yük döngüsünü keser).
-    ``default`` / boş: alanı gönderme (Ollama süreci varsayılanı, genelde ~5m).
-    Süre string: ``30m``, ``24h`` vb.
-    """
-    raw = (os.getenv("OLLAMA_EMBED_KEEP_ALIVE") or "-1").strip()
-    if not raw or raw.lower() in ("default", "omit", "none"):
-        return None
-    if raw.lstrip("-").isdigit() and raw.count("-") <= 1:
-        try:
-            return int(raw)
-        except ValueError:
-            return raw
-    return raw
+    from app.services.ollama_runtime import get_keep_alive
+    return get_keep_alive()
 
 
 def _with_keep_alive(payload: Dict[str, Any]) -> Dict[str, Any]:
-    ka = embed_keep_alive()
-    if ka is None:
-        return payload
-    out = dict(payload)
-    out["keep_alive"] = ka
-    return out
+    from app.services.ollama_runtime import apply_ollama_payload
+    return apply_ollama_payload(payload, include_num_ctx=False)
 
 
 def embed_concurrency() -> int:
-    """Eşzamanlı embedding isteği sınırı (Gelişmiş ayarlardan, restart gerekmez).
-
-    Ollama CPU'da çalışıyorsa bu sayı doğrudan CPU baskısını belirler; ayar
-    düşürülünce embed yavaşlar ama sistem rahatlar.
-    """
     try:
         from app.services import runtime_settings
         return max(1, min(32, int(runtime_settings.get_int("rag_embed_concurrency"))))
     except Exception:
         return EMBED_CONCURRENCY
 
-# Son başarısız embedding ayrıntısı (UI/RuntimeError için)
-_last_embed_error: Optional[str] = None
-
 
 def get_last_embed_error() -> Optional[str]:
     return _last_embed_error
+
+
+def get_last_embed_meta() -> Dict[str, Any]:
+    return dict(_last_embed_meta)
 
 
 def _set_last_error(msg: str) -> None:
@@ -79,12 +73,16 @@ def _set_last_error(msg: str) -> None:
     _last_embed_error = (msg or "")[:800]
 
 
-def _zero_vec(dim: int = 768) -> List[float]:
+def _set_last_meta(meta: Dict[str, Any]) -> None:
+    global _last_embed_meta
+    _last_embed_meta = dict(meta or {})
+
+
+def _zero_vec(dim: int = EXPECTED_EMBED_DIM) -> List[float]:
     return [0.0] * dim
 
 
 def embed_base_url() -> str:
-    """RAG embedding için hedef kök URL (chat Ollama'sından ayrı seçilebilir)."""
     return (
         (getattr(settings, "EMBEDDING_URL", None) or "").strip()
         or (settings.OLLAMA_URL or "").strip()
@@ -93,15 +91,21 @@ def embed_base_url() -> str:
 
 
 def embed_model_name() -> str:
+    """Yapılandırılmış embed modeli (yerel birincil)."""
     return (
-        (getattr(settings, "REMOTE_LLM_EMBED_MODEL", None) or "").strip()
-        or (settings.OLLAMA_EMBED_MODEL or "").strip()
+        (settings.OLLAMA_EMBED_MODEL or "").strip()
         or "nomic-embed-text"
     )
 
 
+def remote_embed_model_name() -> str:
+    return (
+        (getattr(settings, "REMOTE_LLM_EMBED_MODEL", None) or "").strip()
+        or embed_model_name()
+    )
+
+
 def _parse_embedding_payload(data: dict) -> Optional[List[float]]:
-    """Hem /api/embeddings hem /api/embed hem /v1/embeddings yanıtlarını destekle."""
     if not isinstance(data, dict):
         return None
     emb = data.get("embedding")
@@ -126,6 +130,16 @@ def _parse_embedding_payload(data: dict) -> Optional[List[float]]:
     return None
 
 
+def _validate_dim(vec: Optional[List[float]], *, expected: int = EXPECTED_EMBED_DIM) -> Tuple[Optional[List[float]], Optional[str]]:
+    if not vec:
+        return None, "boş embedding"
+    if len(vec) != int(expected):
+        msg = f"embedding boyut uyuşmazlığı: got={len(vec)} expected={expected} (pad/kırp yok)"
+        logger.error("RAG embed: %s", msg)
+        return None, msg
+    return vec, None
+
+
 def _remediation_hint(base: str, model: str) -> str:
     return (
         f"RAG embedding için Ollama erişimi gerekir. "
@@ -136,7 +150,43 @@ def _remediation_hint(base: str, model: str) -> str:
     )
 
 
-async def _post_ollama_native(
+async def _post_ollama_embed_api(
+    client: httpx.AsyncClient, base: str, model: str, prompt: str
+) -> Tuple[Optional[List[float]], Optional[str]]:
+    """Öncelikli: /api/embed + truncate=false — uzun girdi hata verir, sessiz kesilmez."""
+    try:
+        payload = _with_keep_alive({
+            "model": model,
+            "input": prompt,
+            "truncate": False,
+        })
+        r = await client.post(f"{base}/api/embed", json=payload)
+        if r.status_code == 200:
+            vec = _parse_embedding_payload(r.json())
+            vec, err = _validate_dim(vec)
+            if vec:
+                return vec, None
+            return None, err or f"{base}/api/embed: boş embedding"
+        body = (r.text or "")[:240]
+        # Eski Ollama truncate alanını tanımayabilir — bir kez truncate'siz dene
+        if r.status_code == 400 and "truncate" in body.lower():
+            payload2 = _with_keep_alive({"model": model, "input": prompt})
+            r2 = await client.post(f"{base}/api/embed", json=payload2)
+            if r2.status_code == 200:
+                vec = _parse_embedding_payload(r2.json())
+                vec, err = _validate_dim(vec)
+                if vec:
+                    return vec, None
+                return None, err or f"{base}/api/embed: boş embedding"
+            return None, f"HTTP {r2.status_code} {base}/api/embed: {(r2.text or '')[:200]}"
+        if r.status_code in (404, 405):
+            return None, f"HTTP {r.status_code} {base}/api/embed"
+        return None, f"HTTP {r.status_code} {base}/api/embed: {body}"
+    except Exception as e:
+        return None, f"{base}/api/embed erişilemedi ({type(e).__name__}: {e})"
+
+
+async def _post_ollama_embeddings_legacy(
     client: httpx.AsyncClient, base: str, model: str, prompt: str
 ) -> Tuple[Optional[List[float]], Optional[str]]:
     try:
@@ -146,24 +196,13 @@ async def _post_ollama_native(
         )
         if r.status_code == 200:
             vec = _parse_embedding_payload(r.json())
+            vec, err = _validate_dim(vec)
             if vec:
                 return vec, None
-            return None, f"{base}/api/embeddings: boş embedding döndü"
-        err_body = (r.text or "")[:240]
-        if r.status_code in (404, 405) or "not found" in err_body.lower():
-            r2 = await client.post(
-                f"{base}/api/embed",
-                json=_with_keep_alive({"model": model, "input": prompt}),
-            )
-            if r2.status_code == 200:
-                vec = _parse_embedding_payload(r2.json())
-                if vec:
-                    return vec, None
-                return None, f"{base}/api/embed: boş embedding döndü"
-            return None, f"HTTP {r2.status_code} {base}/api/embed: {(r2.text or '')[:200]}"
-        return None, f"HTTP {r.status_code} {base}/api/embeddings model={model}: {err_body}"
+            return None, err or f"{base}/api/embeddings: boş embedding"
+        return None, f"HTTP {r.status_code} {base}/api/embeddings: {(r.text or '')[:200]}"
     except Exception as e:
-        return None, f"{base} erişilemedi ({type(e).__name__}: {e})"
+        return None, f"{base}/api/embeddings erişilemedi ({type(e).__name__}: {e})"
 
 
 async def _post_openai_embeddings(
@@ -173,51 +212,93 @@ async def _post_openai_embeddings(
     prompt: str,
     *,
     headers: Optional[Dict[str, str]] = None,
+    ollama_keep_alive: bool = False,
 ) -> Tuple[Optional[List[float]], Optional[str]]:
     url = f"{base.rstrip('/')}/v1/embeddings"
+    body: Dict[str, Any] = {"model": model, "input": prompt}
+    if ollama_keep_alive:
+        body = _with_keep_alive(body)
     try:
-        r = await client.post(
-            url,
-            json=_with_keep_alive({"model": model, "input": prompt}),
-            headers=headers or {},
-        )
+        r = await client.post(url, json=body, headers=headers or {})
         if r.status_code == 200:
             vec = _parse_embedding_payload(r.json())
+            vec, err = _validate_dim(vec)
             if vec:
                 return vec, None
-            return None, f"{url}: boş embedding döndü"
+            return None, err or f"{url}: boş embedding"
         return None, f"HTTP {r.status_code} {url}: {(r.text or '')[:200]}"
     except Exception as e:
         return None, f"{url} erişilemedi ({type(e).__name__}: {e})"
 
 
-async def _post_embed(client: httpx.AsyncClient, text: str) -> Tuple[Optional[List[float]], Optional[str]]:
-    """Embedding isteği — Ollama native → aynı host /v1 → REMOTE_LLM /v1."""
+async def embed_text(text: str) -> EmbedResult:
+    """Tek metin embed — model/kaynak meta ile. Vektör araması için usable bayrağı."""
+    configured = embed_model_name()
     base = embed_base_url()
-    model = embed_model_name()
-    prompt = text.strip()
+    prompt = (text or "").strip()
+    if not prompt:
+        res = EmbedResult(model=configured, error="boş metin", source="failed")
+        _set_last_meta(res.__dict__)
+        return res
+
     errors: List[str] = []
+    async with httpx.AsyncClient(timeout=OLLAMA_EMBED_TIMEOUT) as client:
+        # 1) /api/embed truncate=false
+        vec, err = await _post_ollama_embed_api(client, base, configured, prompt)
+        if vec:
+            res = EmbedResult(
+                vector=vec, model=configured, dim=len(vec),
+                source="ollama_embed", usable_for_vector_search=True,
+            )
+            _set_last_meta({"model": configured, "source": res.source, "dim": res.dim})
+            return res
+        if err:
+            errors.append(err)
 
-    vec, err = await _post_ollama_native(client, base, model, prompt)
-    if vec:
-        return vec, None
-    if err:
-        errors.append(err)
+        # 2) legacy /api/embeddings
+        vec, err = await _post_ollama_embeddings_legacy(client, base, configured, prompt)
+        if vec:
+            res = EmbedResult(
+                vector=vec, model=configured, dim=len(vec),
+                source="ollama_embeddings", usable_for_vector_search=True,
+            )
+            _set_last_meta({"model": configured, "source": res.source, "dim": res.dim})
+            return res
+        if err:
+            errors.append(err)
 
-    # Yeni Ollama / bazı gateway'ler OpenAI embeddings yolu sunar (auth yok)
-    vec, err = await _post_openai_embeddings(client, base, model, prompt)
-    if vec:
-        return vec, None
-    if err and "erişilemedi" not in (err or ""):
-        # Bağlantı tamamen yoksa tekrar yazmaya gerek yok
-        errors.append(err)
+        # 3) aynı host /v1/embeddings
+        vec, err = await _post_openai_embeddings(
+            client, base, configured, prompt, ollama_keep_alive=True,
+        )
+        if vec:
+            res = EmbedResult(
+                vector=vec, model=configured, dim=len(vec),
+                source="ollama_v1", usable_for_vector_search=True,
+            )
+            _set_last_meta({"model": configured, "source": res.source, "dim": res.dim})
+            return res
+        if err and "erişilemedi" not in (err or ""):
+            errors.append(err)
 
+    # 4) REMOTE — yalnız aynı model adı; aksi halde vektör araması için kullanma
     if remote_llm_enabled():
         remote_base = (settings.REMOTE_LLM_URL or "").rstrip("/")
-        remote_model = (
-            (getattr(settings, "REMOTE_LLM_EMBED_MODEL", None) or "").strip()
-            or model
-        )
+        remote_model = remote_embed_model_name()
+        if remote_model != configured:
+            msg = (
+                f"REMOTE_LLM embed modeli ({remote_model}) yapılandırılmış yerel "
+                f"modelden ({configured}) farklı — vektör araması atlanacak (FTS)"
+            )
+            logger.warning("RAG embed: %s", msg)
+            res = EmbedResult(
+                model=configured, source="failed", error=msg,
+                usable_for_vector_search=False,
+                extras={"remote_model": remote_model},
+            )
+            _set_last_error(msg)
+            _set_last_meta(res.__dict__)
+            return res
         headers = {
             **{
                 k: v
@@ -229,15 +310,26 @@ async def _post_embed(client: httpx.AsyncClient, text: str) -> Tuple[Optional[Li
             },
             "Content-Type": "application/json",
         }
-        # SSL: remote_llm_ssl_verify bool veya CA path; httpx verify=...
         verify: Any = remote_llm_ssl_verify()
+        logger.warning(
+            "RAG embed: uzak sağlayıcıya düşülüyor (veri çıkışı) url=%s model=%s",
+            remote_base, remote_model,
+        )
         try:
             async with httpx.AsyncClient(timeout=OLLAMA_EMBED_TIMEOUT, verify=verify) as rclient:
                 vec, err = await _post_openai_embeddings(
-                    rclient, remote_base, remote_model, prompt, headers=headers
+                    rclient, remote_base, remote_model, prompt, headers=headers,
                 )
             if vec:
-                return vec, None
+                res = EmbedResult(
+                    vector=vec, model=remote_model, dim=len(vec),
+                    source="remote_v1", usable_for_vector_search=True,
+                    extras={"egress": True, "remote_url": remote_base},
+                )
+                _set_last_meta({
+                    "model": remote_model, "source": res.source, "dim": res.dim, "egress": True,
+                })
+                return res
             if err:
                 errors.append(f"REMOTE_LLM: {err}")
         except Exception as e:
@@ -245,18 +337,23 @@ async def _post_embed(client: httpx.AsyncClient, text: str) -> Tuple[Optional[Li
 
     detail = errors[0] if errors else "embedding başarısız"
     if "erişilemedi" in detail:
-        detail = f"{detail}. {_remediation_hint(base, model)}"
-    return None, detail
+        detail = f"{detail}. {_remediation_hint(base, configured)}"
+    _set_last_error(detail)
+    res = EmbedResult(model=configured, source="failed", error=detail)
+    _set_last_meta({"model": configured, "source": "failed", "error": detail})
+    return res
+
+
+async def _post_embed(client: httpx.AsyncClient, text: str) -> Tuple[Optional[List[float]], Optional[str]]:
+    """Geriye uyum — embed_text kullanır (client yok sayılır, kendi client açar)."""
+    del client  # API uyumu
+    res = await embed_text(text)
+    if res.vector and res.usable_for_vector_search:
+        return res.vector, None
+    return None, res.error or "embedding başarısız"
 
 
 async def probe_embedding(*, mode: str = "light") -> Dict[str, Any]:
-    """Embedding sağlık kontrolü.
-
-    mode=light (varsayılan): yalnızca ``/api/tags`` + model listesi.
-      UI /rag/status ve fleet kapı kontrolü için — Ollama meşgulken
-      gerçek embed'in 15s ReadTimeout'una düşmez.
-    mode=full: tags + gerçek kısa embed (dim doğrulama).
-    """
     base = embed_base_url()
     model = embed_model_name()
     probe_mode = (mode or "light").strip().lower()
@@ -271,9 +368,9 @@ async def probe_embedding(*, mode: str = "light") -> Dict[str, Any]:
         "error": None,
         "hint": _remediation_hint(base, model),
         "probe_mode": probe_mode,
+        "expected_dim": EXPECTED_EMBED_DIM,
     }
 
-    # Light: tags hızlı olmalı. Full: embed için daha uzun timeout.
     tags_timeout = 5.0
     full_timeout = min(15.0, OLLAMA_EMBED_TIMEOUT)
     client_timeout = full_timeout if probe_mode == "full" else tags_timeout
@@ -313,87 +410,72 @@ async def probe_embedding(*, mode: str = "light") -> Dict[str, Any]:
                         f"Model listede yok: {model}. "
                         f"`ollama pull {model}` çalıştırın."
                     )
-                # tags başarısızsa error zaten set
                 return out
 
-            # full: gerçek embed
             if not tags_ok:
                 return out
-            vec, err = await _post_embed(client, "rag health probe")
-            if vec and not all(abs(float(x)) < 1e-12 for x in vec):
+            res = await embed_text("rag health probe")
+            if res.vector and res.usable_for_vector_search:
                 out["ok"] = True
-                out["dim"] = len(vec)
+                out["dim"] = res.dim
+                out["source"] = res.source
                 out["error"] = None
             else:
-                out["error"] = err or get_last_embed_error() or "sıfır vektör"
+                out["error"] = res.error or get_last_embed_error() or "sıfır vektör"
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
     return out
 
 
 async def get_embedding(text: str) -> List[float]:
-    """Tek bir metin için embedding döndür. Başarısızsa sıfır vektör + last_error."""
+    """Tek metin embedding. Başarısızsa sıfır vektör + last_error."""
     if not text or not text.strip():
         return _zero_vec()
-    try:
-        async with httpx.AsyncClient(timeout=OLLAMA_EMBED_TIMEOUT) as client:
-            vec, err = await _post_embed(client, text)
-            if vec:
-                return vec
-            if err:
-                _set_last_error(err)
-                logger.warning("Ollama embed failed: %s", err)
-            return _zero_vec()
-    except Exception as e:
-        msg = f"Embedding error: {e}"
-        _set_last_error(msg)
-        logger.warning(msg)
-        return _zero_vec()
+    res = await embed_text(text)
+    if res.vector and res.usable_for_vector_search:
+        return res.vector
+    if res.error:
+        _set_last_error(res.error)
+        logger.warning("Ollama embed failed: %s", res.error)
+    return _zero_vec()
 
 
 async def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
-    """Birden fazla metin için paralel embedding (semaphore ile sınırlı)."""
     if not texts:
         return []
-
     concurrency = embed_concurrency()
     sem = asyncio.Semaphore(concurrency)
     results: List[Optional[List[float]]] = [None] * len(texts)
+    model = embed_model_name()
 
-    async with httpx.AsyncClient(timeout=OLLAMA_EMBED_TIMEOUT) as client:
-
-        async def _one(i: int, t: str) -> None:
-            if not t or not str(t).strip():
+    async def _one(i: int, t: str) -> None:
+        if not t or not str(t).strip():
+            results[i] = _zero_vec()
+            return
+        async with sem:
+            res = await embed_text(str(t))
+            if res.vector and res.usable_for_vector_search:
+                results[i] = res.vector
+            else:
+                if res.error:
+                    _set_last_error(res.error)
+                    logger.warning("Ollama embed[%s] failed: %s", i, res.error)
                 results[i] = _zero_vec()
-                return
-            async with sem:
-                vec, err = await _post_embed(client, str(t))
-                if vec:
-                    results[i] = vec
-                else:
-                    if err:
-                        _set_last_error(err)
-                        logger.warning("Ollama embed[%s] failed: %s", i, err)
-                    results[i] = _zero_vec()
 
-        total = len(texts)
-        if total >= 20:
-            logger.info(
-                "RAG embed batch start: %s chunk, concurrency=%s, model=%s",
-                total, concurrency, embed_model_name(),
-            )
-
-        await asyncio.gather(*[_one(i, t) for i, t in enumerate(texts)])
-
+    total = len(texts)
+    if total >= 20:
+        logger.info(
+            "RAG embed batch start: %s chunk, concurrency=%s, model=%s",
+            total, concurrency, model,
+        )
+    await asyncio.gather(*[_one(i, t) for i, t in enumerate(texts)])
     if total >= 20:
         ok = sum(1 for v in results if v and not all(abs(float(x)) < 1e-12 for x in v))
         logger.info("RAG embed batch done: %s/%s ok", ok, total)
-
     return [r if r is not None else _zero_vec() for r in results]
 
 
 def get_embedding_sync(text: str) -> List[float]:
-    """Senkron embedding (Chroma embedding function için)."""
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
