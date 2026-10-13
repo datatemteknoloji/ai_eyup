@@ -11,6 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.41] - 2026-10-13
+
 ### Sanallaştırma — yedek (Veeam), kapasite ve yöntem şeffaflığı
 - Kapasite Planlama → Eşikler: her eşiğin yanına tıklanabilir (i) yardım simgesi eklendi; kısa ve net açıklama + izinli aralık/varsayılan gösterilir.
 - Dilim F.0 (DEMO kapısı): DEMO yedek sağlayıcısı varsayılan KAPALI (`BACKUP_DEMO_ENABLED=true` yalnız dev); gerçek sağlayıcı varken yok sayılır (karışmaz); `backup` yeteneğini açmaz; bulguları `platform=backup_demo` altında tutulup denetim kanıtı/rapor/skorlardan dışlanır; ISO A.8.13 kanıtı demo veriden üretilmez; açıkken her ekranda “DEMO VERİ — gerçek Veeam değil” bandı. Testler izole geçici Postgres DB'de (koşullu skip yok). Demo modunda `virt_backup_status`/`virt_rpo_compliance` “DEMO veri” etiketiyle açık; bayrak kapanınca çözülen demo bulguları `resolved_reason=demo_disabled` alır ve kapanan bulgu/çözüm süresi metriklerine girmez (`closure_metrics`).
