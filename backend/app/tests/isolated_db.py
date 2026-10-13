@@ -26,6 +26,8 @@ ROOT_TABLES = (
     # H.0 kapasite: hiyerarşi + host seviyesi yerleşim + politika override testleri
     "hypervisors", "hypervisor_host_metrics", "virt_clusters", "virt_datastores", "virt_config_snapshots",
     "capacity_policies", "capacity_policy_overrides", "hypervisor_host_inventory",
+    # What-if v2: p95 VM kullanımı + datastore runway serisi
+    "virt_vm_metrics", "virt_datastore_metrics",
 )
 
 _STATE: dict = {}

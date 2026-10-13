@@ -1,4 +1,7 @@
-"""pgvector store smoke — canlı DB gerekir."""
+"""pgvector store smoke — İZOLE test veritabanında (canlı ``rag_embeddings`` ve ``/app/uploads`` marker'ına DOKUNMAZ)."""
+import pytest
+
+from app.services import rag_store
 from app.services.rag_store import (
     ensure_schema,
     upsert_chunks,
@@ -9,7 +12,18 @@ from app.services.rag_store import (
 )
 
 
-def test_pgvector_upsert_and_query():
+@pytest.fixture()
+def rag_isolated(_isolated_engine, monkeypatch, tmp_path):
+    """rag_store'u izole DB'ye yönlendirir; süreç içi global durum ve marker dosyası test sonunda geri alınır."""
+    monkeypatch.setattr(rag_store, "engine", _isolated_engine)
+    monkeypatch.setattr(rag_store, "_schema_ready", False)
+    monkeypatch.setattr(rag_store, "_vector_disabled", False)
+    monkeypatch.setattr(rag_store, "_vector_disable_reason", "")
+    monkeypatch.setattr(rag_store, "_unsupported_marker", lambda: tmp_path / ".pgvector_unsupported")
+    return _isolated_engine
+
+
+def test_pgvector_upsert_and_query(rag_isolated):
     ensure_schema()
     cid = "test_metric_pgvector_1"
     emb = [0.01] * 768

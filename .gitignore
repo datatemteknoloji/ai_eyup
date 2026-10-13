@@ -108,3 +108,6 @@ docs/rag_seed/**
 
 # Runtime kalıcı veri ($INSTALL_DIR/data) — asla commit etme
 /data/
+
+# Geliştirme/tanı scratch scriptleri (pakete ve repoya girmez)
+backend/app/tools/

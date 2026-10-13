@@ -6,24 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.database import SessionLocal, engine
 from app.models.capacity_policy import CapacityPolicy
 from app.services import capacity_policy as cp
 from app.services import virt_reclaim as rc
 
 
 @pytest.fixture()
-def db():
-    CapacityPolicy.__table__.create(bind=engine, checkfirst=True)
-    s = SessionLocal()
-    s.query(CapacityPolicy).delete()
-    s.commit()
+def db(isolated_db):
+    """İzole test DB'si (canlı ``capacity_policies`` tablosuna DOKUNMAZ)."""
     try:
-        yield s
+        yield isolated_db
     finally:
-        s.query(CapacityPolicy).delete()
-        s.commit()
-        s.close()
+        isolated_db.rollback()
         cp.activate(values=cp.defaults())
 
 

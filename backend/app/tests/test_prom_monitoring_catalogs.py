@@ -35,8 +35,8 @@ def test_ocp_templates_default_views():
     assert {"views", "gpu", "kubevirt"} <= ids
 
 
-def test_ocp_prom_overview_unconfigured():
-    # Canlı ortamda openshift kaynağı olabilir; yapı yapılandırılmışsa da geçerli cevap beklenir.
+def test_ocp_prom_overview_unconfigured(isolated_db):
+    # İzole DB: canlı ayarlara bakılmaz (kaynak yapılandırılmamış); yapılandırılmışsa da geçerli cevap beklenir.
     out = run_ocp_prom_query(mode="overview")
     assert isinstance(out, dict)
     assert "configured" in out
@@ -51,12 +51,12 @@ def test_virt_catalog():
     assert any(m["id"] == "vm_cpu" for m in cats)
 
 
-def test_virt_prom_unconfigured():
+def test_virt_prom_unconfigured(isolated_db):
     out = run_virt_prom_query(mode="overview")
     assert out.get("configured") is False
 
 
-def test_custom_prom_no_source():
+def test_custom_prom_no_source(isolated_db):
     out = run_custom_prom_query(mode="list_sources")
     assert out.get("ok") is True
     assert isinstance(out.get("sources"), list)
