@@ -9,16 +9,43 @@ Format [Keep a Changelog](https://keepachangelog.com/) yaklaşımına yakındır
 Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 `scripts/release.sh` kullanın (bkz. o script'in başlığı).
 
-## [1.0.9.40] - 2026-10-06
+## [Unreleased]
 
+### Sanallaştırma — yedek (Veeam), kapasite ve yöntem şeffaflığı
 - Kapasite Planlama → Eşikler: her eşiğin yanına tıklanabilir (i) yardım simgesi eklendi; kısa ve net açıklama + izinli aralık/varsayılan gösterilir.
-
 - Dilim F.0 (DEMO kapısı): DEMO yedek sağlayıcısı varsayılan KAPALI (`BACKUP_DEMO_ENABLED=true` yalnız dev); gerçek sağlayıcı varken yok sayılır (karışmaz); `backup` yeteneğini açmaz; bulguları `platform=backup_demo` altında tutulup denetim kanıtı/rapor/skorlardan dışlanır; ISO A.8.13 kanıtı demo veriden üretilmez; açıkken her ekranda “DEMO VERİ — gerçek Veeam değil” bandı. Testler izole geçici Postgres DB'de (koşullu skip yok). Demo modunda `virt_backup_status`/`virt_rpo_compliance` “DEMO veri” etiketiyle açık; bayrak kapanınca çözülen demo bulguları `resolved_reason=demo_disabled` alır ve kapanan bulgu/çözüm süresi metriklerine girmez (`closure_metrics`).
 - Dilim T (yöntem şeffaflığı): her bulgu/kart/metrik için sabit sınıf rozeti (Veri, Hesap, Tahmin, Kural, Eşleştirme, AI) + (i); içerik tek kaynak `services/method_registry.py` → `GET /api/v1/methods`; "Nasıl hesaplıyoruz?" sayfası (`/methods`, Ayarlar › Hakkında'dan da erişilir); AI metinleri `AiBlock` ile ayrı gösterilir; sohbet yanıtlarında "Kaynak: <tool> (<sınıf>), <saat>" satırı ve "AI genel bilgisi — ortamınızdan alınmadı" işareti; sistem prompt'unda SAYI KURALI; kayıtsız check/tool/bileşen id'si CI'yi kırar. Kapasite/Geri Kazanım/Yedek/Değişiklik/Sağlık/OpenShift kapasite/İzleme ekranlarına uygulandı. Kapasite yanıtına `as_of`, geri kazanıma `computed_at` eklendi.
 - Dilim B (yedek çerçevesi): `not_applicable` bulgu durumu (skor/payda dışı), capability registry (`GET /capabilities`), sohbet tool `requires_capability` filtresi, `integration_instances`+`bk_*` tabloları, `BackupProvider` protokolü. Veeam'siz ortamda Yedek UI/tool yok.
 - Dilim C/D/E (yedek): Veeam VBR salt-okunur REST adaptörü + DEMO/fixture sağlayıcı (`/integrations/backup`), Sanallaştırma › Yedek & DR (RPO, işler, depolar, eşleşmeyen nesneler, hedef politikalar, ISO A.8.13 kanıtı, depo what-if, yedek hatası↔drift korelasyonu), sohbet tool `virt_backup_status`/`virt_rpo_compliance` (yalnız backup capability varken), yedek bulguları (`bk.*`), incident timeline'a yedek oturumları. Madde 14 snapshot_remove ön kontrol, N+1 tek-host NA, Değişiklikler baseline mesajı, besleme yaşı ve konsolidasyon bulguları. Doğrulanmamış Veeam alanları (değişmezlik/şifreleme/CBT) kodlanmadı.
 - Dilim C (tamamlama): kapasite eşikleri artık `capacity_policies` tablosunda (Kapasite Planlama › Eşikler sekmesi, `GET/PUT /virt-insights/capacity/policy`, yalnız admin yazar); what-if'te "mevcut VM'i klonla" (aranabilir VM seçici); `hw.host.sensor_repeat` (30 günde ≥3 ayrı günde sensör alarmı); Yedek & DR'de kapalı VM'ler "Korumasız (kapalı)" olarak ayrışır; DEMO rozet kontrastı.
 - Geri Kazanım: "aşırı boyutlu" tespiti dinamik (30 günlük p95 CPU → önerilen vCPU, asgari %25 küçülme, güven düzeyi; `rs_*` eşikleri Kapasite › Eşikler'den ayarlanır); sahipsiz disk satırlarına kanıt/sınıf (VM'den çıkarılmış / VM silinmiş / API doğruladı / doğrula). Sol menü: Entegrasyonlar › Veeam (UC4 Automic altında); Envanter Merkezi Veeam kartı aktif sağlayıcı sayısını gösterir.
+- Kapasite What-if v2 (H, H.0): ortak senaryo motoru (vCenter/OLVM/OpenShift), cluster/host/resource pool hiyerarşisi ve kapsam, **Host devre dışı kalırsa (N+1)** matrisi (riske göre sıralı, simülasyon notu, Bulgular bağlantıları, `cap.sim.host_failure_matrix`), runway (Theil–Sen, ≥14 gün), geri kazanım simülasyonu, toplu yerleşim; kapsam filtresi çiplerle (opsiyonel); What-if varsayımlarında affinity/DRS/rezervasyon/VLAN kontrol edilmediği ve OpenShift virt-launcher ek belleğinin 'doküman varsayımı' olduğu belirtilir.
+- Referans paketleri (G): `ref.feed.stale`, resmi kaynak allowlist'i, üretim tarihi + SHA-256, paket yokluğunda bulgular korunur; dashboard kartında (i) ve doğrulanmış resmi kaynak bağlantıları.
+- Yöntem şeffaflığı (T2): Linux/Windows/Exadata rozetleri, AWR/log RCA AiBlock, sohbet kaynak satırı, rapor/PDF Yöntem notları; Yöntemler sayfasında kolon sıralama.
+- Bulgular: donanım sensör kanıtı, bağlam bloğu (Etki → N+1 satırına bağlantı), AI yorumu (`finding_ai_*`).
+- Yedek: Veeam revizyon seçiminde 'alanları doğrulanmadı' uyarısı (12.x ve 1.3-rev2); harici LLM açıkken Yedekleme sağlayıcısı sayfasında uyarı — uzak LLM'e yalnız VM/iş/depo adları ve durum/RPO özeti gider (`services/backup/egress.py`). `requires_capability` yoksa bulgu üretilmez (ölü `check_capabilities_met` kaldırıldı); bulgu sonuçları `RESULT_*` sabitleriyle (AST testi).
+- `.env.example`: `VCENTER_TOPOLOGY_COLLECT` (varsayılan kapalı) ve `CAPACITY_ENGINE` notu. Dokümanlar (TR/EN): Veeam, Yedek & DR, N+1, runway, geri kazanım, toplu yerleşim; yedek kapsamı '13 madde (Madde 6 — ServiceNow/Teams hariç)'.
+
+### Ortak LLM katmanı, RAG ve zaman
+- Ortak LLM gateway/transport/bütçe/zamanlayıcı katmanı, Ollama runtime algılama, sohbet metrikleri, gelişmiş LLM ayarları.
+- RAG: hibrit embedding, pgvector store değişiklikleri, migrasyon betikleri; zaman: `timeutil` (UTC/ISO), metrik zaman dilimi kayması düzeltmesi.
+
+### Automic (UC4)
+- İzleme, collector, salt okunur asistan, entegrasyon sihirbazı, dokümanlar ve testler (`automic` modülü).
+
+### Test altyapısı
+- Canlı DB'ye giden testler izole geçici DB'ye taşındı (`capacity_policy`, `reclaim_dynamic`, prom catalogs, `rag_pgvector`); tüm backend paketi canlı DB erişilemezken geçer.
+
+### Bilinen sınırlamalar
+- İlk kurulumun tek bir müşteride **canary** olarak yapılması önerilir.
+- Tek yerleşim mantığı (E2: /placement, toplu yerleşim, What-if ve N+1 ayrı yolları), HA rezerv politikaları (E3: ayrılmış failover host / slot) ve HyperConverged `vmiCPUAllocationRatio` okuması (E6) henüz yok.
+- Cluster bazında eşik override arayüzü (E7) ve sohbet PDF 'Yöntem notları' (E9) sonraki sürümde.
+- Gerçek VBR fixture'ı (B11) ve `VCENTER_TOPOLOGY_COLLECT` ölçümü (E8) canlı ortam gerektirdiğinden yapılmadı; F9 kalanları (senaryo kaydetme, donanım ekleme/emekliye ayırma, overcommit değişikliği, lisans etkisi, site/DR failover), gerçek VLAN/portgroup kontrolü, NUMA toplama ve OLVM data center ↔ storage domain eşlemesi yok.
+- Automic: 57 soruluk benchmark (N=2/N=5) bu sürümün son kodunda koşulmadı; açık işler k2, j5. Canlı sohbet/Automic smoke testi koşulmadı (yönetici parolası ortamda varsayılandan farklı).
+- Testlerde `ensure_schema` kaynaklı kalıntı canlı-DB riski tam elenmedi.
+
+## [1.0.9.40] - 2026-10-06
+
 ### Ana dashboard herkese açık, Yönetici raporu, OpenShift yetki düzeltmeleri
 - **Dashboard** (`/dashboard`; admin'de "Modüllerim" paneli gösterilmez) artık her kimliği doğrulanmış kullanıcıya açık ve açılış sayfası; içerik kullanıcının modüllerine göre süzülür, "Modüllerim" paneli erişilebilir alanlara kısayol verir. Linux envanteri yalnız `linux` modülü olan kullanıcıda sorgulanır.
 - **Yönetici › Raporlar** (`/executive/reports`, `GET /ops/executive-report`): Linux, Windows, Sanallaştırma, OpenShift ve Exadata için tek sayfalık deterministik rapor (genel durum, ortam tablosu, öne çıkan bulgular, açık olaylar, öneriler); Markdown indirme ve yazdır/PDF. Yalnız `executive` modülü / admin.
