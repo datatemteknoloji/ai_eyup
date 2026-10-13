@@ -8,6 +8,7 @@ export type ChatPdfMsg = {
   created_at?: string
   charts?: ChatPdfExportMessage['charts']
   meta?: ChatPdfExportMessage['meta']
+  evidence?: ChatPdfExportMessage['evidence']
 }
 
 export type ChatPdfPair<T extends ChatPdfMsg = ChatPdfMsg> = {

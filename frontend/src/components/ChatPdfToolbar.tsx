@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { CheckSquare, FileDown, X } from 'lucide-react'
-import { useT } from '../i18n/LocaleProvider'
+import { useLocale, useT } from '../i18n/LocaleProvider'
+import { useMethodCatalog } from './insights/MethodBadge'
+import { chatMethodIds, methodNotesSection } from '../lib/methodNotes'
 import type { ChatPdfPair } from '../lib/chatPdfSelect'
 import { exportChatMessagesToPrintWindow, type PdfExportOptions } from '../utils/pdfExport'
 
@@ -23,7 +25,13 @@ export function ChatPdfToolbar({
   fullExport: PdfExportOptions
 }) {
   const t = useT()
+  const { locale } = useLocale()
+  const cat = useMethodCatalog().data
   if (pairs.length === 0) return null
+  // E9: PDF'e "Yöntem notları" (registry'den; yalnız PDF'teki mesajların araçları)
+  const methodNotes: PdfExportOptions['methodNotes'] = (msgs) =>
+    methodNotesSection(cat, chatMethodIds(msgs), locale === 'en', t('method_notes_heading'))
+  const fullExport_ = { ...fullExport, methodNotes }
 
   if (!select.selectMode) {
     return (
@@ -32,7 +40,7 @@ export function ChatPdfToolbar({
           type="button"
           onClick={() => exportChatMessagesToPrintWindow(
             pairs.flatMap(p => p.messages),
-            fullExport,
+            fullExport_,
           )}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25"
           title={t('chat_pdf_title')}
@@ -64,7 +72,7 @@ export function ChatPdfToolbar({
         type="button"
         disabled={select.selectedCount === 0}
         onClick={() => select.exportSelected(pairs, {
-          ...fullExport,
+          ...fullExport_,
           title: `${fullExport.title || t('chat_pdf_chat')} — ${t('chat_pdf_selected_n', { n: select.selectedCount })}`,
           filename: `${fullExport.filename || 'sohbet'}_secili`,
         })}

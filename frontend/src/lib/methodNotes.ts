@@ -23,3 +23,25 @@ export function methodNotesSection(
   if (anyAi) items.push(en ? cat.ai_note_en : cat.ai_note_tr)
   return items.length ? { heading, items } : null
 }
+
+/**
+ * Sohbet PDF'i için yöntem kimlikleri: dışa aktarılan asistan yanıtlarında kullanılan araçlar (`tool:<ad>`) +
+ * metni yazan AI (`ai.chat`). Araç kullanılmayan yanıt "AI genel bilgisi"dir; `ai.chat` bunu da kapsar.
+ * Kayıtsız araç (kayıtta olmayan `tool:*`) sessizce atlanır — uydurma açıklama yazılmaz.
+ */
+export function chatMethodIds(
+  messages: Array<{ role: string; evidence?: { sources?: Array<{ tool: string }> } | null }>,
+): string[] {
+  const ids: string[] = []
+  let anyAssistant = false
+  for (const m of messages) {
+    if (m.role !== 'assistant') continue
+    anyAssistant = true
+    for (const s of m.evidence?.sources || []) {
+      const id = `tool:${s.tool}`
+      if (!ids.includes(id)) ids.push(id)
+    }
+  }
+  if (anyAssistant) ids.push('ai.chat')
+  return ids
+}

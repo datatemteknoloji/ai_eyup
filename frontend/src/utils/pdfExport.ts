@@ -10,6 +10,8 @@ export interface PdfExportOptions {
   filename?: string
   title?: string
   subtitle?: string
+  /** Sohbet PDF'i: dışa aktarılan mesajlardan "Yöntem notları" bölümü üretir (null → bölüm yok). */
+  methodNotes?: (messages: ChatPdfExportMessage[]) => { heading: string; items: string[] } | null
 }
 
 /**
@@ -128,6 +130,8 @@ export interface ChatPdfExportMessage {
   created_at?: string
   charts?: ChatChartPayload[] | null
   meta?: { charts?: ChatChartPayload[] } | null
+  /** Asistan yanıtının kaynak satırı verisi (hangi araç, hangi yöntem sınıfı) — Yöntem notları için. */
+  evidence?: { sources?: Array<{ tool: string }>; general?: boolean } | null
 }
 
 function chartsOf(m: ChatPdfExportMessage): ChatChartPayload[] {
@@ -369,6 +373,11 @@ export function exportChatMessagesToPrintWindow(
     if (parts.length === 0) {
       alert('Dışa aktarılacak mesaj yok')
       return
+    }
+    // E9: yöntem notları — metinler method_registry'den gelir (elle yazılmaz), yalnız bu PDF'teki mesajların araçları
+    const notes = options.methodNotes ? options.methodNotes(messages) : null
+    if (notes && notes.items.length) {
+      parts.push(`<h2>${escapeHtml(notes.heading)}</h2><ul>${notes.items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>`)
     }
     writePrintDocument(parts.join('\n'), {
       title: options.title || 'AI Asistan Sohbeti',
