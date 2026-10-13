@@ -1,14 +1,17 @@
 import { Link } from 'react-router-dom'
-import { useT } from '../../i18n/LocaleProvider'
+import { useT, useLocale } from '../../i18n/LocaleProvider'
 import { MethodBadge } from './MethodBadge'
 import { useInsights, useRole } from './insightsKit'
+import { TermHint } from './InfoDot'
 
 /** Referans paketi durum kartı (G.4): paket yok / güncel / güncel değil — ve bunun "yok" ≠ "temiz" olduğu. */
 export function ReferencePacksCard() {
   const t = useT()
+  const { locale } = useLocale()
   const { isAdmin } = useRole()
   const q = useInsights<any>('virt-insights', '/reference')
   const pk: any[] = q.data?.packages || []
+  const sources: Record<string, any[]> = q.data?.sources || {}
   if (!pk.length) return null
   const label: Record<string, string> = { cve_feed: t('vi_ref_cve'), kb_feed: t('vi_ref_kb'), upgrade_matrix: t('vi_ref_upg') }
   const tone: Record<string, string> = {
@@ -21,7 +24,7 @@ export function ReferencePacksCard() {
   return (
     <div className="bg-cyber-card border border-white/[0.06] rounded-lg p-4 space-y-3" data-testid="reference-packs-card">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-white">{t('vi_ref_title')}</h2>
+        <h2 className="text-sm font-semibold text-white inline-flex items-center">{t('vi_ref_title')}<TermHint k="ref_packs" /></h2>
         <Link to={isAdmin ? '/virt/health?tab=settings' : '/virt/health?tab=vuln'} className="text-xs text-blue-400 hover:underline">{t('g_ref_open')}</Link>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -32,6 +35,14 @@ export function ReferencePacksCard() {
             </div>
             <div className={`text-sm mt-1 ${tone[p.state] || 'text-slate-400'}`}>{stateText(p)}</div>
             {p.generated_at && <div className="text-[11px] text-slate-500 mt-0.5">{t('g_ref_generated')}: {new Date(p.generated_at).toLocaleDateString()}</div>}
+            <div className="text-[11px] mt-1 space-x-2" data-testid={`ref-sources-${p.kind}`}>
+              {(sources[p.kind] || []).length
+                ? (sources[p.kind] || []).map((s: any) => (
+                  <a key={s.id} href={s.url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+                    {(locale === 'en' ? s.title_en : s.title_tr) || s.id}
+                  </a>))
+                : <span className="text-slate-500">{t('vi_ref_no_verified_link')}</span>}
+            </div>
           </div>
         ))}
       </div>

@@ -43,6 +43,23 @@ describe('G referans paketi arayüzü', () => {
     expect(screen.getByText('g_ref_absent_note')).toBeTruthy()
   })
 
+  it('C1: başlıkta (i) ve doğrulanmış resmi kaynak bağlantıları; doğrulanmış bağlantı yoksa bunu söyler', () => {
+    DATA['/reference'] = {
+      packages: ['cve_feed', 'kb_feed', 'upgrade_matrix'].map(k => ({ kind: k, state: 'ok', age_days: 1, stale_threshold_days: 30 })),
+      sources: {
+        cve_feed: [{ id: 'vmsa', title_tr: 'VMware Güvenlik Duyuruları (VMSA)', title_en: 'VMware Security Advisories (VMSA)', url: 'https://www.broadcom.com/support/vmware-security-advisories' }],
+        kb_feed: [],
+        upgrade_matrix: [{ id: 'ocp_lifecycle', title_tr: 'OpenShift Yaşam Döngüsü', url: 'https://access.redhat.com/support/policy/updates/openshift' }],
+      },
+    }
+    wrap(<ReferencePacksCard />)
+    expect(screen.getByTestId('reference-packs-card').querySelector('h2 button[aria-label="info_btn"]')).toBeTruthy()
+    const a = screen.getByRole('link', { name: /VMware Güvenlik/ }) as HTMLAnchorElement
+    expect(a.getAttribute('href')).toBe('https://www.broadcom.com/support/vmware-security-advisories')
+    expect(a.rel).toContain('noopener')
+    expect(screen.getByTestId('ref-sources-kb_feed').textContent).toBe('vi_ref_no_verified_link')
+  })
+
   it('kart: tüm paketler güncelse uyarı notu yok', () => {
     DATA['/reference'] = { packages: ['cve_feed', 'kb_feed', 'upgrade_matrix'].map(k => ({ kind: k, state: 'ok', age_days: 1, stale_threshold_days: 30 })) }
     wrap(<ReferencePacksCard />)

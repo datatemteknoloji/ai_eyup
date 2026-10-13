@@ -624,10 +624,12 @@ def baseline(body: BaselineRequest, request: Request, db: Session = Depends(get_
 
 @router.get("/reference")
 def reference_status(db: Session = Depends(get_db), user: User = Depends(_module)):
-    from app.services.reference_sources import allowed_domains
+    from app.services.reference_sources import allowed_domains, verified_sources
     from app.services.virt_reference_checks import FEED_STALE_DAYS, package_status
+    # C1: paket türü başına YALNIZ doğrulanmış resmi kaynaklar (reference_sources.json `verified: true`); uydurma bağlantı yok.
+    sources = {k: verified_sources(k) for k in ("cve_feed", "kb_feed", "upgrade_matrix")}
     return {"packages": package_status(db), "allowed_domains": allowed_domains(),
-            "stale_threshold_days": FEED_STALE_DAYS}
+            "stale_threshold_days": FEED_STALE_DAYS, "sources": sources}
 
 
 @router.get("/reference/{kind}/sample")

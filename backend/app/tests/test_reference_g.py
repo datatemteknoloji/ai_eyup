@@ -311,3 +311,15 @@ def test_missing_pack_alone_never_writes_pass(db):
     _run(db)
     assert {r.result for r in db.query(InfraFinding).all()} == {"not_measurable"}
     assert store.summarize_findings(db)["unverifiable"] == 0
+
+
+def test_reference_endpoint_exposes_only_verified_sources_c1(isolated_db):
+    """C1: /reference paket türü başına yalnız doğrulanmış resmi kaynakları döner (broadcom_kb doğrulanmadı → kb_feed boş)."""
+    from app.api.virt_insights import reference_status
+    out = reference_status(db=isolated_db, user=None)
+    src = out["sources"]
+    assert set(src) == {"cve_feed", "kb_feed", "upgrade_matrix"}
+    assert src["kb_feed"] == []                                   # doğrulanmış kaynak yok → bağlantı uydurulmaz
+    assert {s["id"] for s in src["cve_feed"]} >= {"vmsa", "nvd"}
+    assert all(s["url"].startswith("https://") for rows in src.values() for s in rows)
+    assert not any(s["id"] in ("broadcom_kb", "ocp_update_graph") for rows in src.values() for s in rows)
