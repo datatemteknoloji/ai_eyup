@@ -83,7 +83,8 @@ class CheckDef:
     # Komut taslağı şablonu türü (draft.py içindeki üretici anahtarı)
     draft: Optional[str] = None
     rationale_tr: str = ""
-    # Capability yoksa check çalışmaz → RESULT_NOT_APPLICABLE (skora girmez).
+    # Bilgi amaçlı bildirim: capability yoksa bulgu ÜRETİLMEZ (runner._refresh_backup_findings; `not_applicable`
+    # satırı yazılmaz → Veeam'siz ortamda bulgu sayısı/skor değişmez). Zorlayan kod yoktur; bu alan yalnız belgelemedir.
     requires_capability: Tuple[str, ...] = ()
 
 
@@ -483,14 +484,6 @@ def is_valid_result(result: str) -> bool:
 
 def is_measured_result(result: str) -> bool:
     return result in MEASURED_RESULTS
-
-
-def check_capabilities_met(cdef: Optional[CheckDef], available: Optional[set] = None) -> bool:
-    """CheckDef.requires_capability kümesi available içinde mi?"""
-    if cdef is None or not cdef.requires_capability:
-        return True
-    have = available if available is not None else set()
-    return all(c in have for c in cdef.requires_capability)
 
 
 def category_of(check_id: str) -> str:

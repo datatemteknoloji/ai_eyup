@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models.infra_finding import InfraCheckRun
 from app.models.openshift import OpenShiftCluster
+from app.services.findings.registry import RESULT_FAIL, RESULT_PASS
 from app.services.findings.store import FindingDraft, persist_findings, utcnow
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
         bad = [t for t in ("MemoryPressure", "DiskPressure", "PIDPressure") if (conds.get(t) or {}).get("status") == "True"]
         drafts.append(FindingDraft(
             "ocp.node.condition", "node", f"node:{name}", name,
-            "fail" if (not ready or bad) else "pass",
+            RESULT_FAIL if (not ready or bad) else RESULT_PASS,
             evidence={"ready": ready, "pressure": bad, "unschedulable": bool((n.get("spec") or {}).get("unschedulable"))},
             detail=("NotReady" if not ready else "") + (f" baskı: {', '.join(bad)}" if bad else ""),
             cluster_name=cname, severity="critical" if not ready else None))
@@ -196,7 +197,7 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
         hot = max(p for p in (cpu_pct or 0, mem_pct or 0))
         drafts.append(FindingDraft(
             "ocp.cluster.request_pressure", "cluster", "cluster", cname,
-            "fail" if hot > REQ_WARN_PCT else "pass", evidence=cap["request_pct"],
+            RESULT_FAIL if hot > REQ_WARN_PCT else RESULT_PASS, evidence=cap["request_pct"],
             detail=f"Request/allocatable: CPU %{_r(cpu_pct)}, Memory %{_r(mem_pct)}", cluster_name=cname))
     if len(usable) >= 2:
         from app.services.capacity.engine import worker_n_plus_one
@@ -205,7 +206,7 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
         cap["n_plus_one"] = {"largest_worker": big["name"], "memory_after_pct": _r(n1_mem),
                              "cpu_after_pct": _r(n1_cpu), "status": n1w["status"]}
         drafts.append(FindingDraft(
-            "ocp.cluster.n_plus_one", "cluster", "cluster", cname, "fail" if fail else "pass",
+            "ocp.cluster.n_plus_one", "cluster", "cluster", cname, RESULT_FAIL if fail else RESULT_PASS,
             evidence=cap["n_plus_one"],
             detail=f"{big['name']} drene edilirse request: Memory %{_r(n1_mem)}, CPU %{_r(n1_cpu)}",
             cluster_name=cname))
@@ -228,7 +229,7 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
         ref = f"quota:{meta.get('namespace')}/{meta.get('name')}"
         drafts.append(FindingDraft(
             "ocp.namespace.quota", "namespace", ref, f"{meta.get('namespace')}/{meta.get('name')}",
-            "fail" if worst > QUOTA_WARN_PCT else "pass", evidence={"key": worst_key, "pct": _r(worst)},
+            RESULT_FAIL if worst > QUOTA_WARN_PCT else RESULT_PASS, evidence={"key": worst_key, "pct": _r(worst)},
             detail=f"{worst_key}: %{_r(worst)}" if worst_key else "", cluster_name=cname))
     # ── Geri kazanım ─────────────────────────────────────────────────────────
     rec = {"unbound": [], "unused": [], "over_request": []}
@@ -241,14 +242,14 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
         ev = {"phase": phase, "size_gb": _r(size), "storage_class": sc, "created": meta.get("creationTimestamp")}
         if phase in ("Pending", "Lost"):
             rec["unbound"].append({"pvc": key, **ev})
-            drafts.append(FindingDraft("ocp.pvc.unbound", "pvc", f"pvc:{key}", key, "fail", evidence=ev,
+            drafts.append(FindingDraft("ocp.pvc.unbound", "pvc", f"pvc:{key}", key, RESULT_FAIL, evidence=ev,
                                        detail=f"{phase} · {sc or '-'}", cluster_name=cname))
         elif key not in pvc_used and not (meta.get("labels") or {}).get("cdi.kubevirt.io/dataImportCron"):
             owners = [o.get("kind") for o in meta.get("ownerReferences") or []]
             if "DataVolume" in owners or "VirtualMachine" in owners:
                 continue  # KubeVirt diskleri: ocp_virt reclaim tarafında değerlendirilir
             rec["unused"].append({"pvc": key, **ev})
-            drafts.append(FindingDraft("ocp.pvc.unused", "pvc", f"pvc:{key}", key, "fail", evidence=ev,
+            drafts.append(FindingDraft("ocp.pvc.unused", "pvc", f"pvc:{key}", key, RESULT_FAIL, evidence=ev,
                                        detail=f"{_r(size)} GB · {sc or '-'}", cluster_name=cname))
     if col.get("metrics") is not None:
         usage: Dict[str, Dict[str, float]] = defaultdict(lambda: {"cpu_m": 0.0, "mem_gb": 0.0})
@@ -269,7 +270,7 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
                       "req_mem_gb": _r(rq["mem_gb"]), "use_mem_gb": _r(u["mem_gb"])}
                 rec["over_request"].append({"namespace": ns, **ev})
                 drafts.append(FindingDraft(
-                    "ocp.pod.over_request", "namespace", f"ns:{ns}", ns, "fail", evidence=ev,
+                    "ocp.pod.over_request", "namespace", f"ns:{ns}", ns, RESULT_FAIL, evidence=ev,
                     detail=(f"Request CPU {ev['req_cpu_cores']} / kullanım {ev['use_cpu_cores']} çekirdek; "
                             f"Memory {ev['req_mem_gb']} / {ev['use_mem_gb']} GB (anlık metrics-server)"),
                     cluster_name=cname))
@@ -281,7 +282,7 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
         deg = (conds.get("Degraded") or {}).get("status") == "True"
         msg = ((conds.get("Degraded") or {}).get("message") or (conds.get("Available") or {}).get("message") or "")[:300]
         drafts.append(FindingDraft("ocp.operator.health", "operator", f"co:{name}", name,
-                                   "fail" if (deg or not avail) else "pass",
+                                   RESULT_FAIL if (deg or not avail) else RESULT_PASS,
                                    evidence={"available": avail, "degraded": deg}, detail=msg, cluster_name=cname,
                                    severity="critical" if not avail else None))
     for mcp in col.get("mcps") or []:
@@ -293,7 +294,7 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
               "degraded_machines": st.get("degradedMachineCount"),
               "rendered": ((st.get("configuration") or {}).get("name"))}
         drafts.append(FindingDraft("ocp.mcp.degraded", "mcp", f"mcp:{name}", name,
-                                   "fail" if (deg or (st.get("degradedMachineCount") or 0) > 0) else "pass",
+                                   RESULT_FAIL if (deg or (st.get("degradedMachineCount") or 0) > 0) else RESULT_PASS,
                                    evidence=ev, detail=((conds.get("Degraded") or {}).get("message") or "")[:300],
                                    cluster_name=cname))
     cv = col.get("cv") or {}
@@ -302,7 +303,7 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
         cur = ((st.get("desired") or {}).get("version")) or cluster.version
         ups = [u.get("version") for u in st.get("availableUpdates") or [] if u.get("version")]
         drafts.append(FindingDraft("ocp.cluster.update_available", "cluster", "cluster:version", cname,
-                                   "fail" if ups else "pass",
+                                   RESULT_FAIL if ups else RESULT_PASS,
                                    evidence={"current": cur, "channel": (cv.get("spec") or {}).get("channel"),
                                              "available": ups[:10]},
                                    detail=(f"{cur} → {', '.join(ups[:5])}" if ups else f"{cur} güncel"),
@@ -324,7 +325,7 @@ def evaluate(cluster: OpenShiftCluster, col: Dict[str, Any]) -> Tuple[List[Findi
         sev = str(r.get("severity") or "medium").lower()
         drafts.append(FindingDraft(
             "ocp.compliance.result", "rule", f"ccr:{meta.get('name')}", meta.get("name") or "",
-            "pass" if status == "PASS" else "fail",
+            RESULT_PASS if status == "PASS" else RESULT_FAIL,
             evidence={"status": status, "scan": (meta.get("labels") or {}).get("compliance.openshift.io/scan-name"),
                       "rule": (meta.get("annotations") or {}).get("compliance.openshift.io/rule")},
             detail=(r.get("description") or "")[:400], cluster_name=cname,
@@ -466,7 +467,7 @@ def run_for_cluster(db: Session, cluster: OpenShiftCluster) -> Dict[str, Any]:
         res = persist_findings(db, platform=PLATFORM, source_id=cluster.id, source_name=cluster.name,
                                categories=cats, drafts=drafts, run_id=run.id, now=now)
         stats.update(res)
-        stats["findings"] = sum(1 for d in drafts if d.result == "fail")
+        stats["findings"] = sum(1 for d in drafts if d.result == RESULT_FAIL)
         run.status = "ok"
         run.stats = stats
     except Exception as exc:

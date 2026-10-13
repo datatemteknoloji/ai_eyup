@@ -823,7 +823,9 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
         key = (c["platform"], c["hypervisor_id"])
         ref = f"cluster:{c['cluster']}"
         n1 = c["n_plus_one"]
-        from app.services.findings.registry import RESULT_FAIL, RESULT_NOT_APPLICABLE, RESULT_PASS
+        from app.services.findings.registry import (
+            RESULT_FAIL, RESULT_NOT_APPLICABLE, RESULT_NOT_MEASURABLE, RESULT_PASS,
+        )
         st = n1.get("status")
         if n1.get("evaluable"):
             out[key].append(FindingDraft(
@@ -848,8 +850,8 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
         if fm:
             out[key].append(FindingDraft(
                 "cap.cluster.mem_runway", "cluster", ref, c["cluster"],
-                "fail" if days is not None and days < RUNWAY_DAYS_ALERT else
-                ("pass" if fm.get("confidence") not in ("none",) else "not_measurable"),
+                RESULT_FAIL if days is not None and days < RUNWAY_DAYS_ALERT else
+                (RESULT_PASS if fm.get("confidence") not in ("none",) else RESULT_NOT_MEASURABLE),
                 evidence={"used_pct": c["memory"]["used_pct"], **fm},
                 detail=(f"Memory %{T.mem:.0f} eşiği aşılmış (%{c['memory']['used_pct']})" if days == 0
                         else f"Memory %{T.mem:.0f} eşiğine ~{days} gün" if days is not None
@@ -861,8 +863,8 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
         if fc:
             out[key].append(FindingDraft(
                 "cap.cluster.cpu_runway", "cluster", ref, c["cluster"],
-                "fail" if cdays is not None and cdays < RUNWAY_DAYS_ALERT else
-                ("pass" if fc.get("confidence") != "none" else "not_measurable"),
+                RESULT_FAIL if cdays is not None and cdays < RUNWAY_DAYS_ALERT else
+                (RESULT_PASS if fc.get("confidence") != "none" else RESULT_NOT_MEASURABLE),
                 evidence={"used_pct": c["cpu"]["used_pct"], **fc},
                 detail=(f"CPU %{T.cpu:.0f} eşiği aşılmış (%{c['cpu']['used_pct']})" if cdays == 0
                         else f"CPU %{T.cpu:.0f} eşiğine ~{cdays} gün" if cdays is not None
@@ -873,7 +875,7 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
         if ratio is not None:
             out[key].append(FindingDraft(
                 "cap.cluster.vcpu_ratio", "cluster", ref, c["cluster"],
-                "fail" if ratio > T.vcpu_ratio else "pass",
+                RESULT_FAIL if ratio > T.vcpu_ratio else RESULT_PASS,
                 evidence={"vcpu": c["cpu"]["vcpu_allocated"], "cores": c["cpu"]["total_cores"], "ratio": ratio},
                 detail=f"vCPU:çekirdek = {ratio}:1", cluster_name=c["cluster"],
             ))
@@ -891,7 +893,7 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
         u = d.get("usage_pct")
         if u is not None:
             out[key].append(FindingDraft(
-                "cap.datastore.usage", "datastore", ref, d["name"], "fail" if u >= T.ds else "pass",
+                "cap.datastore.usage", "datastore", ref, d["name"], RESULT_FAIL if u >= T.ds else RESULT_PASS,
                 evidence={"usage_pct": u, "free_gb": d.get("free_gb"), "capacity_gb": d.get("capacity_gb")},
                 detail=f"Doluluk %{u}", severity="critical" if u >= 95 else None,
             ))
@@ -900,8 +902,8 @@ def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:
         if f and u is not None and u < T.ds:
             out[key].append(FindingDraft(
                 "cap.datastore.runway", "datastore", ref, d["name"],
-                "fail" if dd is not None and dd < DS_RUNWAY_DAYS_ALERT else
-                ("pass" if f.get("confidence") != "none" else "not_measurable"),
+                RESULT_FAIL if dd is not None and dd < DS_RUNWAY_DAYS_ALERT else
+                (RESULT_PASS if f.get("confidence") != "none" else RESULT_NOT_MEASURABLE),
                 evidence=f, detail=(f"%{T.ds:.0f} eşiğine ~{dd} gün" if dd is not None else "Trend yok"),
             ))
     return out

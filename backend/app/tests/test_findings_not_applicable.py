@@ -26,6 +26,38 @@ def test_no_string_literal_not_applicable_in_registry_module():
     assert src.count('"not_applicable"') == 1
 
 
+def _result_leaves(node):
+    """Koşullu ifadede yalnız DEĞER dallarını (body/orelse) gez; koşul kısmındaki karşılaştırma literalleri sonuç değildir."""
+    import ast
+    if isinstance(node, ast.IfExp):
+        return _result_leaves(node.body) + _result_leaves(node.orelse)
+    return [node]
+
+
+def test_findingdraft_result_never_uses_string_literals():
+    """A2: FindingDraft(result=...) tüm üretici modüllerde RESULT_* sabitleriyle verilir (literal yok)."""
+    import ast
+    import importlib
+
+    mods = ("app.services.virt_health_checks", "app.services.virt_reference_checks",
+            "app.services.virt_capacity_planner", "app.services.ocp_insights",
+            "app.services.backup.rpo_engine", "app.services.backup.extras", "app.services.findings.drafts")
+    bad = []
+    for m in mods:
+        mod = importlib.import_module(m)
+        tree = ast.parse(open(mod.__file__, encoding="utf-8").read())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", "")) == "FindingDraft"):
+                continue
+            arg = node.args[4] if len(node.args) > 4 else next((k.value for k in node.keywords if k.arg == "result"), None)
+            if arg is None:
+                continue
+            for n in _result_leaves(arg):
+                if isinstance(n, ast.Constant) and n.value in RESULTS:
+                    bad.append(f"{m}:{n.lineno} {n.value!r}")
+    assert not bad, bad
+
+
 def test_compliance_score_ignores_not_applicable(monkeypatch):
     items = [
         {"result": RESULT_PASS, "refs": ["ISO27001:A.8.6"], "exception": None},

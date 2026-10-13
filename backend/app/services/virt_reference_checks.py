@@ -356,7 +356,7 @@ def vuln_findings(db: Session, platform: str, collected: Dict[str, Any]) -> Opti
                 cves = adv.get("cve") or []
                 out.append(FindingDraft(
                     f"vuln:{adv['id']}", t["entity_kind"], t["entity_ref"], t["entity_name"],
-                    "fail" if hit else "pass",
+                    RESULT_FAIL if hit else RESULT_PASS,
                     evidence={"advisory": adv["id"], "cve": cves, "cvss": adv.get("cvss"),
                               "installed": t["version"], "build": t.get("build"),
                               "fixed": prod.get("fixed"), "fixed_build": prod.get("fixed_build"),
@@ -407,7 +407,7 @@ def known_issue_findings(db: Session, platform: str, source_id: Optional[int],
                             break
             sev = "high" if matched else _SEV.get(str(art.get("severity") or "").lower(), "low")
             out.append(FindingDraft(
-                f"kb:{art['id']}", t["entity_kind"], t["entity_ref"], t["entity_name"], "fail",
+                f"kb:{art['id']}", t["entity_kind"], t["entity_ref"], t["entity_name"], RESULT_FAIL,
                 evidence={"article": art["id"], "url": rsrc.safe_source_url(rsrc.record_url(art)),
                           "source_url": rsrc.safe_source_url(rsrc.record_url(art)), "installed": t["version"],
                           "symptom_matches": matched, "symptom_matched": bool(matched), "pack": pack},
@@ -445,7 +445,7 @@ def upgrade_findings(platform: str, collected: Dict[str, Any], matrix: Optional[
                     days = (eol - today).days
                     out.append(FindingDraft(
                         "upg:eol", t["entity_kind"], t["entity_ref"], t["entity_name"],
-                        "fail" if days <= EOL_WARN_DAYS else "pass",
+                        RESULT_FAIL if days <= EOL_WARN_DAYS else RESULT_PASS,
                         evidence={"installed": t["version"], "eol_date": str(eol), "days_left": days, "pack": pack},
                         detail=(f"Destek bitti ({eol})" if days < 0 else f"Destek bitişine {days} gün ({eol})"),
                         cluster_name=t.get("cluster"), severity="critical" if days < 0 else "high",
@@ -473,7 +473,7 @@ def upgrade_findings(platform: str, collected: Dict[str, Any], matrix: Optional[
                                                  "notes": h.get("notes")})
                 out.append(FindingDraft(
                     "upg:target", t["entity_kind"], t["entity_ref"], t["entity_name"],
-                    "fail" if behind else "pass",
+                    RESULT_FAIL if behind else RESULT_PASS,
                     evidence={"installed": t["version"], "target": target, "path": path, "hardware_blockers": blockers,
                               "pack": pack},
                     detail=(f"{t['version']} → {target}" + (f" (ara: {path.get('via')})" if path and path.get("via") else "")
@@ -491,8 +491,8 @@ def upgrade_findings(platform: str, collected: Dict[str, Any], matrix: Optional[
         st = str(h.get("status") or "").upper()
         out.append(FindingDraft(
             "upg:vlcm_hcl", "cluster", f"cluster:{cname}", cname,
-            "not_measurable" if not avail or st in ("", "HCL_DATA_UNAVAILABLE", "UNAVAILABLE") else
-            ("fail" if st == "INCOMPATIBLE" else "pass"),
+            RESULT_NOT_MEASURABLE if not avail or st in ("", "HCL_DATA_UNAVAILABLE", "UNAVAILABLE") else
+            (RESULT_FAIL if st == "INCOMPATIBLE" else RESULT_PASS),
             evidence=h, detail=st or str(h.get("reason") or ""), cluster_name=cname,
             title="vLCM donanım uyumluluk (HCL) raporu",
             recommendation="Uyumsuz bileşen için firmware/driver güncelleyin veya hedef sürümü yeniden değerlendirin.",
