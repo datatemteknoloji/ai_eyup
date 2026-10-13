@@ -25,6 +25,15 @@ class HaSpec:
     mem_failover_pct: Optional[float] = None
     cpu_failover_pct: Optional[float] = None
     failover_level: Optional[int] = None
+    # E3: "Dedicated failover hosts" politikasında ayrılmış host'ların moref'leri. None = OKUNAMADI (config snapshot
+    # yok); () = okundu, ayrılmış host yok.
+    failover_hosts: Optional[Tuple[str, ...]] = None
+    # E3: slot politikası ("Host failures cluster tolerates") — son HA runtime okuması (RetrieveDasAdvancedRuntimeInfo)
+    total_slots: Optional[int] = None
+    used_slots: Optional[int] = None
+    unreserved_slots: Optional[int] = None
+    slot_cpu_mhz: Optional[int] = None
+    slot_memory_mb: Optional[int] = None
 
 
 @dataclass(frozen=True)

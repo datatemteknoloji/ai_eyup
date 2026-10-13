@@ -198,8 +198,16 @@ def _core_unified(db: Session, hv, platform: str, cluster: str, hosts: List[Dict
                   on: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Ortak motor (`app.services.capacity`): düğüm kapasitesi, HA rezervi ve N+1 tek yerde."""
     cfg = _olvm_cluster_cfg(db, hv.id, cluster) if platform == "olvm" else None
-    model = cap_adapters.from_virt_hosts(platform, cluster, [h for h in hosts], vc, olvm_cfg=cfg, vms_on=on)
+    model = cap_adapters.from_virt_hosts(platform, cluster, [h for h in hosts], vc, olvm_cfg=cfg, vms_on=on,
+                                         failover_hosts=_failover_hosts(db, platform, hv.id, cluster, vc))
     return cap_engine.summarize(model, T.n1_warn)
+
+
+def _failover_hosts(db: Session, platform: str, hv_id: int, cluster: str, vc: Any) -> Optional[List[str]]:
+    """E3: yalnız "dedicated failover hosts" politikasında ayrılmış host'ları config snapshot'tan okur (aksi: None)."""
+    if platform == "vmware" and "failoverhost" in str(getattr(vc, "policy_type", "") or "").lower():
+        return cap_src.vmware_failover_hosts(db, hv_id, cluster)
+    return None
 
 
 def _analyze_cluster(db: Session, hv, platform: str, cluster: str, hosts: List[Dict[str, Any]],
@@ -496,9 +504,10 @@ def build_cluster_model(db: Session, hv: Any, plat: str, cname: str, hs: List[Di
     on = [v for v in _cluster_vms(vms, hid, cname, {h["host_name"] for h in hs}) if v["powered_on"]]
     topo = cap_src.vmware_topology(db, hid, cname) if plat == "vmware" else {"datacenter": None, "pools": None}
     cfg = _olvm_cluster_cfg(db, hid, cname) if plat == "olvm" else None
+    fh = _failover_hosts(db, plat, hid, cname, vc)              # E3: ayrılmış failover host'lar
     return cap_adapters.from_virt_hosts(
         plat, cname, hs, vc, olvm_cfg=cfg, vms_on=on, instance_id=hid, instance_name=hv.name,
-        datacenter=topo["datacenter"], pools=topo["pools"])
+        datacenter=topo["datacenter"], pools=topo["pools"], failover_hosts=fh)
 
 
 def _host_datastores(db: Session, cap: Dict[str, Any], c: Dict[str, Any]) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:

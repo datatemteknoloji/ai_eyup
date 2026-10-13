@@ -11,6 +11,13 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Sanallaştırma — v42 eksikleri
+- E2: What-if, toplu yerleşim, host-arızası (N+1) ve "VM nereye" tek yerleşim çekirdeğini (`capacity.placement.place_vms`) kullanır; aynı VM için aynı SIĞAR/SIĞMAZ kararı.
+- E3: vCenter "ayrılmış failover host" politikası: ayrılmış host'lar yerleşime kapalı, kapasiteleri rezerv; host listesi okunamazsa 1 host varsayımı etiketli. Slot politikasında (Host failures tolerated) boş slot yoksa VM sığmaz (`ha_slots`); 1 slot/VM varsayımı ve slot sayısının son okumadan geldiği notla gösterilir.
+- E6: OpenShift Virt vCPU:çekirdek oranı VMI okumasından / HCO'dan (`cpuAllocationRatio`) alınır; okunamazsa varsayım etiketli.
+- E7: Kapasite › Eşikler'de cluster/instance override'ları listelenir (PolicyOverrides).
+- E9: Sohbet PDF dışa aktarımına yöntem notları ve kanıt eklendi.
+
 ## [1.0.9.41] - 2026-10-13
 
 ### Sanallaştırma — yedek (Veeam), kapasite ve yöntem şeffaflığı

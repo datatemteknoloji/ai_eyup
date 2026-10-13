@@ -9,7 +9,7 @@ import { TermHint } from './InfoDot'
 const LIMIT_KEYS: Record<string, string> = {
   memory: 'vi_lim_memory', cpu: 'vi_lim_cpu', ha: 'vi_lim_ha', datastore: 'vi_lim_datastore',
   fragmentation: 'vi_lim_fragmentation', no_host: 'vi_lim_no_host', cores: 'vi_lim_cores',
-  anti_affinity: 'vi_lim_anti_affinity', vcpu_ratio: 'vi_lim_vcpu_ratio',
+  anti_affinity: 'vi_lim_anti_affinity', vcpu_ratio: 'vi_lim_vcpu_ratio', ha_slots: 'vi_lim_ha_slots',
 }
 
 type Row = any

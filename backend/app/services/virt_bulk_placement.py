@@ -117,8 +117,7 @@ def bulk_place(db: Session, *, profiles: List[Dict[str, Any]], hypervisor_id: Op
         dss, ds_note = _host_datastores(db, cap, c)
         r = place_bulk(hs, vms, dss, T.ds_reserve)
         notes = list(b["pools"]["notes"])
-        if b["reserve"]["mem_gb"] > 0:
-            notes.append(cap_place.NOTE_RESERVE_SPREAD)
+        notes.extend(cap_place.reserve_notes(b))
         if ds_note and any(v["disk_gb"] > 0 for v in vms):
             notes.append(ds_note)
         if dss is None and any(v["disk_gb"] > 0 for v in vms):

@@ -120,3 +120,20 @@ def ocp_virt_cpu_ratio(db: Session, hv_id: int) -> Dict[str, Any]:
         "default": f"varsayılan değer {ratio:g} (HyperConverged okunamadı; ölçülmedi)",
     }[source]
     return {"ratio": ratio, "source": source, "label": label}
+
+
+def vmware_failover_hosts(db: Session, hv_id: int, cluster: str) -> Optional[List[str]]:
+    """"Dedicated failover hosts" politikasındaki ayrılmış host moref'leri (cluster config snapshot). Snapshot yoksa
+    None (OKUNAMADI — uydurma liste yok); okundu ve boşsa []."""
+    try:
+        for c in vd.latest_config(db, "vmware", hv_id, "cluster"):
+            if c.get("name") != cluster:
+                continue
+            pol = (c.get("config") or {}).get("admission_policy")
+            if not isinstance(pol, dict):
+                return None
+            hosts = pol.get("failover_hosts")
+            return [str(h) for h in hosts if h] if isinstance(hosts, list) else None
+    except Exception:  # noqa: BLE001
+        _rb(db)
+    return None

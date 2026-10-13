@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
+from app.services.capacity import rules_vmware
 from app.services.capacity.engine import reserve_for, usable_nodes
 from app.services.capacity.model import ClusterModel, ResourcePoolSpec
 
@@ -24,12 +25,15 @@ NOTE_POOL_USAGE_UNKNOWN = "Havuz bellek kullanımı bilinmiyor — rezervasyonun
 NOTE_NUMA = "NUMA düğümü boyutu toplanmıyor — vCPU'nun NUMA düğümüne sığması kontrol edilemedi (not_measurable)"
 NOTE_DS_UNKNOWN = "Datastore / storage domain / storage class erişimi okunamadı — disk erişimi kontrol edilmedi"
 NOTE_RESERVE_SPREAD = "HA rezervi host'lara orantılı dağıtılır (varsayım)"
+NOTE_DEDICATED = "Ayrılmış failover host'lar yerleşime kapalıdır (yalnız HA yeniden başlatma için): {names}"
+NOTE_SLOT_FIT = "HA slot kontrolü (admission control): {needed} slot gerekli, {free} boş slot var"
 
 V_FITS = "Sığar"
 V_FRAG = "Sığmaz — parçalanma"
 V_DS = "Sığmaz — datastore erişimi yok"
 V_CAP = "Sığmaz — kapasite"
 V_NONE = "Sığmaz — kullanılabilir host yok"
+V_SLOT = "Sığmaz — HA slot (admission control)"
 
 
 def pool_deduction(pools: Optional[Sequence[ResourcePoolSpec]]) -> Dict[str, Any]:
@@ -59,22 +63,37 @@ def pool_deduction(pools: Optional[Sequence[ResourcePoolSpec]]) -> Dict[str, Any
 
 
 def host_budgets(model: ClusterModel, mem_thr_pct: float) -> Dict[str, Any]:
-    """Her kullanılabilir host için, HA rezervi + havuz rezervasyonu + eşik uygulanmış boş bellek (GB)."""
+    """Her kullanılabilir host için, HA rezervi + havuz rezervasyonu + eşik uygulanmış boş bellek (GB).
+
+    E3: "ayrılmış failover host" politikasında bu host'lar yerleşime KAPALIDIR (listeye girmez; kapasiteleri zaten
+    rezerv sayıldığı için ayrıca oransal düşüm yapılmaz). Diğer politikalarda rezerv host'lara orantılı dağıtılır.
+    """
     usable = usable_nodes(model)
-    mem_total = sum(n.mem_gb for n in usable)
     reserve = reserve_for(model)
+    closed = set(reserve.get("closed_hosts") or [])
+    nodes = [n for n in usable if n.name not in closed]
+    mem_total = sum(n.mem_gb for n in nodes)
     pools = pool_deduction(model.pools) if model.platform == "vmware" else {
         "read": None, "deduct_gb": 0.0, "pools": [], "notes": []}
-    eff = max(mem_total - reserve["mem_gb"] - pools["deduct_gb"], 0.0)
+    reserve_gb = 0.0 if closed else reserve["mem_gb"]
+    eff = max(mem_total - reserve_gb - pools["deduct_gb"], 0.0)
     scale = (eff / mem_total) if mem_total > 0 else 0.0
     hosts = []
-    for n in usable:
+    for n in nodes:
         share = n.mem_gb * scale
         cap = share * mem_thr_pct / 100.0
         hosts.append({"name": n.name, "ref": n.ref, "cores": float(n.cpu_cores or 0), "mem_gb": n.mem_gb,
                       "used_gb": n.mem_used_gb, "budget_gb": round(cap, 3),
                       "free_gb": max(cap - n.mem_used_gb, 0.0)})
-    return {"hosts": hosts, "mem_total": mem_total, "reserve": reserve, "pools": pools, "effective_gb": eff}
+    return {"hosts": hosts, "mem_total": mem_total, "reserve": reserve, "pools": pools, "effective_gb": eff,
+            "closed_hosts": sorted(closed)}
+
+
+def reserve_notes(b: Dict[str, Any]) -> List[str]:
+    """Rezerv/kapalı host açıklamaları (What-if ve toplu yerleşimde ortak)."""
+    if b.get("closed_hosts"):
+        return [NOTE_DEDICATED.format(names=", ".join(b["closed_hosts"]))]
+    return [NOTE_RESERVE_SPREAD] if b["reserve"]["mem_gb"] > 0 else []
 
 
 def _ds_ok(ds: Dict[str, Any], host_ref: str, disk_gb: float, reserve_pct: float) -> bool:
@@ -196,8 +215,7 @@ def place_on_hosts(model: ClusterModel, *, vm_mem_gb: float, vm_vcpu: int, count
     warnings: List[str] = []
     if model.platform in ("vmware", "olvm", "ocp_virt"):
         notes.append(NOTE_NUMA)
-    if b["reserve"]["mem_gb"] > 0:
-        notes.append(NOTE_RESERVE_SPREAD)
+    notes.extend(reserve_notes(b))
     if disk_gb > 0 and ds_state is None:
         notes.append(NOTE_DS_UNKNOWN)
 
@@ -224,6 +242,16 @@ def place_on_hosts(model: ClusterModel, *, vm_mem_gb: float, vm_vcpu: int, count
     unplaced = count - len(placed)
     fits = unplaced == 0
     verdict = V_FITS if fits else {"fragmentation": V_FRAG, "datastore_access": V_DS}.get(reason or "", V_CAP)
+    # E3: slot politikası (vCenter admission control) — bellek yetse bile boş slot yoksa VM açılamaz
+    slots = rules_vmware.slot_check(model, count) if model.platform == "vmware" else None
+    slot_block = bool(slots and not slots["fits"])
+    if slots:
+        notes.append(NOTE_SLOT_FIT.format(needed=slots["needed_slots"], free=slots["unreserved_slots"]))
+        notes.append(slots["assumption"])
+    if slot_block:
+        if fits:
+            verdict, reason = V_SLOT, "ha_slots"
+        fits = False
     low = (b["pools"]["read"] is False)
     medium = bool(b["reserve"].get("assumed"))
     confidence = "low" if low else ("medium" if medium else "high")
@@ -234,20 +262,26 @@ def place_on_hosts(model: ClusterModel, *, vm_mem_gb: float, vm_vcpu: int, count
         if fits:
             extra = _extra_fit(hosts, free, ds_state, vm_mem_gb, disk_gb, ds_reserve_pct, _MAX_FIT_CAP - max_fit)
             max_fit += extra
+        if slots and max_fit is not None:
+            max_fit = min(max_fit, int(slots["unreserved_slots"]))
+    limiting = [] if (fits and not slot_block) else [_REASON_CODE.get(reason or "", "memory")]
+    if slot_block and "ha_slots" not in limiting:
+        limiting = [c for c in limiting if c != "memory" or unplaced > 0] + ["ha_slots"]
     return {
         "fits": fits, "verdict": verdict, "reason": None if fits else reason, "placed": placed, "unplaced": unplaced,
         "warnings": sorted(set(warnings)), "notes": notes, "confidence": confidence,
         "cluster_free_gb": round(sum(h["free_gb"] for h in hosts), 2),
         "host_free": [{"host": h["name"], "free_gb": round(h["free_gb"], 2)} for h in hosts],
         "pools": b["pools"]["pools"],
-        "limiting": [] if fits else [_REASON_CODE.get(reason or "", "memory")],
+        "limiting": limiting,
         "max_fit": max_fit,
+        **({"slots": slots} if slots else {}),
     }
 
 
 _MAX_FIT_CAP = 2000
 _REASON_CODE = {"capacity": "memory", "fragmentation": "fragmentation", "datastore_access": "datastore",
-                "no_host": "no_host"}
+                "no_host": "no_host", "ha_slots": "ha_slots"}
 
 
 def _extra_fit(hosts: Sequence[Dict[str, Any]], free: Dict[str, float], ds_state: Optional[List[Dict[str, Any]]],

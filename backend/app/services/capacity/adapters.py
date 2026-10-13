@@ -16,7 +16,8 @@ def _f(v: Any) -> float:
 def from_virt_hosts(platform: str, cluster: str, hosts: List[Dict[str, Any]], vc: Any = None, *,
                     olvm_cfg: Optional[Dict[str, Any]] = None, vms_on: Optional[List[Dict[str, Any]]] = None,
                     instance_id: Optional[int] = None, instance_name: str = "", datacenter: Optional[str] = None,
-                    pools: Optional[Any] = None) -> ClusterModel:
+                    pools: Optional[Any] = None,
+                    failover_hosts: Optional[List[str]] = None) -> ClusterModel:
     """vCenter / OLVM / OpenShift Virt: `virt_insights_data.latest_hosts` satırları + cluster satırı.
 
     vCenter: `vc` (VirtCluster) HA/admission control alanları. OLVM: `olvm_cfg` (cluster config snapshot:
@@ -29,7 +30,11 @@ def from_virt_hosts(platform: str, cluster: str, hosts: List[Dict[str, Any]], vc
     if platform == "vmware" and vc is not None:
         ha = HaSpec(ha_enabled=vc.ha_enabled, admission_control_enabled=vc.admission_control_enabled,
                     policy_type=vc.policy_type, mem_failover_pct=vc.mem_failover_pct,
-                    cpu_failover_pct=vc.cpu_failover_pct, failover_level=vc.failover_level)
+                    cpu_failover_pct=vc.cpu_failover_pct, failover_level=vc.failover_level,
+                    failover_hosts=(tuple(failover_hosts) if failover_hosts is not None else None),
+                    total_slots=getattr(vc, "total_slots", None), used_slots=getattr(vc, "used_slots", None),
+                    unreserved_slots=getattr(vc, "unreserved_slots", None),
+                    slot_cpu_mhz=getattr(vc, "slot_cpu_mhz", None), slot_memory_mb=getattr(vc, "slot_memory_mb", None))
     ha_res: Optional[bool] = None
     oc: Optional[float] = None
     if platform == "olvm" and olvm_cfg:
