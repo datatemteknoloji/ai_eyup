@@ -68,6 +68,17 @@ def _cond(obj: Dict[str, Any], ctype: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def parse_vmi_cpu_ratio(v: Any) -> Optional[float]:
+    """HCO `vmiCPUAllocationRatio` (tam sayı; belge: >0). Geçersiz/boş → None (uydurma değer yok)."""
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f > 0 else None
+
+
 def _qty_gb(v: Any) -> Optional[float]:
     from app.services.openshift.ocp_client import OpenShiftClient
     try:
@@ -94,10 +105,14 @@ def collect(db: Session, hv: Hypervisor, *, file_scan: bool = False) -> Dict[str
     for k in kv:
         default_eviction = (((k.get("spec") or {}).get("configuration") or {}).get("evictionStrategy")) \
             or default_eviction
-    hco = _items(client, "/apis/hco.kubevirt.io/v1beta1/hyperconvergeds") or []
+    hco_raw = _items(client, "/apis/hco.kubevirt.io/v1beta1/hyperconvergeds")
+    hco = hco_raw or []
     hco_state = None
+    vmi_ratio = None
     for h in hco:
         default_eviction = ((h.get("spec") or {}).get("evictionStrategy")) or default_eviction
+        vmi_ratio = parse_vmi_cpu_ratio(((h.get("spec") or {}).get("resourceRequirements") or {})
+                                        .get("vmiCPUAllocationRatio")) or vmi_ratio
         av = _cond(h, "Available")
         dg = _cond(h, "Degraded")
         hco_state = {
@@ -110,7 +125,10 @@ def collect(db: Session, hv: Hypervisor, *, file_scan: bool = False) -> Dict[str
             if (h.get("status") or {}).get("versions") else None,
         }
     out["platform"] = {"default_eviction": default_eviction, "hco": hco_state,
-                       "cluster_name": cluster.name if cluster else hv.name}
+                       "cluster_name": cluster.name if cluster else hv.name,
+                       # E6: HCO spec.resourceRequirements.vmiCPUAllocationRatio (salt okunur). `hco_read` False →
+                       # CR okunamadı (RBAC/yok); True ve oran None → HCO'da ayarlanmamış (platform varsayılanı geçerli).
+                       "vmi_cpu_allocation_ratio": vmi_ratio, "hco_read": bool(hco_raw)}
 
     referenced: Dict[str, str] = {}
     vms: List[Dict[str, Any]] = []

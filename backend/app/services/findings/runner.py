@@ -105,7 +105,9 @@ def _save_snapshots(db: Session, platform: str, hv_id: int, col: Dict[str, Any],
                                        entity_ref="platform", entity_name=p.get("cluster_name") or "platform",
                                        cluster_name=p.get("cluster_name"),
                                        config={"default_eviction": p.get("default_eviction"),
-                                               "hco_version": (p.get("hco") or {}).get("version")},
+                                               "hco_version": (p.get("hco") or {}).get("version"),
+                                               "vmi_cpu_allocation_ratio": p.get("vmi_cpu_allocation_ratio"),
+                                               "hco_read": bool(p.get("hco_read"))},
                                        state={"hco_available": (p.get("hco") or {}).get("available")}, now=now)
     if col.get("about"):
         store.save_config_snapshot(db, platform=platform, source_id=hv_id, entity_kind="platform",

@@ -88,3 +88,35 @@ def vmware_datastore_access(db: Session, hv_id: int, cluster: str,
                     "accessible": d.get("accessible"),
                     "host_refs": set(mh) if isinstance(mh, list) else None})
     return out or None
+
+
+def ocp_virt_cpu_ratio(db: Session, hv_id: int) -> Dict[str, Any]:
+    """OpenShift Virtualization `vmiCPUAllocationRatio` (HCO). Her zaman bir değer + KAYNAK etiketi döner:
+
+      • source="hco"          — HyperConverged CR'dan okundu.
+      • source="hco_default"  — CR okundu ama alan ayarlı değil → platform varsayılanı (10).
+      • source="default"      — CR okunamadı (RBAC/eski snapshot) → varsayılan değer 10, ölçülmedi.
+    Varsayılan: Red Hat OpenShift Virtualization Cluster Sizing Guide ("default maximum of 10:1").
+    """
+    from app.services.capacity.engine import DEFAULT_VMI_CPU_ALLOCATION_RATIO as DEF
+    ratio, source = float(DEF), "default"
+    try:
+        for c in vd.latest_config(db, "ocp_virt", hv_id, "platform"):
+            cfg = c.get("config") or {}
+            if "hco_read" not in cfg:           # eski snapshot: HCO okuması yapılmamış
+                continue
+            if cfg.get("hco_read"):
+                v = cfg.get("vmi_cpu_allocation_ratio")
+                if isinstance(v, (int, float)) and v > 0:
+                    ratio, source = float(v), "hco"
+                else:
+                    source = "hco_default"
+            break
+    except Exception:  # noqa: BLE001
+        _rb(db)
+    label = {
+        "hco": f"HyperConverged'dan okundu (vmiCPUAllocationRatio = {ratio:g})",
+        "hco_default": f"HyperConverged'da ayarlı değil — platform varsayılanı {ratio:g}",
+        "default": f"varsayılan değer {ratio:g} (HyperConverged okunamadı; ölçülmedi)",
+    }[source]
+    return {"ratio": ratio, "source": source, "label": label}

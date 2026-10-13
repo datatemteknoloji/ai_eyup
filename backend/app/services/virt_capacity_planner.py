@@ -545,6 +545,7 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
             ds_by_hv[d["hypervisor_id"]].append(d)
     cluster_ds = _cluster_datastore_names(db, cap["clusters"])
     results = []
+    ocp_ratio: Dict[int, Dict[str, Any]] = {}
     for c in cap["clusters"]:
         capacity_policy.activate(values=c.get("thresholds") or cap["thresholds"])   # cluster'ın etkin eşikleri
         if engine_mode() == "legacy":
@@ -610,6 +611,14 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
         if not fits and max_fit is not None:
             max_fit = min(max_fit, count - 1)      # sığmayan talepte "en fazla" istenen adetten küçüktür
         status = "fail" if not fits else ("warn" if (warn_codes or (host_pl and host_pl["confidence"] != "high")) else "ok")
+        cpu_req = None
+        if c["platform"] == "ocp_virt":      # E6: HCO vmiCPUAllocationRatio (okundu / varsayılan etiketi)
+            rt = ocp_ratio.get(c["hypervisor_id"])
+            if rt is None:
+                rt = ocp_ratio[c["hypervisor_id"]] = cap_src.ocp_virt_cpu_ratio(db, c["hypervisor_id"])
+            each = cap_engine.vm_cpu_request_cores(vcpu, rt["ratio"])
+            cpu_req = {"ratio": rt["ratio"], "source": rt["source"], "label": rt["label"],
+                       "each_cores": _r(each, 3), "total_cores": _r(each * count, 3)}
         results.append({
             "platform": c["platform"], "hypervisor_id": c["hypervisor_id"], "hypervisor": c["hypervisor"],
             "cluster": c["cluster"], "standalone": bool(c.get("standalone")),
@@ -619,6 +628,7 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
             "verdict": (host_pl["verdict"] if (host_pl and not host_pl["fits"]) else ("Sığar" if fits else "Sığmaz — kapasite/N+1")),
             "confidence": host_pl["confidence"] if host_pl else None,
             "placement": host_pl,
+            **({"cpu_request": cpu_req} if cpu_req else {}),
             "after": {
                 "memory_effective_pct": _r(eff_mem_pct), "cpu_effective_pct": _r(eff_cpu_pct),
                 "n1_memory_pct": _r(n1_after), "vcpu_ratio": _r(ratio_after, 2),
@@ -643,6 +653,7 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
     ]
     if any(r.get("platform") == "ocp_virt" for r in results):
         assumptions.append(ocp_overhead_assumption(memory_gb, vcpu))
+        assumptions.extend(ocp_cpu_ratio_assumptions(results))
     if hosts:
         assumptions.append("Host kapsamı yalnız aday host'ları daraltır; HA rezervi ve N+1 tüm cluster üzerinden hesaplanır.")
     if any(r.get("standalone") for r in results):
@@ -655,6 +666,23 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
         "results": results,
         "best": next((r for r in results if r["fits"]), None),
     }
+
+
+def ocp_cpu_ratio_assumptions(results: List[Dict[str, Any]]) -> List[str]:
+    """E6: OpenShift Virtualization CPU request = vCPU ÷ vmiCPUAllocationRatio; kaynak etiketli (okundu / varsayılan).
+    Düğümlerdeki mevcut CPU request toplamı bu envanterde toplanmadığı için CPU kararı request tabanlı DEĞİL, kullanım
+    varsayımlıdır — satır bunu açıkça söyler."""
+    seen: Dict[str, Dict[str, Any]] = {}
+    for r in results:
+        cr = r.get("cpu_request")
+        if cr:
+            seen.setdefault(f"{cr['ratio']:g}|{cr['source']}", {**cr, "clusters": []})["clusters"].append(r["cluster"])
+    out = []
+    for cr in seen.values():
+        out.append(f"OpenShift Virtualization CPU request: {cr['label']}; VM başına ≈ {cr['each_cores']:g} çekirdek request "
+                   f"({', '.join(cr['clusters'])}). Düğümlerdeki mevcut CPU request toplamı toplanmadığından CPU kararı "
+                   f"request tabanlı değil, kullanım varsayımlıdır.")
+    return out
 
 
 def ocp_overhead_assumption(memory_gb: float, vcpu: int) -> str:
