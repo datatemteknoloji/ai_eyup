@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.services import capacity_policy, virt_insights_data as vd
 from app.services.capacity import adapters as cap_adapters, engine as cap_engine, engine_mode
-from app.services.capacity import hierarchy as cap_hier, placement as cap_place, sources as cap_src
+from app.services.capacity import failover as cap_fail, hierarchy as cap_hier, placement as cap_place, sources as cap_src
 from app.services.report_analytics import (
     compute_trend_from_series, days_to_threshold_range, horizon_uncertainty_label,
 )
@@ -82,9 +82,27 @@ def _ha_reserve(platform: str, vc: Any, usable: List[Dict[str, Any]]) -> Dict[st
             "cpu_cores": sum(float(h.get("cpu_cores") or 0) for h in top), "assumed": True}
 
 
+RUNWAY_WINDOW_DAYS = 90
+RUNWAY_MIN_DAYS = 14
+
+
 def _runway(series: List[Optional[float]], current: Optional[float], threshold: float) -> Dict[str, Any]:
-    trend = compute_trend_from_series(series, min_samples=14)
+    """Tükenme tahmini. Eski alanlara ek olarak `state` (neden hesaplanmadı), `data_days`/`window_days`/`min_days`:
+    ok | exceeded | insufficient_data | low_confidence | flat | no_current."""
+    trend = compute_trend_from_series(series, min_samples=RUNWAY_MIN_DAYS)
     rng = days_to_threshold_range(current, trend, threshold)
+    if current is None:
+        state = "no_current"
+    elif current >= threshold:
+        state = "exceeded"
+    elif trend.sample_count < RUNWAY_MIN_DAYS:
+        state = "insufficient_data"
+    elif trend.confidence in ("none", "low"):
+        state = "low_confidence"
+    elif rng is None:
+        state = "flat"
+    else:
+        state = "ok"
     return {
         "threshold": threshold,
         "daily_slope": _r(trend.daily_slope, 3),
@@ -92,7 +110,42 @@ def _runway(series: List[Optional[float]], current: Optional[float], threshold: 
         "samples": trend.sample_count,
         "days": rng,
         "uncertainty": horizon_uncertainty_label(rng),
+        "state": state, "data_days": trend.sample_count,
+        "window_days": RUNWAY_WINDOW_DAYS, "min_days": RUNWAY_MIN_DAYS,
     }
+
+
+def _cluster_ds_runway(db: Session, c: Dict[str, Any], ds: List[Dict[str, Any]], host_refs: set) -> Dict[str, Any]:
+    """Cluster host'larının ERİŞEBİLDİĞİ datastore'ların runway'i (ortak datastore her cluster'da ayrı listelenir,
+    toplanmaz). VMware: datastore `mounted_hosts` ∩ cluster host'ları. OLVM/OpenShift Virt: eşleme yok → ölçülemedi."""
+    base = {"threshold": T.ds, "items": [], "worst": None}
+    plat = c["platform"]
+    if plat != "vmware":
+        return {**base, "state": "unmeasurable",
+                "reason": "olvm_no_mapping" if plat == "olvm" else "no_storage_mapping"}
+    rows = cap_src.vmware_datastore_access(db, c["hypervisor_id"], c["cluster"], ds)
+    if rows is None:
+        return {**base, "state": "unmeasurable", "reason": "no_cluster_datastore_config"}
+    by_name = {(d["hypervisor_id"], d["name"]): d for d in ds}
+    items = []
+    for r in rows:
+        refs = r.get("host_refs")
+        if refs is not None and not (refs & host_refs):
+            continue                      # hiçbir cluster host'u bu datastore'a bağlı değil
+        d = by_name.get((c["hypervisor_id"], r["name"]))
+        if d is None:
+            continue
+        f = d.get("forecast") or {}
+        items.append({"name": r["name"], "usage_pct": d.get("usage_pct"), "free_gb": d.get("free_gb"),
+                      "access": "host_mount" if refs is not None else "cluster_config", "forecast": f})
+    if not items:
+        return {**base, "state": "unmeasurable", "reason": "no_accessible_datastore"}
+    with_days = [i for i in items if (i["forecast"].get("days") or {}).get("typical") is not None]
+    worst = min(with_days, key=lambda i: i["forecast"]["days"]["typical"]) if with_days else None
+    items.sort(key=lambda i: ((i["forecast"].get("days") or {}).get("typical", 10 ** 9), -(i["usage_pct"] or 0)))
+    return {**base, "state": "ok", "reason": None, "items": items, "worst": (
+        {"name": worst["name"], "days": worst["forecast"]["days"]} if worst else None),
+        "min_data_days": min((i["forecast"].get("data_days", 0) for i in items), default=0)}
 
 
 def _cluster_vms(vms: List[Dict[str, Any]], hv_id: int, cluster: str, host_names: set) -> List[Dict[str, Any]]:
@@ -334,7 +387,7 @@ def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster:
         hv_hosts = [h for h in hosts if h["hypervisor_id"] == hv.id]
         hv_hosts = vd.worker_filter(db, hv, hv_hosts)
         for h in hv_hosts:
-            grouped[(hv.id, h.get("cluster_name") or "(cluster yok)")].append(h)
+            grouped[(hv.id, cap_hier.cluster_label(h.get("cluster_name"), h["host_name"]))].append(h)
     clusters = []
     for (hid, cname), hs in sorted(grouped.items(), key=lambda kv: (by_hv[kv[0][0]].name, kv[0][1])):
         if cluster and cname != cluster:
@@ -347,6 +400,7 @@ def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster:
                                  with_forecast=with_forecast)
         topo = cap_src.vmware_topology(db, hid, cname) if plat == "vmware" else {"datacenter": None, "pools": None}
         c_new["datacenter"] = topo["datacenter"]
+        c_new["standalone"] = cap_hier.is_standalone(cname)
         c_new["path"] = cap_hier.path_str(hv.name, topo["datacenter"], cname)
         c_new["pools_read"] = (topo["pools"] is not None) if plat == "vmware" else None
         c_new["thresholds"] = dict(th_eff)
@@ -362,6 +416,10 @@ def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster:
     ds = _datastores(db, [h.id for h in hvs if vd.platform_of(h) in ("vmware", "olvm")], with_forecast)
     for d in ds:
         d["hypervisor"] = by_hv[d["hypervisor_id"]].name if d["hypervisor_id"] in by_hv else None
+    if with_forecast:
+        for c in clusters:
+            refs = {str(h.get("host_ref")) for h in grouped.get((c["hypervisor_id"], c["cluster"]), []) if h.get("host_ref")}
+            c["datastore_runway"] = _cluster_ds_runway(db, c, ds, refs)
     as_of_all = [c["as_of"] for c in clusters if c.get("as_of")]
     return {
         "ok": True,
@@ -426,7 +484,7 @@ def _cluster_models(db: Session, cap: Dict[str, Any]) -> Dict[Tuple[int, str], A
         if hv is None:
             continue
         hs = [h for h in vd.worker_filter(db, hv, [h for h in hosts if h["hypervisor_id"] == hid])
-              if (h.get("cluster_name") or "(cluster yok)") == cname]
+              if cap_hier.cluster_label(h.get("cluster_name"), h["host_name"]) == cname]
         on = [v for v in _cluster_vms(vms, hid, cname, {h["host_name"] for h in hs}) if v["powered_on"]]
         topo = cap_src.vmware_topology(db, hid, cname) if plat == "vmware" else {"datacenter": None, "pools": None}
         cfg = _olvm_cluster_cfg(db, hid, cname) if plat == "olvm" else None
@@ -456,7 +514,7 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
              hypervisor_id: Optional[int] = None, cluster: Optional[str] = None,
              cpu_util_assumption: float = DEFAULT_CPU_ASSUMPTION,
              clusters: Optional[List[str]] = None, datacenter: Optional[str] = None,
-             hosts: Optional[List[str]] = None) -> Dict[str, Any]:
+             hosts: Optional[List[str]] = None, platforms: Optional[List[str]] = None) -> Dict[str, Any]:
     """"Şu profilde N VM gelirse nereye sığar?" — her cluster BAĞIMSIZ hesaplanır (H.0: havuzlama yok).
 
     Kapsam: hypervisor_id (instance) → datacenter → cluster(lar) → (opsiyonel) host'lar. Boş kapsam = tüm ortamlar;
@@ -473,6 +531,9 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
         cap["clusters"] = [c for c in cap["clusters"] if c["cluster"] in sel]
     if datacenter:
         cap["clusters"] = [c for c in cap["clusters"] if c.get("datacenter") == datacenter]
+    if platforms:
+        pf = set(platforms)
+        cap["clusters"] = [c for c in cap["clusters"] if c["platform"] in pf]
     models = _cluster_models(db, cap) if engine_mode() != "legacy" else {}
     add_mem = memory_gb * count
     add_cpu = vcpu * count * cpu_util_assumption
@@ -492,6 +553,11 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
             pl = cap_engine.place(c, add_mem=add_mem, add_cpu=add_cpu, add_vcpu=add_vcpu, vcpu_single=vcpu, thr=T,
                                   overcommit=(c["memory"] or {}).get("overcommit"))
         fits, reasons = pl["fits"], list(pl["reasons"])
+        limiting: List[str] = list(pl.get("limiting") or ([] if fits else ["memory"]))
+        warn_codes: List[str] = list(pl.get("warn_codes") or [])
+        cluster_max = (cap_engine.max_additional(c, mem_each=memory_gb, thr=T,
+                                                 overcommit=(c["memory"] or {}).get("overcommit"))
+                       if engine_mode() != "legacy" else None)
         eff_mem_pct, eff_cpu_pct, n1_after, ratio_after = (
             pl["eff_mem_pct"], pl["eff_cpu_pct"], pl["n1_after"], pl["ratio_after"])
         mem, cpu, n1 = c["memory"], c["cpu"], c["n_plus_one"]
@@ -511,6 +577,8 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
                            "usage_after_pct": _r(100.0 - 100.0 * best[1] / best[0]["capacity_gb"])}
             else:
                 fits = False
+                if "datastore" not in limiting:
+                    limiting.append("datastore")
                 reasons.append(f"%{T.ds_reserve:.0f} rezerv korunarak {add_disk:.0f} GB alacak datastore yok")
         # H.0 #4/#5/#6: host seviyesinde yerleşim (HA rezervi + resource pool düşülmüş), parçalanma, datastore erişimi
         host_pl = None
@@ -526,14 +594,27 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
                 host_pl["notes"] = list(host_pl["notes"]) + [ds_note]
             if not host_pl["fits"]:
                 fits = False
+                for code in host_pl.get("limiting") or []:
+                    if code not in limiting:
+                        limiting.append(code)
                 reasons.append(f"{host_pl['verdict']}: {host_pl['unplaced']}/{count} VM host'a yerleşemedi")
+            if host_pl["warnings"] and "cores" not in warn_codes:
+                warn_codes.append("cores")
             reasons.extend(w for w in host_pl["warnings"] if w not in reasons)
         score = None
         if eff_mem_pct is not None:
             score = round(100 - eff_mem_pct * 0.6 - (eff_cpu_pct or 0) * 0.3 - (n1_after or 0) * 0.1, 1)
+        hp_max = host_pl.get("max_fit") if host_pl else None
+        caps = [x for x in (cluster_max, hp_max) if x is not None]
+        max_fit = min(caps) if caps else None
+        if not fits and max_fit is not None:
+            max_fit = min(max_fit, count - 1)      # sığmayan talepte "en fazla" istenen adetten küçüktür
+        status = "fail" if not fits else ("warn" if (warn_codes or (host_pl and host_pl["confidence"] != "high")) else "ok")
         results.append({
             "platform": c["platform"], "hypervisor_id": c["hypervisor_id"], "hypervisor": c["hypervisor"],
-            "cluster": c["cluster"], "fits": fits, "reasons": reasons, "score": score,
+            "cluster": c["cluster"], "standalone": bool(c.get("standalone")),
+            "fits": fits, "status": status, "limiting": limiting, "warn_codes": warn_codes,
+            "max_fit": max_fit, "reasons": reasons, "score": score,
             "datacenter": c.get("datacenter"), "path": c.get("path"),
             "verdict": (host_pl["verdict"] if (host_pl and not host_pl["fits"]) else ("Sığar" if fits else "Sığmaz — kapasite/N+1")),
             "confidence": host_pl["confidence"] if host_pl else None,
@@ -551,16 +632,22 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
         })
     results.sort(key=lambda r: (not r["fits"], -(r["score"] or -999)))
     capacity_policy.activate(db)
+    assumptions = [
+        "Yeni VM'in Memory'si tamamen kullanılıyor kabul edilir (en kötü durum).",
+        f"CPU kullanımı vCPU başına %{cpu_util_assumption * 100:.0f} varsayılır.",
+        f"Datastore'da %{T.ds_reserve:.0f} boş alan rezervi korunur.",
+        "HA rezervi cluster politikasından; okunamıyorsa 1 host varsayılır.",
+        "Kullanım değerleri anlıktır (host'ların son ölçümü); tepe/p95 değildir.",
+    ]
+    if hosts:
+        assumptions.append("Host kapsamı yalnız aday host'ları daraltır; HA rezervi ve N+1 tüm cluster üzerinden hesaplanır.")
+    if any(r.get("standalone") for r in results):
+        assumptions.append("'(cluster yok)' satırları bağımsız host'tur: ortak HA/vMotion havuzu varsayılmaz, her host ayrı hesaplanır.")
     return {
         "ok": True,
         "request": {"vcpu": vcpu, "memory_gb": memory_gb, "disk_gb": disk_gb, "count": count,
                     "cpu_util_assumption": cpu_util_assumption},
-        "assumptions": [
-            "Yeni VM'in Memory'si tamamen kullanılıyor kabul edilir (en kötü durum).",
-            f"CPU kullanımı vCPU başına %{cpu_util_assumption * 100:.0f} varsayılır.",
-            f"Datastore'da %{T.ds_reserve:.0f} boş alan rezervi korunur.",
-            "HA rezervi cluster politikasından; okunamıyorsa 1 host varsayılır.",
-        ],
+        "assumptions": assumptions,
         "results": results,
         "best": next((r for r in results if r["fits"]), None),
     }
@@ -581,6 +668,145 @@ def _cluster_datastore_names(db: Session, clusters: List[Dict[str, Any]]) -> Dic
             if refs:
                 out[(hid, n)] = {ds.get(r, r) for r in refs}
     return out
+
+
+def _vmware_mounts(db: Session, c: Dict[str, Any], hypervisor_id: int) -> Dict[str, Any]:
+    if c["platform"] != "vmware":
+        return {}
+    from app.services.virt_placement import _ds_mounts
+    try:
+        return _ds_mounts(db, hypervisor_id)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def host_failure(db: Session, *, hypervisor_id: int, cluster: str, hosts: List[str]) -> Dict[str, Any]:
+    """"X host'u (veya birkaçı) devre dışı kalırsa çalışan VM'ler kalan host'lara sığar mı?" — deterministik.
+
+    Memory: düşen host'lardaki AÇIK VM'ler büyükten küçüğe, kalan kullanılabilir host'ların boş Memory'sine
+    (en boş host; VM'in datastore'u biliniyorsa o host'a bağlı olmalı) yerleştirilir. İKİ sonuç yan yana verilir:
+    tanımlı Memory (en kötü durum, karar bunun üzerindendir) ve p95 Memory (VMware: guest aktif Memory; iyimser).
+    HA rezervi BU senaryoda düşülmez: rezerv tam olarak bu arızayı karşılamak içindir.
+    CPU: kalan host'ların fiziksel çekirdekleri üzerinde vCPU oranı (uyarı) ve p95 CPU talebi (Sınırda / Sığmaz).
+      • "Sığar" · "Sınırda" (eşik üstü ama fiziksel sınırın altı) · "Sığmaz"
+    Affinity/DRS kuralları, VM rezervasyonları ve HA yeniden başlatma önceliği değerlendirilmez (not).
+    Geriye dönük uyumlu: üst düzey `verdict/status/placed/unplaced/after/displaced` tanımlı Memory sonucudur;
+    `overall`, `memory`, `cpu`, `p95` yeni alanlardır.
+    """
+    capacity_policy.activate(db)
+    hosts = [h for h in dict.fromkeys(hosts or []) if h]
+    if not hosts:
+        return {"ok": False, "error": "En az bir host seçin"}
+    ctx = _hf_context(db, hypervisor_id, cluster)
+    if "error" in ctx:
+        return {"ok": False, "error": ctx["error"]}
+    return _hf_eval(db, ctx, hypervisor_id, cluster, hosts)
+
+
+def _hf_context(db: Session, hypervisor_id: int, cluster: str) -> Dict[str, Any]:
+    """Cluster için kapasite + model (host-failure hesabının ortak girdisi; matris tek sefer kurar)."""
+    cap = build_capacity(db, hypervisor_id=hypervisor_id, cluster=cluster, with_forecast=False)
+    c = next((x for x in cap["clusters"] if x["hypervisor_id"] == hypervisor_id and x["cluster"] == cluster), None)
+    if c is None:
+        return {"error": "Cluster bulunamadı"}
+    model = _cluster_models(db, cap).get(cap_hier.cluster_key(hypervisor_id, cluster))
+    if model is None:
+        return {"error": "Cluster modeli oluşturulamadı"}
+    return {"cap": cap, "c": c, "model": model}
+
+
+def _hf_eval(db: Session, ctx: Dict[str, Any], hypervisor_id: int, cluster: str, hosts: List[str]) -> Dict[str, Any]:
+    cap, c, model = ctx["cap"], ctx["c"], ctx["model"]
+    names = {n.name for n in model.nodes}
+    unknown = [h for h in hosts if h not in names]
+    if unknown:
+        return {"ok": False, "error": f"Bilinmeyen host: {', '.join(unknown)}"}
+    capacity_policy.activate(values=c.get("thresholds") or cap["thresholds"])
+    thr, cpu_thr, ratio_limit = T.mem, T.cpu, T.vcpu_ratio
+    down = set(hosts)
+    vms = _cluster_vms(vd.vm_allocations(db, [hypervisor_id]), hypervisor_id, cluster, names)
+    on = [v for v in vms if v["powered_on"]]
+    displaced = [v for v in on if v.get("host") in down]
+    remaining = [n for n in model.nodes if n.usable and n.name not in down]
+    mounts = _vmware_mounts(db, c, hypervisor_id)
+    usage = cap_fail.p95_index(db, [hypervisor_id])
+    needs = {id(v): cap_fail.vm_need(v, usage.get((hypervisor_id, v["name"]))) for v in on}
+    mem_def = cap_fail.failover_place(displaced, remaining, thr, mounts, lambda v: needs[id(v)]["mem_defined"])
+    mem_p95 = cap_fail.failover_place(displaced, remaining, thr, mounts, lambda v: needs[id(v)]["mem_p95"])
+    cov = cap_fail.coverage([needs[id(v)] for v in on])
+    cpu = None
+    if displaced:
+        cpu = cap_fail.cpu_check(
+            remaining_cores=sum(float(n.cpu_cores or 0) for n in remaining),
+            vcpu_total=sum(needs[id(v)]["vcpu"] for v in on),
+            demand_cores=sum(needs[id(v)]["cpu_p95_cores"] for v in on),
+            thr_pct=cpu_thr, ratio_limit=ratio_limit, cov=cov)
+    overall = cap_fail.combine(mem_def, cpu) if displaced else {"verdict": "no_vm", "status": "ok", "limiting": [], "warnings": []}
+    notes = ["Tanımlı Memory VM'in tahsis ettiği değerdir (en kötü durum); karar bu sütuna göredir.",
+             "p95 Memory: VMware'de guest AKTİF Memory'dir (host'ta tüketilen değil) — iyimser alt sınırdır; "
+             "p95 verisi olmayan VM tanımlı değerle hesaplanır.",
+             "CPU p95 talebi VM p95'lerinin toplamıdır (muhafazakâr); CPU yüzdesi vCPU başına 2 GHz varsayımına dayanır.",
+             "Affinity/DRS kuralları, VM rezervasyonları ve HA yeniden başlatma önceliği değerlendirilmez.",
+             "HA rezervi bu senaryoda düşülmez: rezerv bu arızayı karşılamak içindir."]
+    if not remaining:
+        notes.append("Kalan kullanılabilir host yok: failover mümkün değil.")
+    if c["platform"] == "ocp_virt":
+        notes.append("OpenShift Virtualization: son yerleşim kararını kube-scheduler verir; sonuç bilgi amaçlıdır.")
+    if c["platform"] == "vmware" and not mounts:
+        notes.append("Datastore ↔ host erişimi okunamadı: datastore kontrolü yapılmadı.")
+    out = {
+        "ok": True, "path": c.get("path"), "platform": c["platform"], "hypervisor_id": hypervisor_id,
+        "cluster": cluster, "down": sorted(down), "remaining_hosts": sorted(n.name for n in remaining),
+        "vms_total_on_down": len(displaced),
+        "displaced": {"count": len(displaced), "memory_gb": mem_def["displaced_gb"]},
+        "placed": mem_def["placed"], "unplaced": mem_def["unplaced"],
+        "verdict": mem_def["verdict"], "status": mem_def["status"],
+        "after": {"memory_pct": mem_def["after_memory_pct"]},
+        "threshold_pct": thr, "ha": c.get("ha"), "notes": notes,
+        "confidence": "medium" if (c.get("ha") or {}).get("assumed") else "high",
+        "overall": overall,
+        "memory": {"defined": mem_def, "p95": {**mem_p95, "coverage": cov}},
+        "cpu": cpu,
+        "p95": {"window_days": cap_fail.p95_window_days(), "coverage": cov,
+                "memory_basis": "guest_active" if c["platform"] == "vmware" else "reported"},
+    }
+    capacity_policy.activate(db)
+    return out
+
+
+def host_failure_matrix(db: Session, *, hypervisor_id: int, cluster: str) -> Dict[str, Any]:
+    """Cluster'daki HER host için tek-host düşme (N+1) sonucu — salt okunur. Her satır `host_failure` ile aynı hesaptır
+    (kapasite/model cluster için tek sefer kurulur). Kalan host yoksa satır `no_remaining_host` işaretlenir."""
+    capacity_policy.activate(db)
+    ctx = _hf_context(db, hypervisor_id, cluster)
+    if "error" in ctx:
+        return {"ok": False, "error": ctx["error"]}
+    model = ctx["model"]
+    rows: List[Dict[str, Any]] = []
+    for node in sorted(model.nodes, key=lambda n: n.name):
+        r = _hf_eval(db, ctx, hypervisor_id, cluster, [node.name])
+        if not r.get("ok"):
+            rows.append({"host": node.name, "ok": False, "error": r.get("error")})
+            continue
+        mem_def, mem_p95 = r["memory"]["defined"], r["memory"]["p95"]
+        cpu = r.get("cpu")
+        rows.append({
+            "host": node.name, "ok": True, "usable": bool(node.usable),
+            "vms": r["displaced"]["count"], "memory_gb": r["displaced"]["memory_gb"],
+            "remaining_hosts": len(r["remaining_hosts"]), "no_remaining_host": not r["remaining_hosts"],
+            "defined": {"verdict": mem_def["verdict"], "after_memory_pct": mem_def.get("after_memory_pct"),
+                        "unplaced": len(mem_def["unplaced"])},
+            "p95": {"verdict": mem_p95["verdict"], "after_memory_pct": mem_p95.get("after_memory_pct"),
+                    "unplaced": len(mem_p95["unplaced"])},
+            "cpu": ({"verdict": cpu["verdict"], "p95_pct": cpu.get("p95_pct"), "vcpu_ratio": cpu.get("vcpu_ratio"),
+                     "ratio_warn": cpu.get("ratio_warn")} if cpu else None),
+            "overall": r["overall"],
+        })
+    capacity_policy.activate(db)
+    c = ctx["c"]
+    return {"ok": True, "hypervisor_id": hypervisor_id, "cluster": cluster, "platform": c["platform"],
+            "path": c.get("path"), "hosts_total": len(rows), "single_host": len(rows) == 1,
+            "threshold_pct": (c.get("thresholds") or ctx["cap"].get("thresholds") or {}).get("memory"), "rows": rows}
 
 
 def capacity_findings(cap: Dict[str, Any]) -> Dict[Tuple[str, int], List[Any]]:

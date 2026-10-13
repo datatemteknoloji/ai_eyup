@@ -153,6 +153,7 @@ class SimulateRequest(BaseModel):
     clusters: Optional[List[str]] = None
     datacenter: Optional[str] = None
     hosts: Optional[List[str]] = None
+    platforms: Optional[List[str]] = None      # vmware | olvm | ocp_virt (boş = hepsi)
 
 
 @router.get("/capacity/policy")
@@ -223,6 +224,85 @@ def capacity_policy_override_delete(request: Request, hypervisor_id: int, key: s
 def capacity_simulate(body: SimulateRequest, db: Session = Depends(get_db), user: User = Depends(_module)):
     from app.services.virt_capacity_planner import simulate
     return simulate(db, **body.model_dump())
+
+
+class HostFailureRequest(BaseModel):
+    hypervisor_id: int
+    cluster: str
+    hosts: List[str] = Field(..., min_length=1, max_length=64)
+
+
+@router.post("/capacity/host-failure")
+def capacity_host_failure(body: HostFailureRequest, db: Session = Depends(get_db), user: User = Depends(_module)):
+    """"Bu host(lar) devre dışı kalırsa çalışan VM'ler kalan host'lara sığar mı?" (salt okunur, deterministik)."""
+    from app.services.virt_capacity_planner import host_failure
+    res = host_failure(db, **body.model_dump())
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Senaryo hesaplanamadı")
+    return res
+
+
+class HostFailureMatrixRequest(BaseModel):
+    hypervisor_id: int
+    cluster: str
+
+
+@router.post("/capacity/host-failure/matrix")
+def capacity_host_failure_matrix(body: HostFailureMatrixRequest, db: Session = Depends(get_db),
+                                 user: User = Depends(_module)):
+    """Cluster'daki her host için otomatik N+1 matrisi (salt okunur; satırlar `host-failure` ile aynı hesap)."""
+    from app.services.virt_capacity_planner import host_failure_matrix
+    res = host_failure_matrix(db, **body.model_dump())
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Matris hesaplanamadı")
+    return res
+
+
+class ReclaimSimRequest(BaseModel):
+    hypervisor_id: Optional[int] = None
+    cluster: Optional[str] = None
+    thresholds: Optional[Dict[str, float]] = Field(None, description="GEÇİCİ eşikler (rs_window_days, rs_target_pct, ...)")
+
+
+@router.post("/capacity/reclaim-sim")
+def capacity_reclaim_sim(body: ReclaimSimRequest, db: Session = Depends(get_db), user: User = Depends(_module)):
+    """"VM'ler p95'e göre küçültülürse cluster kapasitesi" — salt okunur; eşikler yalnız bu istekte geçerli, kaydedilmez."""
+    from app.services.virt_reclaim_sim import reclaim_sim
+    try:
+        return reclaim_sim(db, **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class BulkProfile(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    vcpu: int = Field(..., ge=1, le=512)
+    memory_gb: float = Field(..., ge=0, le=16384)
+    disk_gb: float = Field(0, ge=0, le=1048576)
+    count: int = Field(1, ge=1, le=500)
+    group: Optional[str] = Field(None, max_length=80, description="anti-affinity grubu (opsiyonel)")
+
+
+class BulkPlacementRequest(BaseModel):
+    profiles: List[BulkProfile] = Field(..., min_length=1, max_length=50)
+    hypervisor_id: Optional[int] = None
+    datacenter: Optional[str] = None
+    clusters: Optional[List[str]] = None
+    hosts: Optional[List[str]] = None
+    platforms: Optional[List[str]] = None
+
+
+@router.post("/capacity/bulk-placement")
+def capacity_bulk_placement(body: BulkPlacementRequest, db: Session = Depends(get_db), user: User = Depends(_module)):
+    """Çoklu VM profili + anti-affinity grubu için cluster başına yerleşim planı (salt okunur, kaydedilmez)."""
+    from app.services.virt_bulk_placement import bulk_place
+    data = body.model_dump()
+    for pf in data.get("platforms") or []:
+        _platforms(pf)                                   # geçersiz platform → 400
+    try:
+        return bulk_place(db, **data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 class MoveRequest(BaseModel):
@@ -356,6 +436,73 @@ def finding_detail(finding_id: int, request: Request, db: Session = Depends(get_
     row = _finding_or_404(db, finding_id)
     exc = exception_keys(db).get((row.platform, row.source_id, row.entity_ref, row.check_id))
     return finding_to_dict(row, exc, locale=_locale(request))
+
+
+@router.get("/findings/{finding_id}/context")
+def finding_context_ep(finding_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(_module)):
+    """Bulgu bağlamı (salt okunur, deterministik): host düşerse etki, aynı host'taki ilişkili bulgular, genel rehber."""
+    from app.services.findings.context import finding_context
+    return finding_context(db, _finding_or_404(db, finding_id), locale=_locale(request))
+
+
+# ── AI yorumu (Yapılandırma + Donanım) — yalnız butonla üretilir ─────────────
+
+def _ai_guard(row: InfraFinding):
+    from app.services.findings import ai_comment as ac
+    if row.category not in ac.AI_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Bu bulgu kategorisi için AI yorumu desteklenmiyor")
+    return ac
+
+
+@router.get("/findings/{finding_id}/ai-comment")
+def finding_ai_comment_get(finding_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(_module)):
+    """Kayıtlı AI yorumu + güncel olup olmadığı. Yorum ÜRETMEZ (üretim yalnız POST ile, butonla)."""
+    from app.services.findings import ai_comment as ac
+    row = _finding_or_404(db, finding_id)
+    return ac.get_state(db, row, locale=_locale(request), username=getattr(user, "username", "") or "")
+
+
+@router.post("/findings/{finding_id}/ai-comment")
+async def finding_ai_comment_generate(finding_id: int, request: Request, db: Session = Depends(get_db),
+                                      user: User = Depends(_module)):
+    """AI yorumu üretir/yeniden üretir. Çıktı kurallarla doğrulanır; geçmezse saklanmaz ve gösterilmez."""
+    row = _finding_or_404(db, finding_id)
+    ac = _ai_guard(row)
+    if not ac.tables_ready(db):
+        raise HTTPException(status_code=503, detail=ac.TABLES_MISSING_MSG)
+    uname = getattr(user, "username", "") or ""
+    try:
+        res = await ac.generate(db, row, locale=_locale(request), user=uname, persist=True)
+    except ac.AiCommentRejected as exc:
+        _audit(db, user, "finding_ai_comment_rejected", "AI yorumu doğrulamayı geçemedi", request,
+               finding_id=finding_id, violations=exc.violations[:8])
+        raise HTTPException(status_code=422, detail="AI yorumu kalite kurallarını geçemedi; gösterilmedi. Lütfen yeniden deneyin.")
+    except ac.AiUnavailable:
+        raise HTTPException(status_code=503, detail="AI servisine ulaşılamadı")
+    _audit(db, user, "finding_ai_comment", "Bulgu için AI yorumu üretildi", request,
+           finding_id=finding_id, version=res.get("version"), model=res.get("model"))
+    return ac.get_state(db, row, locale=_locale(request), username=uname)
+
+
+class AiFeedbackBody(BaseModel):
+    comment_id: int
+    helpful: bool
+    note: Optional[str] = Field(None, max_length=500)
+
+
+@router.post("/findings/{finding_id}/ai-comment/feedback")
+def finding_ai_comment_feedback(finding_id: int, body: AiFeedbackBody, db: Session = Depends(get_db),
+                                user: User = Depends(_module)):
+    row = _finding_or_404(db, finding_id)
+    ac = _ai_guard(row)
+    if not ac.tables_ready(db):
+        raise HTTPException(status_code=503, detail=ac.TABLES_MISSING_MSG)
+    try:
+        return {"ok": True, **ac.submit_feedback(db, row, comment_id=body.comment_id,
+                                                  username=getattr(user, "username", "") or "",
+                                                  helpful=body.helpful, note=body.note)}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 class ExceptionRequest(BaseModel):

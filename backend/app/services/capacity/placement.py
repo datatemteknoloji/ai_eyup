@@ -119,7 +119,7 @@ def place_on_hosts(model: ClusterModel, *, vm_mem_gb: float, vm_vcpu: int, count
     if not hosts:
         return {"fits": False, "verdict": V_NONE, "reason": "no_host", "placed": [], "unplaced": count,
                 "warnings": warnings, "notes": notes, "confidence": "low", "cluster_free_gb": 0.0,
-                "host_free": [], "pools": b["pools"]["pools"]}
+                "host_free": [], "pools": b["pools"]["pools"], "limiting": ["no_host"], "max_fit": 0}
     max_cores = max(h["cores"] for h in hosts)
     if vm_vcpu > max_cores > 0:
         warnings.append(f"VM vCPU ({vm_vcpu}) cluster'daki en büyük host'un fiziksel çekirdeğini ({max_cores:.0f}) aşıyor")
@@ -160,10 +160,49 @@ def place_on_hosts(model: ClusterModel, *, vm_mem_gb: float, vm_vcpu: int, count
     low = (b["pools"]["read"] is False)
     medium = bool(b["reserve"].get("assumed"))
     confidence = "low" if low else ("medium" if medium else "high")
+    # En fazla kaç özdeş VM sığar: istenen adet yerleştiyse aynı durumdan devam edilir (en fazla _MAX_FIT_CAP).
+    max_fit: Optional[int] = None
+    if vm_mem_gb > 0 or (disk_gb > 0 and ds_state is not None):
+        max_fit = len(placed)
+        if fits:
+            extra = _extra_fit(hosts, free, ds_state, vm_mem_gb, disk_gb, ds_reserve_pct, _MAX_FIT_CAP - max_fit)
+            max_fit += extra
     return {
         "fits": fits, "verdict": verdict, "reason": None if fits else reason, "placed": placed, "unplaced": unplaced,
         "warnings": sorted(set(warnings)), "notes": notes, "confidence": confidence,
         "cluster_free_gb": round(sum(h["free_gb"] for h in hosts), 2),
         "host_free": [{"host": h["name"], "free_gb": round(h["free_gb"], 2)} for h in hosts],
         "pools": b["pools"]["pools"],
+        "limiting": [] if fits else [_REASON_CODE.get(reason or "", "memory")],
+        "max_fit": max_fit,
     }
+
+
+_MAX_FIT_CAP = 2000
+_REASON_CODE = {"capacity": "memory", "fragmentation": "fragmentation", "datastore_access": "datastore",
+                "no_host": "no_host"}
+
+
+def _extra_fit(hosts: Sequence[Dict[str, Any]], free: Dict[str, float], ds_state: Optional[List[Dict[str, Any]]],
+               vm_mem_gb: float, disk_gb: float, ds_reserve_pct: float, limit: int) -> int:
+    """Mevcut yerleşimden sonra aynı profilden kaç VM daha sığar (aynı açgözlü kural; girdileri değiştirmez)."""
+    free = dict(free)
+    ds = [dict(d) for d in ds_state] if ds_state is not None else None
+    n = 0
+    while n < limit:
+        cands = [h for h in hosts if free[h["name"]] >= vm_mem_gb]
+        if disk_gb > 0 and ds is not None:
+            cands = [h for h in cands if any(_ds_ok(d, h["ref"], disk_gb, ds_reserve_pct) for d in ds)]
+        if not cands:
+            break
+        cands.sort(key=lambda h: (-free[h["name"]], h["name"]))
+        pick = cands[0]
+        free[pick["name"]] -= vm_mem_gb
+        if disk_gb > 0 and ds is not None:
+            opts = sorted((d for d in ds if _ds_ok(d, pick["ref"], disk_gb, ds_reserve_pct)),
+                          key=lambda d: (-(float(d.get("free_gb") or 0)), d["name"]))
+            opts[0]["free_gb"] = float(opts[0].get("free_gb") or 0) - disk_gb
+        if vm_mem_gb <= 0 and disk_gb <= 0:
+            break
+        n += 1
+    return n

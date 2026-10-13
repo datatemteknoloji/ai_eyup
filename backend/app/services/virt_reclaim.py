@@ -120,8 +120,11 @@ def _rightsize(vcpu: int, mem_gb: float, u: Dict[str, Any]) -> Dict[str, Any]:
             "basis": f"p95 CPU %{p95c} hedef %{target:.0f}; Memory yalnız p95 < %25 ise (aktif bellek)"}
 
 
-def _vm_rows(db: Session, hvs) -> Dict[str, List[Dict[str, Any]]]:
+def _vm_rows(db: Session, hvs, overrides: Optional[Dict[str, float]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """`overrides`: istek başına GEÇİCİ eşikler (rs_* vb.); politika kaydedilmez, yalnız bu çağrı için etkindir."""
     th = capacity_policy.activate(db)
+    if overrides:
+        th = capacity_policy.activate(values={**th, **overrides})
     window = int(th["rs_window_days"])
     min_vcpu = int(th["rs_min_vcpu"])
     min_red = th["rs_min_reduction_pct"] / 100.0

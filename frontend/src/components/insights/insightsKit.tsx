@@ -6,6 +6,8 @@ import { useAuth } from '../../auth/AuthContext'
 import { useLocale, useT } from '../../i18n/LocaleProvider'
 import { GhostButton, Modal, NEON, SeverityBadge } from '../aiops/ui'
 import { MethodBadge } from './MethodBadge'
+import FindingContext, { type FindingCtx } from './FindingContext'
+import FindingAiComment from './FindingAiComment'
 
 export type InsightsBase = 'virt-insights' | 'ocp-insights'
 
@@ -45,10 +47,10 @@ export async function apiGet<T = any>(base: InsightsBase, path: string, locale =
   return r.json()
 }
 
-export async function apiSend<T = any>(base: InsightsBase, path: string, method: string, body?: unknown): Promise<T> {
+export async function apiSend<T = any>(base: InsightsBase, path: string, method: string, body?: unknown, locale?: string): Promise<T> {
   const r = await fetch(`${API_BASE_URL}/${base}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(locale ? { 'Accept-Language': locale } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const b = await r.json().catch(() => ({}))
@@ -280,6 +282,13 @@ function RemediateModal({ finding, onClose }: { finding: Finding; onClose: () =>
 
 const REMEDIABLE = new Set(['reclaim.vm.snapshot_age', 'vmw.host.ntp_running', 'vmw.host.ntp_configured', 'vmw.cluster.ntp_consistency', 'cmp.host.ssh_disabled'])
 
+/** Açılan host bulgusu için bağlam (etki / ilişkili bulgular / genel rehber); yalnız virt-insights, yalnız açıkken çekilir. */
+function FindingContextLoader({ base, f, onOpenFinding, openable }: { base: InsightsBase; f: Finding; onOpenFinding: (id: number) => void; openable: Set<number> }) {
+  const q = useInsights<FindingCtx>(base, `/findings/${f.id}/context`, { enabled: base === 'virt-insights' && f.result === 'fail' })
+  if (!q.data) return null
+  return <FindingContext ctx={q.data} onOpenFinding={onOpenFinding} openable={openable} />
+}
+
 export function FindingsTable({ base, rows, showPlatform = true, emptyText }: {
   base: InsightsBase; rows: Finding[]; showPlatform?: boolean; emptyText?: string
 }) {
@@ -332,6 +341,8 @@ export function FindingsTable({ base, rows, showPlatform = true, emptyText }: {
                       {typeof f.evidence?.source_url === 'string' && f.evidence.source_url && (
                         <div className="text-xs"><span className="text-slate-500">{t('g_ref_source_link')}: </span><a href={f.evidence.source_url as string} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline break-all">{f.evidence.source_url as string}</a></div>
                       )}
+                      {base === 'virt-insights' && f.result === 'fail' && <FindingContextLoader base={base} f={f} onOpenFinding={setOpen} openable={new Set(rows.map(r => r.id))} />}
+                      {base === 'virt-insights' && f.result === 'fail' && <FindingAiComment f={f} />}
                       {f.refs && f.refs.length > 0 && <div className="text-[11px] text-slate-500">{f.refs.join(' · ')}</div>}
                       {f.evidence && Object.keys(f.evidence).length > 0 && (
                         <pre className="text-[11px] font-mono text-slate-400 bg-black/30 rounded p-2 max-h-56 overflow-auto whitespace-pre-wrap">{JSON.stringify(f.evidence, null, 2)}</pre>

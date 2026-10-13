@@ -131,6 +131,13 @@ def place(c: Dict[str, Any], *, add_mem: float, add_cpu: float, add_vcpu: float,
     Kararı eşikler (`thr.mem`, `thr.n1_warn`, `thr.cpu`, `thr.vcpu_ratio`) verir; veri-yoksa alanlar None.
     """
     reasons: List[str] = []
+    limiting: List[str] = []       # engelleyici gerekçe kodları (tek kelimelik; arayüz çevirir)
+    warn_codes: List[str] = []     # uyarı kodları (sonucu bozmaz)
+
+    def _lim(code: str) -> None:
+        if code not in limiting:
+            limiting.append(code)
+
     mem, cpu, n1 = c["memory"], c["cpu"], c["n_plus_one"]
     mem_used = (mem["used_gb"] or 0) + add_mem
     cpu_used = (cpu["used_cores"] or 0) + add_cpu
@@ -141,30 +148,60 @@ def place(c: Dict[str, Any], *, add_mem: float, add_cpu: float, add_vcpu: float,
     fits = True
     if eff_mem_pct is None or eff_mem_pct > thr.mem:
         fits = False
+        _lim("memory")
         reasons.append(f"Effective Memory %{_r(eff_mem_pct)} > %{thr.mem:.0f}")
     if n1_after is not None and n1_after > 100:
         fits = False
+        _lim("ha")
         reasons.append(f"N+1 bozulur (en büyük host düşünce Memory %{_r(n1_after)})")
     elif n1_after is not None and n1_after > thr.n1_warn:
+        warn_codes.append("ha")
         reasons.append(f"N+1 sınırda (%{_r(n1_after)})")
     if eff_cpu_pct is not None and eff_cpu_pct > thr.cpu:
+        warn_codes.append("cpu")
         reasons.append(f"CPU effective %{_r(eff_cpu_pct)} — performans riski (uyarı)")
     if ratio_after and ratio_after > thr.vcpu_ratio:
+        if "cpu" not in warn_codes:
+            warn_codes.append("cpu")
         reasons.append(f"vCPU:çekirdek {ratio_after:.1f}:1 (uyarı)")
     if c["hosts_usable"] == 0:
         fits = False
+        _lim("no_host")
         reasons.append("Kullanılabilir host yok")
     if vcpu_single > (c.get("typical_host_cores") or 0) and c.get("typical_host_cores"):
+        warn_codes.append("cores")
         reasons.append(f"Tek VM vCPU ({vcpu_single}) host çekirdeğinden ({c['typical_host_cores']:.0f}) fazla")
     committed_after_pct = None
     if overcommit and overcommit.get("scheduling_gb"):
         committed_after_pct = _r(100.0 * (overcommit["committed_gb"] + add_mem) / overcommit["scheduling_gb"])
         if committed_after_pct is not None and committed_after_pct > 100:
             fits = False
+            _lim("memory")
             reasons.append(f"Bellek taahhüdü %{committed_after_pct}: zamanlayıcı sınırı (%{overcommit['pct']:.0f} "
                            "overcommit) aşılır")
     return {"fits": fits, "reasons": reasons, "eff_mem_pct": eff_mem_pct, "eff_cpu_pct": eff_cpu_pct,
-            "n1_after": n1_after, "ratio_after": ratio_after, "committed_after_pct": committed_after_pct}
+            "n1_after": n1_after, "ratio_after": ratio_after, "committed_after_pct": committed_after_pct,
+            "limiting": limiting, "warn_codes": warn_codes}
+
+
+def max_additional(c: Dict[str, Any], *, mem_each: float, thr: Any,
+                   overcommit: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    """Cluster toplamı kapılarına göre (effective Memory eşiği, N+1 ≤ %100, OLVM taahhüt sınırı) en fazla kaç özdeş VM
+    daha eklenebilir. Memory 0 ise sınırlayan kaynak yok → None. Host seviyesi parçalanma ayrıca hesaplanır."""
+    if not mem_each or mem_each <= 0:
+        return None
+    mem, n1 = c["memory"], c["n_plus_one"]
+    if c.get("hosts_usable", 0) == 0:
+        return 0
+    used = mem["used_gb"] or 0.0
+    caps: List[float] = []
+    eff = mem.get("effective_gb") or 0.0
+    caps.append((eff * thr.mem / 100.0 - used) / mem_each if eff else -1.0)
+    if n1.get("remaining_mem_gb"):
+        caps.append((n1["remaining_mem_gb"] - used) / mem_each)
+    if overcommit and overcommit.get("scheduling_gb"):
+        caps.append((overcommit["scheduling_gb"] - overcommit["committed_gb"]) / mem_each)
+    return max(0, int(math.floor(min(caps) + 1e-9)))
 
 
 # ── Drene senaryosu — OpenShift (request / allocatable) ──────────────────────

@@ -52,9 +52,10 @@ def match_underlay(node_names: Sequence[str], vms: Sequence[Dict[str, Any]],
             row["notes"].append(NOTE_NO_MATCH)
         else:
             v = next(iter(cands.values()))
-            c = by_key.get(cap_hier.cluster_key(v["hypervisor_id"], v.get("cluster") or "(cluster yok)"))
+            lbl = cap_hier.cluster_label(v.get("cluster"), v.get("host"))
+            c = by_key.get(cap_hier.cluster_key(v["hypervisor_id"], lbl))
             row.update({"matched": True, "vm": v.get("name"), "host": v.get("host"), "instance_id": v["hypervisor_id"],
-                        "cluster": v.get("cluster") or "(cluster yok)"})
+                        "cluster": lbl})
             if c is not None:
                 row.update({"platform": c.get("platform"), "instance": c.get("hypervisor"),
                             "datacenter": c.get("datacenter"),

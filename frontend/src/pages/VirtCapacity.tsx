@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Gauge, Info } from 'lucide-react'
+import { ChevronDown, ChevronRight, Gauge } from 'lucide-react'
 import { useT } from '../i18n/LocaleProvider'
 import { GhostButton, NEON, PageHeader, Tabs } from '../components/aiops/ui'
 import { MethodBadge } from '../components/insights/MethodBadge'
+import WhatIfResults from '../components/insights/WhatIfResults'
+import HostFailure from '../components/insights/HostFailure'
+import ReclaimSim from '../components/insights/ReclaimSim'
+import BulkPlacement from '../components/insights/BulkPlacement'
+import { InfoDot, TermHint } from '../components/insights/InfoDot'
 import { Bar, PageInfo, Panel, RunBar, SimpleTable, Stat, apiGet, apiSend, fmt, pctTone, useInsights } from '../components/insights/insightsKit'
 
 type Cluster = any
@@ -17,10 +22,44 @@ function n1IsNotApplicable(s?: string) {
 }
 
 function runwayTxt(f: any, t: (k: any, v?: any) => string) {
-  const d = f?.days
+  if (!f) return '—'
+  const st = f.state
+  if (st === 'insufficient_data') return t('vi_rw_insufficient', { n: f.data_days ?? 0, w: f.window_days ?? 90, m: f.min_days ?? 14 })
+  if (st === 'low_confidence') return t('vi_rw_low', { n: f.data_days ?? 0, w: f.window_days ?? 90 })
+  if (st === 'flat') return t('vi_rw_flat')
+  if (st === 'no_current') return t('vi_rw_no_current')
+  if (st === 'exceeded') return t('vi_cap_exceeded')
+  const d = f.days
   if (!d || d.typical == null) return '—'
   if (d.typical === 0) return t('vi_cap_exceeded')
   return t('vi_cap_days_range', { a: d.fastest ?? d.typical, b: d.typical, c: d.slowest ?? d.typical })
+}
+
+/** Cluster'ın erişebildiği datastore'ların runway'i: en kötüsü + liste. Ortak datastore toplanmaz. */
+function DatastoreRunway({ dr }: { dr: any }) {
+  const t = useT()
+  const label = <span className="inline-flex items-center">{t('vi_rw_ds')}<TermHint k="ds_runway" /></span>
+  if (dr.state !== 'ok') {
+    return <div data-testid="ds-runway-na">{label}: <span className="text-slate-500">{t(`vi_rw_ds_un_${dr.reason}` as any)}</span></div>
+  }
+  const lead = dr.worst
+    ? { name: dr.worst.name, txt: runwayTxt({ days: dr.worst.days }, t) }
+    : { name: dr.items[0].name, txt: runwayTxt(dr.items[0].forecast, t) }
+  return (
+    <div data-testid="ds-runway">
+      <div>{label}: <span className="text-slate-200">{t('vi_rw_ds_worst', lead)}</span> <span className="text-slate-500">· {t('vi_rw_thr', { thr: fmt(dr.threshold) })}</span></div>
+      <details className="text-slate-500">
+        <summary className="cursor-pointer">{t('vi_rw_ds_list', { n: dr.items.length })}</summary>
+        <div className="mt-1 space-y-0.5 font-mono text-[11px]">
+          {dr.items.map((i: any) => (
+            <div key={i.name} data-testid="ds-runway-item">
+              {i.name} · %{fmt(i.usage_pct)} · {runwayTxt(i.forecast, t)}{i.access === 'cluster_config' ? ` · ${t('vi_rw_ds_access_cluster')}` : ''}
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  )
 }
 
 function ClusterCard({ c }: { c: Cluster }) {
@@ -32,8 +71,8 @@ function ClusterCard({ c }: { c: Cluster }) {
   return (
     <Panel title={<span>{c.cluster} <span className="text-xs text-slate-500 font-normal">· {c.hypervisor} ({c.platform})</span></span>}
       right={n1IsNotApplicable(n1.status)
-        ? <span title={t('vi_n1_single_hint')} className="text-xs font-semibold text-slate-400 border border-dashed border-slate-500/40 rounded px-1.5 py-0.5">N+1: {t('vi_res_na')}</span>
-        : <span className={`text-xs font-semibold ${n1Tone(n1.status)}`}>N+1: {n1Label[n1.status] || n1.status}{n1.mem_after_pct != null ? ` (%${fmt(n1.mem_after_pct)})` : ''}</span>}
+        ? <span title={t('vi_n1_single_hint')} className="text-xs font-semibold text-slate-400 border border-dashed border-slate-500/40 rounded px-1.5 py-0.5">N+1: {t('vi_res_na')}<TermHint k="n1" /></span>
+        : <span className={`text-xs font-semibold ${n1Tone(n1.status)}`}>N+1: {n1Label[n1.status] || n1.status}{n1.mem_after_pct != null ? ` (%${fmt(n1.mem_after_pct)})` : ''}<TermHint k="n1" /></span>}
       method="cap.cluster.n_plus_one" methodAt={c.as_of}>
       <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
         <div className="space-y-1.5">
@@ -42,14 +81,15 @@ function ClusterCard({ c }: { c: Cluster }) {
           <div className="text-slate-500 font-mono">{fmt(c.memory?.used_gb)} / {fmt(c.memory?.effective_gb)} GB · {t('vi_cap_reserve')} {fmt(c.memory?.reserved_gb)} GB</div>
           <div className="flex justify-between text-slate-400 pt-2"><span>{t('vi_cap_eff_cpu')} <MethodBadge id="cap.cluster.effective" at={c.as_of} /></span><span className={`font-mono ${pctTone(c.cpu?.effective_used_pct, 70, 80)}`}>%{fmt(c.cpu?.effective_used_pct)}</span></div>
           <Bar pct={c.cpu?.effective_used_pct} warn={70} crit={80} />
-          <div className="text-slate-500 font-mono">vCPU:core {fmt(c.cpu?.vcpu_ratio, 2)}:1 · {c.vm_powered_on}/{c.vm_count} VM <MethodBadge id="cap.cluster.vcpu_ratio" at={c.as_of} /></div>
+          <div className="text-slate-500 font-mono">vCPU:core {fmt(c.cpu?.vcpu_ratio, 2)}:1<TermHint k="vcpu_ratio" /> · {c.vm_powered_on}/{c.vm_count} VM <MethodBadge id="cap.cluster.vcpu_ratio" at={c.as_of} /></div>
         </div>
         <div className="space-y-1.5 text-slate-400">
           <div>{t('vi_cap_hosts')}: <span className="font-mono text-slate-200">{c.hosts_usable}/{c.hosts_total}</span>{(c.hosts_excluded || []).length > 0 && <span className="text-slate-500"> ({(c.hosts_excluded || []).map((h: any) => h.host || h).join(', ')})</span>}</div>
-          <div>HA: <span className="text-slate-200">{c.ha?.label}</span></div>
+          <div className="inline-flex items-center">HA: <span className="text-slate-200 ml-1">{c.ha?.label}</span><TermHint k="ha_reserve" /></div>
           {n1.largest_host && <div>{t('vi_cap_largest')}: <span className="font-mono text-slate-200">{n1.largest_host}</span> ({fmt(n1.largest_host_mem_gb)} GB)</div>}
-          <div>{t('vi_cap_runway_mem')}: <span className="text-slate-200">{runwayTxt(c.forecast?.memory, t)}</span> <MethodBadge id="cap.cluster.mem_runway" at={c.as_of} /></div>
-          <div>{t('vi_cap_runway_cpu')}: <span className="text-slate-200">{runwayTxt(c.forecast?.cpu, t)}</span> <MethodBadge id="cap.cluster.cpu_runway" at={c.as_of} /></div>
+          <div><span className="inline-flex items-center">{t('vi_cap_runway_mem')}<TermHint k="runway" /></span>: <span className="text-slate-200">{runwayTxt(c.forecast?.memory, t)}</span> {c.forecast?.memory?.threshold != null && <span className="text-slate-500">· {t('vi_rw_thr', { thr: fmt(c.forecast.memory.threshold) })}</span>} <MethodBadge id="cap.cluster.mem_runway" at={c.as_of} /></div>
+          <div><span className="inline-flex items-center">{t('vi_cap_runway_cpu')}<TermHint k="runway" /></span>: <span className="text-slate-200">{runwayTxt(c.forecast?.cpu, t)}</span> {c.forecast?.cpu?.threshold != null && <span className="text-slate-500">· {t('vi_rw_thr', { thr: fmt(c.forecast.cpu.threshold) })}</span>} <MethodBadge id="cap.cluster.cpu_runway" at={c.as_of} /></div>
+          {c.datastore_runway && <><DatastoreRunway dr={c.datastore_runway} /> <MethodBadge id="cap.cluster.ds_runway" at={c.as_of} /></>}
           {c.network && <div>{t('vi_cap_network')}: <span className="text-slate-200 font-mono">{fmt(c.network.max_util_pct)}%</span></div>}
         </div>
         <div className="space-y-2">
@@ -67,10 +107,10 @@ function ClusterCard({ c }: { c: Cluster }) {
   )
 }
 
-function Num({ label, value, onChange, step = '1' }: { label: string; value: string; onChange: (v: string) => void; step?: string }) {
+function Num({ label, value, onChange, step = '1', hint }: { label: string; value: string; onChange: (v: string) => void; step?: string; hint?: string }) {
   return (
     <label className="flex flex-col gap-1 text-xs text-slate-400">
-      {label}
+      <span className="inline-flex items-center">{label}{hint && <TermHint k={hint} />}</span>
       <input type="number" min="0" step={step} value={value} onChange={e => onChange(e.target.value)}
         className="w-28 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
     </label>
@@ -152,7 +192,7 @@ export function ScopeSelect({ clusters, value, onChange }: { clusters: Cluster[]
           {multi(hosts, value.hosts, v => onChange({ ...value, hosts: v }), 'scope-hosts')}
         </label>
       </div>
-      <div className="text-[11px] text-slate-500">{t('vi_scope_all_hint')}</div>
+      <div className="text-[11px] text-slate-500 inline-flex items-center">{t('vi_scope_all_hint')}<TermHint k="scope" /></div>
     </div>
   )
 }
@@ -160,8 +200,75 @@ export function ScopeSelect({ clusters, value, onChange }: { clusters: Cluster[]
 export type Scope = { instance: string; datacenter: string; clusters: string[]; hosts: string[] }
 export const EMPTY_SCOPE: Scope = { instance: '', datacenter: '', clusters: [], hosts: [] }
 
+/** Seçili kapsamın özeti parçaları (boşsa seçim yok = tüm ortamlar). */
+export function scopeSummaryParts(clusters: Cluster[], value: Scope, t: (k: any, v?: any) => string): string[] {
+  const parts: string[] = []
+  if (value.instance) {
+    const c = clusters.find((x: any) => String(x.hypervisor_id) === value.instance)
+    parts.push(c?.hypervisor || value.instance)
+  }
+  if (value.datacenter) parts.push(value.datacenter)
+  if (value.clusters.length) parts.push(t('vi_scope_n_clusters', { n: value.clusters.length }))
+  if (value.hosts.length) parts.push(t('vi_scope_n_hosts', { n: value.hosts.length }))
+  return parts
+}
+
+/** Kapsam seçicisi varsayılan KAPALI: başlıkta özet ("Kapsam: tüm ortamlar" / "2 cluster seçili") + aç/daralt.
+ *  Seçim durumu üstte tutulur; daraltmak seçimi silmez. */
+export function CollapsibleScope({ clusters, value, onChange, defaultOpen = false }:
+  { clusters: Cluster[]; value: Scope; onChange: (s: Scope) => void; defaultOpen?: boolean }) {
+  const t = useT()
+  const [open, setOpen] = useState(defaultOpen)
+  const parts = scopeSummaryParts(clusters, value, t)
+  const summary = parts.length ? parts.join(' · ') : t('vi_scope_sum_all')
+  return (
+    <div className="rounded border border-white/[0.06]" data-testid="scope-collapsible">
+      <div className="flex items-center gap-2 px-3 py-2 text-xs">
+        <button type="button" data-testid="scope-toggle" aria-expanded={open} onClick={() => setOpen(o => !o)}
+          className="inline-flex items-center gap-1.5 text-slate-300 hover:text-white">
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <span data-testid="scope-summary">{t('vi_scope_label')}: {summary}</span>
+          <span className="text-blue-300">— {open ? t('vi_scope_collapse') : t('vi_scope_expand')}</span>
+        </button>
+      </div>
+      {open && (
+        <div className="px-3 pb-3 space-y-2" data-testid="scope-body">
+          <ScopeSelect clusters={clusters} value={value} onChange={onChange} />
+          <div className="text-[11px] text-slate-500 inline-flex items-center" data-testid="scope-host-note">
+            {t('vi_scope_host_note')}<TermHint k="scope_host" />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const PLATFORM_LABEL: Record<string, string> = { vmware: 'VMware', olvm: 'OLVM', ocp_virt: 'OpenShift Virtualization' }
+
+/** Platform çipleri: yalnız ortamda gerçekten bulunan platformlardan türetilir (uydurma etiket yok). Boş seçim = hepsi. */
+export function PlatformChips({ clusters, value, onChange }: { clusters: Cluster[]; value: string[]; onChange: (v: string[]) => void }) {
+  const t = useT()
+  const present = Array.from(new Set(clusters.map((c: any) => c.platform).filter(Boolean))) as string[]
+  if (present.length < 2) return null           // tek platform varsa seçim anlamsız
+  const toggle = (p: string) => onChange(value.includes(p) ? value.filter(x => x !== p) : [...value, p])
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-testid="platform-chips">
+      <span className="text-xs text-slate-400 inline-flex items-center">{t('vi_wi_platforms')}<TermHint k="platform" /></span>
+      {present.map(p => (
+        <button key={p} type="button" data-testid={`platform-${p}`} aria-pressed={value.includes(p)} onClick={() => toggle(p)}
+          className={`rounded-full border px-2.5 py-0.5 text-xs ${value.includes(p)
+            ? 'border-blue-500/60 bg-blue-600/20 text-blue-200' : 'border-white/[0.1] text-slate-400 hover:text-slate-200'}`}>
+          {PLATFORM_LABEL[p] || p}
+        </button>
+      ))}
+      <span className="text-[11px] text-slate-500">{value.length ? '' : t('vi_wi_platforms_all')}</span>
+    </div>
+  )
+}
+
 function WhatIf({ clusters }: { clusters: Cluster[] }) {
   const t = useT()
+  const [platforms, setPlatforms] = useState<string[]>([])
   const [vcpu, setVcpu] = useState('8')
   const [mem, setMem] = useState('32')
   const [disk, setDisk] = useState('100')
@@ -178,13 +285,15 @@ function WhatIf({ clusters }: { clusters: Cluster[] }) {
       if (scope.datacenter) body.datacenter = scope.datacenter
       if (scope.clusters.length) body.clusters = scope.clusters
       if (scope.hosts.length) body.hosts = scope.hosts
+      if (platforms.length) body.platforms = platforms
       setRes(await apiSend('virt-insights', '/capacity/simulate', 'POST', body))
     } catch (e: any) { setErr(e.message) }
   }
   return (
     <Panel title={t('vi_whatif_title')} method="cap.sim.add_vms">
       <div className="p-4 space-y-4">
-        <ScopeSelect clusters={clusters} value={scope} onChange={setScope} />
+        <PlatformChips clusters={clusters} value={platforms} onChange={setPlatforms} />
+        <CollapsibleScope clusters={clusters} value={scope} onChange={setScope} />
         <div className="flex flex-wrap items-end gap-3">
           <VmPicker label={t('vi_whatif_clone')} placeholder={t('vi_whatif_clone_ph')} listId="vi-whatif-vm-list"
             onPick={vm => {
@@ -194,40 +303,42 @@ function WhatIf({ clusters }: { clusters: Cluster[] }) {
               }
             }} />
           <span className="text-xs text-slate-500 pb-2">{t('vi_or')}</span>
-          <Num label="vCPU" value={vcpu} onChange={setVcpu} />
-          <Num label="Memory (GB)" value={mem} onChange={setMem} />
-          <Num label="Disk (GB)" value={disk} onChange={setDisk} />
-          <Num label={t('vi_whatif_count')} value={count} onChange={setCount} />
+          <Num label="vCPU" value={vcpu} onChange={setVcpu} hint="vcpu" />
+          <Num label="Memory (GB)" value={mem} onChange={setMem} hint="memory" />
+          <Num label="Disk (GB)" value={disk} onChange={setDisk} hint="disk" />
+          <Num label={t('vi_whatif_count')} value={count} onChange={setCount} hint="count" />
           <GhostButton accent={NEON.blue} onClick={run}>{t('vi_whatif_run')}</GhostButton>
         </div>
         {cloned && <div className="text-[11px] text-blue-300">{t('vi_whatif_cloned', { name: cloned.name, vcpu: cloned.vcpu ?? 0, mem: cloned.memory_gb ?? 0, disk: Math.round(cloned.disk_gb || 0) })}</div>}
         {err && <div className="text-red-300 text-xs">{err}</div>}
         {res && (
           <>
-            <SimpleTable rows={res.results || []} cols={[
-              { key: 'path', label: t('vi_whatif_path'), render: r => <span className="text-white font-mono text-xs">{r.path || `${r.hypervisor} / ? / ${r.cluster}`}</span> },
-              { key: 'fits', label: t('vi_whatif_fits'), render: r => r.fits ? <span className="text-emerald-400">✓</span> : <span className="text-red-400">✗</span> },
-              { key: 'verdict', label: <span className="inline-flex items-center gap-1">{t('vi_whatif_verdict')}<MethodBadge id="cap.sim.host_placement" /></span>, render: r => (
-                <span className={r.fits ? 'text-emerald-400' : 'text-red-300'}>
-                  {r.verdict || '—'}
-                  {r.placement && <span className="block text-[11px] text-slate-500">{t('vi_whatif_placed', { n: (r.placement.placed || []).length, total: Number(count) })}</span>}
-                </span>) },
-              { key: 'mem', label: t('vi_cap_eff_mem'), render: r => <span className="font-mono">%{fmt(r.before?.memory_effective_pct)} → <span className={pctTone(r.after?.memory_effective_pct, 75, 85)}>%{fmt(r.after?.memory_effective_pct)}</span></span> },
-              { key: 'n1', label: 'N+1', render: r => <span className="font-mono">%{fmt(r.before?.n1_memory_pct)} → %{fmt(r.after?.n1_memory_pct)}</span> },
-              { key: 'ds', label: 'Datastore', render: r => r.datastore ? <span className="font-mono text-xs">{r.datastore.name} (%{fmt(r.datastore.usage_after_pct)})</span> : '—' },
-              { key: 'conf', label: t('vi_whatif_conf'), render: r => r.confidence ? <span className={r.confidence === 'low' ? 'text-amber-400' : 'text-slate-300'}>{t(`vi_whatif_conf_${r.confidence}` as any)}</span> : '—' },
-              { key: 'reasons', label: t('vi_whatif_reasons'), className: 'text-xs text-slate-400', render: r => (
-                <div>
-                  {(r.reasons || []).join(' · ') || '—'}
-                  {(r.placement?.placed || []).length > 0 && <div className="text-[11px] text-slate-500 font-mono">{r.placement.placed.map((p: any) => p.path).join(' ; ')}</div>}
-                  {(r.placement?.notes || []).map((n: string, i: number) => <div key={i} className="text-[11px] text-slate-500">• {n}</div>)}
-                </div>) },
-            ]} />
-            <div className="text-[11px] text-slate-500 space-y-0.5">{(res.assumptions || []).map((a: string, i: number) => <div key={i}>• {a}</div>)}</div>
+            <WhatIfResults results={res.results || []} count={Number(res.request?.count ?? 1)} assumptions={res.assumptions} />
           </>
         )}
       </div>
     </Panel>
+  )
+}
+
+/** Toplu yerleşim için kapsam (instance/DC/cluster/host + platform) burada tutulur; formu BulkPlacement çizer. */
+function BulkTab({ clusters }: { clusters: Cluster[] }) {
+  const [platforms, setPlatforms] = useState<string[]>([])
+  const [scope, setScope] = useState<Scope>(EMPTY_SCOPE)
+  const scopeBody = () => {
+    const b: Record<string, unknown> = {}
+    if (scope.instance) b.hypervisor_id = Number(scope.instance)
+    if (scope.datacenter) b.datacenter = scope.datacenter
+    if (scope.clusters.length) b.clusters = scope.clusters
+    if (scope.hosts.length) b.hosts = scope.hosts
+    if (platforms.length) b.platforms = platforms
+    return b
+  }
+  return (
+    <BulkPlacement scopeBody={scopeBody} scopeNode={<>
+      <PlatformChips clusters={clusters} value={platforms} onChange={setPlatforms} />
+      <CollapsibleScope clusters={clusters} value={scope} onChange={setScope} />
+    </>} />
   )
 }
 
@@ -278,31 +389,6 @@ function Placement() {
         )}
       </div>
     </Panel>
-  )
-}
-
-/** (i) bilgi balonu — tıklayınca açılır, dışarı tıklayınca/Esc ile kapanır. */
-function InfoDot({ text, label }: { text: string; label: string }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLSpanElement | null>(null)
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
-  }, [open])
-  return (
-    <span ref={ref} className="relative inline-flex align-middle ml-1.5">
-      <button type="button" aria-label={label} title={label} onClick={() => setOpen(o => !o)}
-        className="text-slate-400 hover:text-blue-300"><Info size={14} /></button>
-      {open && (
-        <span role="tooltip" className="absolute left-0 top-5 z-30 w-72 rounded-lg border border-white/[0.12] bg-slate-900 p-3 text-[11px] leading-snug text-slate-200 shadow-xl font-normal">
-          {text}
-        </span>
-      )}
-    </span>
   )
 }
 
@@ -377,6 +463,9 @@ export default function VirtCapacity() {
         { id: 'clusters', label: 'Cluster', count: clusters.length },
         { id: 'datastores', label: 'Datastore', count: ds.length },
         { id: 'whatif', label: t('vi_whatif_tab') },
+        { id: 'hostfail', label: t('vi_hf_tab') },
+        { id: 'reclaim', label: t('vi_rc_tab') },
+        { id: 'bulk', label: t('vi_bp_tab') },
         { id: 'placement', label: t('vi_place_tab') },
         { id: 'policy', label: t('vi_policy_tab') },
       ]} />
@@ -403,6 +492,9 @@ export default function VirtCapacity() {
         </Panel>
       )}
       {tab === 'whatif' && <WhatIf clusters={clusters} />}
+      {tab === 'hostfail' && <Panel title={t('vi_hf_tab')} method="cap.sim.host_failure"><HostFailure clusters={clusters} /></Panel>}
+      {tab === 'reclaim' && <Panel title={t('vi_rc_title')} method="cap.sim.reclaim"><ReclaimSim clusters={clusters} /></Panel>}
+      {tab === 'bulk' && <Panel title={t('vi_bp_title')} method="cap.sim.bulk_placement"><BulkTab clusters={clusters} /></Panel>}
       {tab === 'placement' && <Placement />}
       {tab === 'policy' && <PolicyPanel onSaved={() => q.refetch?.()} />}
     </div>

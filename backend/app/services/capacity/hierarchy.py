@@ -13,11 +13,24 @@ from __future__ import annotations
 from typing import Any, Optional, Tuple
 
 UNKNOWN_LEVEL = "?"
+NO_CLUSTER = "(cluster yok)"
+
+
+def cluster_label(cluster: Optional[str], host: Optional[str] = None) -> str:
+    """Hesap birimi adı. Cluster'ı olmayan (standalone) host ortak HA/vMotion havuzu oluşturmaz; bu yüzden her
+    biri KENDİ birimidir: `(cluster yok) · esx05`. Böylece bağımsız host'ların kapasitesi ve N+1'i toplanmaz."""
+    if cluster:
+        return cluster
+    return f"{NO_CLUSTER} · {host}" if host else NO_CLUSTER
+
+
+def is_standalone(label: Optional[str]) -> bool:
+    return bool(label) and str(label).startswith(NO_CLUSTER)
 
 
 def cluster_key(instance_id: Any, cluster: Optional[str]) -> Tuple[Any, str]:
     """Cluster kimliği: (instance_id, cluster adı). Yalnız ad kullanmak iki vCenter'da çakışır."""
-    return (instance_id, cluster or "(cluster yok)")
+    return (instance_id, cluster or NO_CLUSTER)
 
 
 def path_str(instance: Optional[str], level2: Optional[str], cluster: Optional[str], host: Optional[str] = None) -> str:

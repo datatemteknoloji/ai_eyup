@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from sqlalchemy.orm import Session
 
 from app.services import virt_insights_data as vd
+from app.services.capacity import hierarchy as cap_hier
 
 WEIGHTS = {"memory": 0.35, "cpu": 0.25, "ready": 0.15, "latency": 0.15, "balance": 0.10}
 MEM_HEADROOM_PCT = 5.0
@@ -166,7 +167,7 @@ def recommend_placement(db: Session, *, vm_name: Optional[str] = None, vcpu: Opt
     by_cluster: Dict[Tuple[int, str], List[Dict[str, Any]]] = defaultdict(list)
     for hv in hvs:
         for h in vd.worker_filter(db, hv, [x for x in hosts if x["hypervisor_id"] == hv.id]):
-            by_cluster[(hv.id, h.get("cluster_name") or "(cluster yok)")].append(h)
+            by_cluster[(hv.id, cap_hier.cluster_label(h.get("cluster_name"), h["host_name"]))].append(h)
 
     candidates: List[Dict[str, Any]] = []
     rejected: List[Dict[str, Any]] = []
