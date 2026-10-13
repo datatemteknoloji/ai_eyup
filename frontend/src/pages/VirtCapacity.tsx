@@ -7,6 +7,7 @@ import WhatIfResults from '../components/insights/WhatIfResults'
 import HostFailure from '../components/insights/HostFailure'
 import ReclaimSim from '../components/insights/ReclaimSim'
 import BulkPlacement from '../components/insights/BulkPlacement'
+import PolicyOverrides from '../components/insights/PolicyOverrides'
 import { InfoDot, TermHint } from '../components/insights/InfoDot'
 import { Bar, PageInfo, Panel, RunBar, SimpleTable, Stat, apiGet, apiSend, fmt, pctTone, useInsights } from '../components/insights/insightsKit'
 
@@ -415,7 +416,7 @@ function Placement() {
   )
 }
 
-function PolicyPanel({ onSaved }: { onSaved: () => void }) {
+function PolicyPanel({ onSaved, clusters }: { onSaved: () => void; clusters: Cluster[] }) {
   const t = useT()
   const [spec, setSpec] = useState<Record<string, any>>({})
   const [vals, setVals] = useState<Record<string, string>>({})
@@ -459,6 +460,7 @@ function PolicyPanel({ onSaved }: { onSaved: () => void }) {
         {msg && <div className={`text-xs ${msg.ok ? 'text-emerald-300' : 'text-red-300'}`}>{msg.text}</div>}
         <div className="text-[11px] text-slate-500">{t('vi_policy_note')}</div>
       </div>
+      <PolicyOverrides clusters={clusters} />
     </Panel>
   )
 }
@@ -521,7 +523,7 @@ export default function VirtCapacity() {
       {tab === 'reclaim' && <Panel title={t('vi_rc_title')} method="cap.sim.reclaim"><ReclaimSim clusters={clusters} /></Panel>}
       {tab === 'bulk' && <Panel title={t('vi_bp_title')} method="cap.sim.bulk_placement"><BulkTab clusters={clusters} /></Panel>}
       {tab === 'placement' && <Placement />}
-      {tab === 'policy' && <PolicyPanel onSaved={() => q.refetch?.()} />}
+      {tab === 'policy' && <PolicyPanel onSaved={() => q.refetch?.()} clusters={clusters} />}
     </div>
   )
 }
