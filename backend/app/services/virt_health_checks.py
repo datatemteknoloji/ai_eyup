@@ -215,21 +215,54 @@ def _vmware(col: Dict[str, Any], since: Since, hw: Dict[str, Any]) -> List[Findi
     return out
 
 
+_SENSOR_OK_STATES = ("", "green", "unknown", "normal", "ok")
+_SENSOR_STATE_KEYS = ("state", "status", "health")
+
+
+def _sensor_state(s: Dict[str, Any]) -> str:
+    """Sensör kaydındaki durum. Toplayıcı (`vcenter_client.get_all_host_health`) `state` yazar;
+    eski/alternatif anahtarlar (`status`, `health`) geriye dönük okunur."""
+    for k in _SENSOR_STATE_KEYS:
+        v = s.get(k)
+        if v not in (None, ""):
+            return str(v).lower()
+    return ""
+
+
+def _bad_sensors(raw: Any) -> List[Dict[str, Any]]:
+    """Sağlıksız sensörler (green/unknown dışı). Toplayıcı yalnız sağlıksızları saklar; yine de süzülür."""
+    return [s for s in (raw or []) if isinstance(s, dict) and _sensor_state(s) not in _SENSOR_OK_STATES]
+
+
+def sensor_label(s: Dict[str, Any]) -> str:
+    """Tek satır sensör açıklaması: "Power Supply 2 · power · red · 3 Watts". Yalnız kaynakta olan alanlar yazılır."""
+    parts: List[str] = [str(s.get("name") or "?")]
+    if s.get("type"):
+        parts.append(str(s["type"]))
+    st = _sensor_state(s)
+    if st:
+        parts.append(st)
+    if s.get("reading") is not None:
+        r = s["reading"]
+        txt = f"{r:g}" if isinstance(r, (int, float)) else str(r)
+        parts.append(f"{txt} {s['unit']}" if s.get("unit") else txt)
+    return " · ".join(parts)
+
+
 def _hardware_host(platform: str, h: Dict[str, Any], cl: Optional[str], hw: Dict[str, Any]) -> List[FindingDraft]:
     out: List[FindingDraft] = []
     name, ref = h["name"], f"host:{h['ref']}"
     m = (hw.get("metrics") or {}).get(name) or {}
     inv = (hw.get("inventory") or {}).get(name) or {}
     status = str(m.get("overall_status") or h["state"].get("overall_status") or "").lower()
+    sensors = _bad_sensors(inv.get("health_sensors"))
     if platform == "vmware":
         bad = int(m.get("sensor_bad_count") or 0)
-        sensors = [s for s in (inv.get("health_sensors") or []) if isinstance(s, dict)
-                   and str(s.get("status") or s.get("health") or "").lower() in ("yellow", "red", "warning", "critical")]
         out.append(FindingDraft("hw.host.sensor_alarm", "host", ref, name, "fail" if bad or sensors else "pass",
                                 evidence={"bad_count": bad, "sensors": sensors[:20],
                                           "vendor": h["config"].get("vendor"), "model": h["config"].get("model"),
                                           "bios": h["config"].get("bios")},
-                                detail=", ".join(str(s.get("name")) for s in sensors[:5]), cluster_name=cl))
+                                detail="; ".join(sensor_label(s) for s in sensors[:5]), cluster_name=cl))
         issues = [i for i in (inv.get("config_issues") or []) if i]
         sd = (hw.get("sensor_days") or {}).get(name)
         if sd is None or not sd.get("observed_days"):
@@ -240,7 +273,10 @@ def _hardware_host(platform: str, h: Dict[str, Any], cl: Optional[str], hw: Dict
             out.append(FindingDraft("hw.host.sensor_repeat", "host", ref, name,
                                     "fail" if n >= SENSOR_REPEAT_MIN_DAYS else "pass",
                                     evidence={"bad_days": n, "observed_days": sd["observed_days"],
-                                              "window_days": SENSOR_REPEAT_WINDOW_DAYS},
+                                              "window_days": SENSOR_REPEAT_WINDOW_DAYS,
+                                              # Şu anki alarmlı sensörler. Geçmiş günlerde hangi sensörün alarm
+                                              # verdiği tutulmuyor (metrik geçmişi yalnız sayı saklar).
+                                              "current_sensors": sensors[:10]},
                                     detail=f"{SENSOR_REPEAT_WINDOW_DAYS} günün {n} gününde sensör alarmı "
                                            f"({sd['observed_days']} gün gözlendi)", cluster_name=cl))
         out.append(FindingDraft("hw.host.config_issue", "host", ref, name, "fail" if issues else "pass",
@@ -249,8 +285,10 @@ def _hardware_host(platform: str, h: Dict[str, Any], cl: Optional[str], hw: Dict
                                 cluster_name=cl))
     if status:
         out.append(FindingDraft("hw.host.overall_status", "host", ref, name,
-                                "fail" if status in ("red", "yellow") else "pass", evidence={"status": status},
-                                detail=status, cluster_name=cl, severity="high" if status == "red" else None))
+                                "fail" if status in ("red", "yellow") else "pass",
+                                evidence={"status": status, **({"bad_sensors": sensors[:10]} if sensors else {})},
+                                detail="; ".join([status] + [sensor_label(s) for s in sensors[:3]]),
+                                cluster_name=cl, severity="high" if status == "red" else None))
     ev = (hw.get("events") or {}).get(name) or []
     out.append(FindingDraft("hw.host.event_pattern", "host", ref, name, "fail" if len(ev) >= 3 else "pass",
                             evidence={"count": len(ev), "events": ev[:10]},

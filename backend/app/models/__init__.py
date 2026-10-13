@@ -41,6 +41,7 @@ from app.models.infra_finding import (
     InfraCheckRun, InfraFinding, InfraFindingException,
     VirtConfigSnapshot, VirtDatastoreFile, InfraReferenceData,
 )
+from app.models.finding_ai import FindingAiComment, FindingAiFeedback
 from app.models.integration_instance import IntegrationInstance
 from app.models.capacity_policy import CapacityPolicy, CapacityPolicyOverride
 from app.models.backup import (
@@ -74,7 +75,7 @@ __all__ = [
     "LinuxInventory", "FilesystemMetric", "ServiceStatus",
     "PackageInventory", "OpenPort", "NlqQueryAudit",
     "CustomReportDefinition",
-    "InfraCheckRun", "InfraFinding", "InfraFindingException",
+    "InfraCheckRun", "InfraFinding", "InfraFindingException", "FindingAiComment", "FindingAiFeedback",
     "VirtConfigSnapshot", "VirtDatastoreFile", "InfraReferenceData",
     "IntegrationInstance", "CapacityPolicy",
     "BkJob", "BkSession", "BkRepository", "BkProtectedObject", "BkRestorePoint",

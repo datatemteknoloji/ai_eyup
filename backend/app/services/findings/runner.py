@@ -230,6 +230,16 @@ def _refresh_backup_findings(db: Session) -> None:
         db.rollback()
 
 
+def _purge_ai_comments(db: Session) -> None:
+    """Bulgu AI yorumu: saklama süresi dolan ESKİ sürümleri sil (her olayın son sürümü kalır). Hata turu bozmaz."""
+    try:
+        from app.services.findings.ai_comment import purge_old_versions
+        purge_old_versions(db)
+    except Exception:
+        logger.exception("AI yorum saklama temizliği başarısız")
+        db.rollback()
+
+
 def run_cycle(db: Session, *, hypervisor_id: Optional[int] = None, platform: Optional[str] = None,
               file_scan: Optional[bool] = None, include_ocp: bool = True) -> Dict[str, Any]:
     from app.services.virt_capacity_planner import build_capacity
@@ -252,4 +262,5 @@ def run_cycle(db: Session, *, hypervisor_id: Optional[int] = None, platform: Opt
             db.rollback()
             results.append({"platform": "ocp", "status": "error", "error": str(exc)})
     _refresh_backup_findings(db)
+    _purge_ai_comments(db)
     return {"ok": True, "runs": results, "checks": len(CHECKS)}
