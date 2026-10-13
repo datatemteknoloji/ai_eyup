@@ -127,6 +127,22 @@ def test_standalone_hosts_are_separate_units(isolated_db):
     assert any("bağımsız host" in a for a in res["assumptions"])
 
 
+def test_assumptions_list_unchecked_constraints_e4(isolated_db):
+    db = isolated_db
+    _seed(db, "vc01", [("e1", "host-1", 256, 20, "A"), ("e2", "host-2", 256, 20, "A")])
+    res = vcp.simulate(db, vcpu=2, memory_gb=16)
+    joined = " ".join(res["assumptions"])
+    assert "Affinity/DRS" in joined and "VM rezervasyonları" in joined and "VLAN/portgroup" in joined
+    assert "virt-launcher" not in joined                                   # VMware sonucunda OpenShift notu yok
+
+
+def test_ocp_overhead_assumption_is_labelled_and_not_applied_e5():
+    txt = vcp.ocp_overhead_assumption(32, 8)
+    assert "doküman varsayımı" in txt and "ölçülmedi" in txt and "hesaba katılmaz" in txt
+    # 0,002×32768 MiB + 218 + 8×8 = 347,5 MiB ≈ 0,34 GB
+    assert "0.34 GB" in txt
+
+
 def test_simulate_returns_status_limiting_and_max_fit(isolated_db):
     db = isolated_db
     _seed(db, "vc01", [("e1", "host-1", 256, 20, "A"), ("e2", "host-2", 256, 20, "A")])

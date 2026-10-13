@@ -638,7 +638,11 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
         f"Datastore'da %{T.ds_reserve:.0f} boş alan rezervi korunur.",
         "HA rezervi cluster politikasından; okunamıyorsa 1 host varsayılır.",
         "Kullanım değerleri anlıktır (host'ların son ölçümü); tepe/p95 değildir.",
+        # E4: değerlendirilmeyen kısıtlar açıkça belirtilir (sonuç 'sığar' deyip bunları garanti etmez)
+        "Affinity/DRS kuralları, VM rezervasyonları (CPU/Memory reservation) ve VLAN/portgroup erişimi kontrol edilmez.",
     ]
+    if any(r.get("platform") == "ocp_virt" for r in results):
+        assumptions.append(ocp_overhead_assumption(memory_gb, vcpu))
     if hosts:
         assumptions.append("Host kapsamı yalnız aday host'ları daraltır; HA rezervi ve N+1 tüm cluster üzerinden hesaplanır.")
     if any(r.get("standalone") for r in results):
@@ -651,6 +655,15 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
         "results": results,
         "best": next((r for r in results if r["fits"]), None),
     }
+
+
+def ocp_overhead_assumption(memory_gb: float, vcpu: int) -> str:
+    """E5: OpenShift Virtualization virt-launcher ek belleği — ölçülmeyen, Red Hat dokümanından gelen varsayım.
+    Etiketlidir ve what-if hesabına KATILMADIĞI açıkça yazılır (bilgi amaçlı büyüklük gösterilir)."""
+    from app.services.capacity.engine import vm_memory_overhead_mib
+    over_gb = vm_memory_overhead_mib(float(memory_gb) * 1024.0, int(vcpu)) / 1024.0
+    return (f"OpenShift Virtualization (doküman varsayımı, ölçülmedi): virt-launcher ek belleği bu hesaba katılmaz; Red Hat "
+            f"dokümanına göre bu profil için VM başına ≈ {over_gb:.2f} GB (0,002×bellek + 218 MiB + 8 MiB×vCPU) ek bellek gerekir.")
 
 
 def _cluster_datastore_names(db: Session, clusters: List[Dict[str, Any]]) -> Dict[Tuple[int, str], set]:
