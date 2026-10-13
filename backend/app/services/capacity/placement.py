@@ -88,6 +88,93 @@ def _ds_ok(ds: Dict[str, Any], host_ref: str, disk_gb: float, reserve_pct: float
     return bool(cap) and free_after >= cap * reserve_pct / 100.0
 
 
+# ── Tek yerleşim çekirdeği (E2) ──────────────────────────────────────────────
+# What-if (`place_on_hosts`), toplu yerleşim (`virt_bulk_placement.place_bulk`), host-arızası simülasyonu
+# (`failover.failover_place`) ve "VM nereye gitsin" önerisinin (`virt_placement.recommend_placement`) SIĞAR/SIĞMAZ
+# kararı tek kuralla verilir: bir host, bütçesi (HA rezervi + havuz düşümü + eşik uygulanmış boş bellek) VM'in
+# belleğini karşılıyorsa ve (varsa) disk/erişim koşulları sağlanıyorsa adaydır. Yöntemler yalnız ÜSTÜNE farklı katman
+# ekler (puanlama, anti-affinity, "Sınırda" kademesi); sığma kararını değiştirmez.
+
+def fits_host(free_gb: float, need_gb: float) -> bool:
+    """Tek kural: boş bütçe ≥ ihtiyaç. Tüm yerleşim yolları bunu kullanır."""
+    return float(free_gb) >= float(need_gb)
+
+
+def memory_candidates(hosts: Sequence[Dict[str, Any]], need_gb: float) -> List[Dict[str, Any]]:
+    """Bellek bütçesi VM'e yeten host'lar (`host_budgets()["hosts"]` satırları)."""
+    return [h for h in hosts if fits_host(h["free_gb"], need_gb)]
+
+
+def place_vms(hosts: Sequence[Dict[str, Any]], vms: Sequence[Dict[str, Any]],
+              datastores: Optional[List[Dict[str, Any]]] = None, ds_reserve_pct: float = 15.0, *,
+              physical_free: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    """VM'leri büyükten küçüğe tek tek host'lara yerleştirir (saf, deterministik).
+
+    `hosts`: {name, ref, free_gb}. `vms`: {vm, memory_gb, vcpu, disk_gb, group?, allowed?}.
+      • en boş host seçilir (eşitlikte ada göre);
+      • `group`: aynı gruptaki VM'ler farklı host'lara (anti-affinity);
+      • `allowed`: VM'in gidebileceği host adları (ör. mevcut datastore'u bağlı olanlar); None → kısıt yok;
+      • `datastores` (None → disk erişimi bilinmiyor): disk için erişilebilir + rezerv korunmuş datastore gerekir;
+      • `physical_free` verilirse: eşik bütçesi yetmeyen VM, fiziksel boş belleğe sığıyorsa "tight" kademesine
+        yerleşir (host-arızası senaryosu: "Sınırda"); verilmezse yalnız bütçe geçerlidir.
+    Dönüş: {plan, unplaced, free, ds_state}; `unplaced[*].reason`: no_host | memory | fragmentation | datastore |
+    anti_affinity.
+    """
+    hosts = list(hosts)
+    free = {h["name"]: float(h["free_gb"]) for h in hosts}
+    phys = dict(physical_free) if physical_free is not None else None
+    ds_state = [dict(d) for d in datastores] if datastores is not None else None
+    by_name = {h["name"]: h for h in hosts}
+    on_host: Dict[str, set] = {}
+    plan: List[Dict[str, Any]] = []
+    unplaced: List[Dict[str, Any]] = []
+    order = sorted(vms, key=lambda x: (-float(x["memory_gb"]), -float(x.get("vcpu") or 0), str(x["vm"])))
+    for v in order:
+        mem, disk, grp = float(v["memory_gb"]), float(v.get("disk_gb") or 0), v.get("group")
+        allowed = v.get("allowed")
+        reason: Optional[str] = None
+        in_scope = [h for h in hosts if allowed is None or h["name"] in allowed]
+        cands = [h for h in in_scope if fits_host(free[h["name"]], mem)]
+        level = "comfortable"
+        if not cands and phys is not None:
+            cands = [h for h in in_scope if fits_host(phys[h["name"]], mem)]
+            level = "tight"
+        if not hosts:
+            reason = "no_host"
+        elif not cands:
+            mem_ok_elsewhere = any(fits_host((phys or free)[h["name"]], mem) for h in hosts)
+            if allowed is not None and mem_ok_elsewhere:
+                reason = "datastore"
+            else:
+                reason = "fragmentation" if sum(free.values()) >= mem else "memory"
+        if reason is None and grp:
+            cands = [h for h in cands if h["name"] not in on_host.get(grp, set())]
+            if not cands:
+                reason = "anti_affinity"
+        if reason is None and disk > 0 and ds_state is not None:
+            cands = [h for h in cands if any(_ds_ok(d, h["ref"], disk, ds_reserve_pct) for d in ds_state)]
+            if not cands:
+                reason = "datastore"
+        if reason is not None:
+            unplaced.append({**{k: v[k] for k in v if k != "allowed"}, "reason": reason})
+            continue
+        cands.sort(key=lambda h: (-free[h["name"]], h["name"]))
+        pick = cands[0]
+        free[pick["name"]] -= mem
+        if phys is not None:
+            phys[pick["name"]] -= mem
+        ds_pick = None
+        if disk > 0 and ds_state is not None:
+            opts = sorted((d for d in ds_state if _ds_ok(d, by_name[pick["name"]]["ref"], disk, ds_reserve_pct)),
+                          key=lambda d: (-(float(d.get("free_gb") or 0)), d["name"]))
+            opts[0]["free_gb"] = float(opts[0].get("free_gb") or 0) - disk
+            ds_pick = opts[0]["name"]
+        if grp:
+            on_host.setdefault(grp, set()).add(pick["name"])
+        plan.append({**{k: v[k] for k in v if k != "allowed"}, "host": pick["name"], "datastore": ds_pick, "level": level})
+    return {"plan": plan, "unplaced": unplaced, "free": free, "ds_state": ds_state}
+
+
 def place_on_hosts(model: ClusterModel, *, vm_mem_gb: float, vm_vcpu: int, count: int = 1, disk_gb: float = 0.0,
                    datastores: Optional[List[Dict[str, Any]]] = None, ds_reserve_pct: float = 15.0,
                    mem_thr_pct: float = 85.0, only_hosts: Optional[Sequence[str]] = None) -> Dict[str, Any]:
@@ -114,8 +201,6 @@ def place_on_hosts(model: ClusterModel, *, vm_mem_gb: float, vm_vcpu: int, count
     if disk_gb > 0 and ds_state is None:
         notes.append(NOTE_DS_UNKNOWN)
 
-    placed: List[Dict[str, Any]] = []
-    reason: Optional[str] = None
     if not hosts:
         return {"fits": False, "verdict": V_NONE, "reason": "no_host", "placed": [], "unplaced": count,
                 "warnings": warnings, "notes": notes, "confidence": "low", "cluster_free_gb": 0.0,
@@ -123,37 +208,19 @@ def place_on_hosts(model: ClusterModel, *, vm_mem_gb: float, vm_vcpu: int, count
     max_cores = max(h["cores"] for h in hosts)
     if vm_vcpu > max_cores > 0:
         warnings.append(f"VM vCPU ({vm_vcpu}) cluster'daki en büyük host'un fiziksel çekirdeğini ({max_cores:.0f}) aşıyor")
-    for i in range(count):
-        cands = [h for h in hosts if free[h["name"]] >= vm_mem_gb]
-        ds_pick = None
-        if disk_gb > 0 and ds_state is not None:
-            with_ds = []
-            for h in cands:
-                opts = [d for d in ds_state if _ds_ok(d, h["ref"], disk_gb, ds_reserve_pct)]
-                if opts:
-                    with_ds.append((h, opts))
-            if not with_ds:
-                reason = "datastore_access" if cands else None
-                cands = []
-            else:
-                cands = [h for h, _ in with_ds]
-        if not cands:
-            if reason is None:
-                total_free = sum(free.values())
-                reason = "fragmentation" if total_free >= vm_mem_gb else "capacity"
-            break
-        cands.sort(key=lambda h: (-free[h["name"]], h["name"]))
-        pick = cands[0]
-        free[pick["name"]] -= vm_mem_gb
-        if disk_gb > 0 and ds_state is not None:
-            opts = [d for d in ds_state if _ds_ok(d, pick["ref"], disk_gb, ds_reserve_pct)]
-            opts.sort(key=lambda d: (-(float(d.get("free_gb") or 0)), d["name"]))
-            best = opts[0]
-            best["free_gb"] = float(best.get("free_gb") or 0) - disk_gb
-            ds_pick = best["name"]
-        placed.append({"vm": i + 1, "host": pick["name"], "datastore": ds_pick})
-        if vm_vcpu > pick["cores"] > 0:
-            warnings.append(f"VM vCPU ({vm_vcpu}) host {pick['name']} fiziksel çekirdeğini ({pick['cores']:.0f}) aşıyor")
+    # E2: ortak yerleşim çekirdeği (toplu yerleşim ve host-arızası ile aynı kural)
+    r = place_vms(hosts, [{"vm": i + 1, "memory_gb": vm_mem_gb, "vcpu": vm_vcpu, "disk_gb": disk_gb}
+                          for i in range(count)], ds_state, ds_reserve_pct)
+    free = r["free"]
+    ds_state = r["ds_state"]
+    cores_of = {h["name"]: h["cores"] for h in hosts}
+    placed = []
+    for p in sorted(r["plan"], key=lambda x: x["vm"]):
+        placed.append({"vm": p["vm"], "host": p["host"], "datastore": p["datastore"]})
+        if vm_vcpu > cores_of[p["host"]] > 0:
+            warnings.append(f"VM vCPU ({vm_vcpu}) host {p['host']} fiziksel çekirdeğini ({cores_of[p['host']]:.0f}) aşıyor")
+    reason = {"memory": "capacity", "fragmentation": "fragmentation", "datastore": "datastore_access"}.get(
+        r["unplaced"][0]["reason"]) if r["unplaced"] else None
     unplaced = count - len(placed)
     fits = unplaced == 0
     verdict = V_FITS if fits else {"fragmentation": V_FRAG, "datastore_access": V_DS}.get(reason or "", V_CAP)
@@ -185,24 +252,10 @@ _REASON_CODE = {"capacity": "memory", "fragmentation": "fragmentation", "datasto
 
 def _extra_fit(hosts: Sequence[Dict[str, Any]], free: Dict[str, float], ds_state: Optional[List[Dict[str, Any]]],
                vm_mem_gb: float, disk_gb: float, ds_reserve_pct: float, limit: int) -> int:
-    """Mevcut yerleşimden sonra aynı profilden kaç VM daha sığar (aynı açgözlü kural; girdileri değiştirmez)."""
-    free = dict(free)
-    ds = [dict(d) for d in ds_state] if ds_state is not None else None
-    n = 0
-    while n < limit:
-        cands = [h for h in hosts if free[h["name"]] >= vm_mem_gb]
-        if disk_gb > 0 and ds is not None:
-            cands = [h for h in cands if any(_ds_ok(d, h["ref"], disk_gb, ds_reserve_pct) for d in ds)]
-        if not cands:
-            break
-        cands.sort(key=lambda h: (-free[h["name"]], h["name"]))
-        pick = cands[0]
-        free[pick["name"]] -= vm_mem_gb
-        if disk_gb > 0 and ds is not None:
-            opts = sorted((d for d in ds if _ds_ok(d, pick["ref"], disk_gb, ds_reserve_pct)),
-                          key=lambda d: (-(float(d.get("free_gb") or 0)), d["name"]))
-            opts[0]["free_gb"] = float(opts[0].get("free_gb") or 0) - disk_gb
-        if vm_mem_gb <= 0 and disk_gb <= 0:
-            break
-        n += 1
-    return n
+    """Mevcut yerleşimden sonra aynı profilden kaç VM daha sığar (ortak çekirdek `place_vms`; girdileri değiştirmez)."""
+    if limit <= 0 or (vm_mem_gb <= 0 and disk_gb <= 0):
+        return 0
+    cur = [{**h, "free_gb": free[h["name"]]} for h in hosts]
+    r = place_vms(cur, [{"vm": i, "memory_gb": vm_mem_gb, "vcpu": 0, "disk_gb": disk_gb} for i in range(limit)],
+                  ds_state, ds_reserve_pct)
+    return len(r["plan"])

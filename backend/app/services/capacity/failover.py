@@ -52,32 +52,28 @@ def coverage(needs: Sequence[Dict[str, Any]]) -> Dict[str, int]:
 
 def failover_place(items: Sequence[Dict[str, Any]], nodes: Sequence[Any], thr_pct: float,
                    mounts: Optional[Dict[str, Set[str]]], need_gb: Callable[[Dict[str, Any]], float]) -> Dict[str, Any]:
-    """`items` (VM'ler; name/memory_gb/datastore) kalan `nodes`a (model Node) tek tek yerleştirilir."""
-    free_thr = {n.name: n.mem_gb * thr_pct / 100.0 - n.mem_used_gb for n in nodes}
-    free_phys = {n.name: n.mem_gb - n.mem_used_gb for n in nodes}
+    """`items` (VM'ler; name/memory_gb/datastore) kalan `nodes`a (model Node) tek tek yerleştirilir.
+
+    E2: yerleştirme kuralı ortak çekirdektedir (`placement.place_vms`; What-if ve toplu yerleşimle aynı). Bu işlevin
+    ÜSTÜNE eklediği katman: eşik bütçesi yetmezse fiziksel boş belleğe "tight" ("Sınırda") kademesi ve VM'in mevcut
+    datastore'unu görebilen host kısıtı. HA rezervi bu senaryoda düşülmez (rezerv tam olarak bu arızayı karşılar).
+    """
+    from app.services.capacity import placement as cap_place
+    hosts = [{"name": n.name, "ref": n.ref, "free_gb": n.mem_gb * thr_pct / 100.0 - n.mem_used_gb} for n in nodes]
+    phys = {n.name: n.mem_gb - n.mem_used_gb for n in nodes}
     ref_of = {n.name: n.ref for n in nodes}
-    placed: List[Dict[str, Any]] = []
-    unplaced: List[Dict[str, Any]] = []
-    for v in sorted(items, key=lambda x: (-need_gb(x), x.get("name") or "")):
-        need = float(need_gb(v))
+    vms = []
+    for v in items:
         m = (mounts or {}).get(v.get("datastore") or "") if v.get("datastore") else None
-        ds_ok = [n.name for n in nodes if not m or ref_of.get(n.name) in m]
-        comfortable = [h for h in ds_ok if free_thr[h] >= need]
-        tight = [h for h in ds_ok if free_phys[h] >= need]
-        pool, level = (comfortable, "comfortable") if comfortable else (tight, "tight")
-        if not pool:
-            if not nodes:
-                reason = "no_host"
-            elif not tight and m and any(free_phys[n.name] >= need for n in nodes):
-                reason = "datastore"
-            else:
-                reason = "memory"
-            unplaced.append({"vm": v.get("name"), "memory_gb": _r(need), "reason": reason})
-            continue
-        pick = max(pool, key=lambda h: (free_thr[h], h))
-        free_thr[pick] -= need
-        free_phys[pick] -= need
-        placed.append({"vm": v.get("name"), "memory_gb": _r(need), "host": pick, "level": level})
+        allowed = {n.name for n in nodes if ref_of.get(n.name) in m} if m else None
+        vms.append({"vm": v.get("name"), "memory_gb": float(need_gb(v)), "vcpu": float(v.get("vcpu") or 0),
+                    "disk_gb": 0.0, "allowed": allowed})
+    r = cap_place.place_vms(hosts, vms, None, 0.0, physical_free=phys)
+    placed: List[Dict[str, Any]] = [{"vm": p["vm"], "memory_gb": _r(p["memory_gb"]), "host": p["host"],
+                                     "level": p["level"]} for p in r["plan"]]
+    unplaced: List[Dict[str, Any]] = [{"vm": u["vm"], "memory_gb": _r(u["memory_gb"]),
+                                       "reason": "memory" if u["reason"] == "fragmentation" else u["reason"]}
+                                      for u in r["unplaced"]]
     if not items:
         verdict = "no_vm"
     elif unplaced:

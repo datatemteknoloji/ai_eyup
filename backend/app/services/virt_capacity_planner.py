@@ -485,13 +485,20 @@ def _cluster_models(db: Session, cap: Dict[str, Any]) -> Dict[Tuple[int, str], A
             continue
         hs = [h for h in vd.worker_filter(db, hv, [h for h in hosts if h["hypervisor_id"] == hid])
               if cap_hier.cluster_label(h.get("cluster_name"), h["host_name"]) == cname]
-        on = [v for v in _cluster_vms(vms, hid, cname, {h["host_name"] for h in hs}) if v["powered_on"]]
-        topo = cap_src.vmware_topology(db, hid, cname) if plat == "vmware" else {"datacenter": None, "pools": None}
-        cfg = _olvm_cluster_cfg(db, hid, cname) if plat == "olvm" else None
-        out[cap_hier.cluster_key(hid, cname)] = cap_adapters.from_virt_hosts(
-            plat, cname, hs, vcs.get((hid, cname)), olvm_cfg=cfg, vms_on=on, instance_id=hid, instance_name=hv.name,
-            datacenter=topo["datacenter"], pools=topo["pools"])
+        out[cap_hier.cluster_key(hid, cname)] = build_cluster_model(db, hv, plat, cname, hs, vms, vcs.get((hid, cname)))
     return out
+
+
+def build_cluster_model(db: Session, hv: Any, plat: str, cname: str, hs: List[Dict[str, Any]],
+                        vms: List[Dict[str, Any]], vc: Any) -> Any:
+    """Tek cluster için ortak `ClusterModel` (What-if, toplu yerleşim, host-arızası ve yerleşim önerisi aynı modeli kullanır)."""
+    hid = hv.id
+    on = [v for v in _cluster_vms(vms, hid, cname, {h["host_name"] for h in hs}) if v["powered_on"]]
+    topo = cap_src.vmware_topology(db, hid, cname) if plat == "vmware" else {"datacenter": None, "pools": None}
+    cfg = _olvm_cluster_cfg(db, hid, cname) if plat == "olvm" else None
+    return cap_adapters.from_virt_hosts(
+        plat, cname, hs, vc, olvm_cfg=cfg, vms_on=on, instance_id=hid, instance_name=hv.name,
+        datacenter=topo["datacenter"], pools=topo["pools"])
 
 
 def _host_datastores(db: Session, cap: Dict[str, Any], c: Dict[str, Any]) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:

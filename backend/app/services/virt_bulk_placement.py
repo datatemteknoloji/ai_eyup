@@ -67,46 +67,19 @@ def expand(profiles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def place_bulk(hosts: List[Dict[str, Any]], vms: List[Dict[str, Any]], datastores: Optional[List[Dict[str, Any]]],
                ds_reserve_pct: float) -> Dict[str, Any]:
-    """Saf yerleştirme (DB yok): `hosts` = `host_budgets()["hosts"]`. Deterministik."""
-    free = {h["name"]: h["free_gb"] for h in hosts}
-    ds_state = [dict(d) for d in datastores] if datastores is not None else None
-    on_host: Dict[str, set] = defaultdict(set)         # grup → dolu host'lar
-    plan: List[Dict[str, Any]] = []
-    unplaced: List[Dict[str, Any]] = []
-    for v in sorted(vms, key=lambda x: (-x["memory_gb"], -x["vcpu"], x["vm"])):
-        mem, disk, grp = v["memory_gb"], v["disk_gb"], v.get("group")
-        reason: Optional[str] = None
-        cands = [h for h in hosts if free[h["name"]] >= mem]
-        if not hosts:
-            reason = "no_host"
-        elif not cands:
-            reason = "fragmentation" if sum(free.values()) >= mem else "memory"
-        if reason is None and grp:
-            cands = [h for h in cands if h["name"] not in on_host[grp]]
-            if not cands:
-                reason = "anti_affinity"
-        if reason is None and disk > 0 and ds_state is not None:
-            cands = [h for h in cands if any(cap_place._ds_ok(d, h["ref"], disk, ds_reserve_pct) for d in ds_state)]
-            if not cands:
-                reason = "datastore"
-        if reason is not None:
-            unplaced.append({"vm": v["vm"], "profile": v["profile"], "group": grp, "memory_gb": mem, "reason": reason})
-            continue
-        cands.sort(key=lambda h: (-free[h["name"]], h["name"]))
-        pick = cands[0]
-        free[pick["name"]] -= mem
-        ds_pick = None
-        if disk > 0 and ds_state is not None:
-            opts = sorted((d for d in ds_state if cap_place._ds_ok(d, pick["ref"], disk, ds_reserve_pct)),
-                          key=lambda d: (-(float(d.get("free_gb") or 0)), d["name"]))
-            opts[0]["free_gb"] = float(opts[0].get("free_gb") or 0) - disk
-            ds_pick = opts[0]["name"]
-        if grp:
-            on_host[grp].add(pick["name"])
-        plan.append({"vm": v["vm"], "profile": v["profile"], "group": grp, "vcpu": v["vcpu"], "memory_gb": mem,
-                     "disk_gb": disk, "host": pick["name"], "datastore": ds_pick})
-    plan.sort(key=lambda r: (r["host"], r["vm"]))
-    return {"plan": plan, "unplaced": unplaced, "free": free}
+    """Saf yerleştirme (DB yok): `hosts` = `host_budgets()["hosts"]`. Deterministik.
+
+    E2: karar kuralı `capacity.placement.place_vms` ortak çekirdeğindedir (What-if ve host-arızası ile aynı);
+    burada yalnız çıktı biçimi toplu yerleşime uyarlanır.
+    """
+    r = cap_place.place_vms(hosts, vms, datastores, ds_reserve_pct)
+    plan = [{"vm": p["vm"], "profile": p["profile"], "group": p.get("group"), "vcpu": p["vcpu"],
+             "memory_gb": p["memory_gb"], "disk_gb": p["disk_gb"], "host": p["host"], "datastore": p["datastore"]}
+            for p in r["plan"]]
+    unplaced = [{"vm": u["vm"], "profile": u["profile"], "group": u.get("group"), "memory_gb": u["memory_gb"],
+                 "reason": u["reason"]} for u in r["unplaced"]]
+    plan.sort(key=lambda x: (x["host"], x["vm"]))
+    return {"plan": plan, "unplaced": unplaced, "free": r["free"]}
 
 
 def bulk_place(db: Session, *, profiles: List[Dict[str, Any]], hypervisor_id: Optional[int] = None,

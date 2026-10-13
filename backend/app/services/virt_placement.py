@@ -1,6 +1,7 @@
 """VM yerleştirme önerisi — filtre + puan (deterministik, açıklanabilir).
 
-Filtreler (sert): bakım / bağlantısız host, yetersiz boş Memory, N+1'i bozma,
+Filtreler (sert): bakım / bağlantısız host, yetersiz Memory BÜTÇESİ (E2: What-if / toplu yerleşim / host-arızasıyla
+AYNI kural — HA rezervi + resource pool düşümü + Memory eşiği uygulanmış boş bellek; `capacity.placement`), N+1'i bozma,
 zorunlu (must) affinity / anti-affinity kuralları, datastore görünürlüğü.
 Puan (0-100): boş Memory .35 · CPU payı .25 · CPU ready p95 .15 ·
 disk latency p95 .15 · cluster dengesi .10. "Should" kurallar ceza puanıdır.
@@ -15,11 +16,10 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.services import virt_insights_data as vd
-from app.services.capacity import hierarchy as cap_hier
+from app.services import capacity_policy, virt_insights_data as vd
+from app.services.capacity import hierarchy as cap_hier, placement as cap_place
 
 WEIGHTS = {"memory": 0.35, "cpu": 0.25, "ready": 0.15, "latency": 0.15, "balance": 0.10}
-MEM_HEADROOM_PCT = 5.0
 READY_BAD_PCT = 10.0
 LATENCY_BAD_MS = 30.0
 SHOULD_PENALTY = 15.0
@@ -164,6 +164,8 @@ def recommend_placement(db: Session, *, vm_name: Optional[str] = None, vcpu: Opt
         if a.get("host") and a["powered_on"]:
             vms_by_host[(a["hypervisor_id"], a["host"])].add(a["name"])
 
+    from app.services.virt_capacity_planner import build_cluster_model
+    vcs = vd.virt_cluster_rows(db, [h.id for h in hvs])
     by_cluster: Dict[Tuple[int, str], List[Dict[str, Any]]] = defaultdict(list)
     for hv in hvs:
         for h in vd.worker_filter(db, hv, [x for x in hosts if x["hypervisor_id"] == hv.id]):
@@ -179,6 +181,10 @@ def recommend_placement(db: Session, *, vm_name: Optional[str] = None, vcpu: Opt
         hv = hv_by[hid]
         platform = vd.platform_of(hv) or "vmware"
         usable = [h for h in chosts if h["usable"]]
+        # E2: host başına Memory bütçesi — diğer yerleşim yollarıyla aynı hesap (HA rezervi/havuz/eşik dahil)
+        mem_thr = capacity_policy.effective(db, hid, cname)["memory"]
+        model = build_cluster_model(db, hv, platform, cname, chosts, allocs, vcs.get((hid, cname)))
+        budgets = {b["name"]: b for b in cap_place.host_budgets(model, mem_thr)["hosts"]}
         mem_total = sum(h["mem_total_gb"] for h in usable)
         mem_used = sum(h["mem_used_gb"] for h in usable)
         largest = max((h["mem_total_gb"] for h in usable), default=0)
@@ -208,9 +214,10 @@ def recommend_placement(db: Session, *, vm_name: Optional[str] = None, vcpu: Opt
                                  else f"bağlantı: {h.get('connection_state')}"})
                 continue
             free = h["mem_total_gb"] - h["mem_used_gb"]
-            need = memory_gb * (1 + MEM_HEADROOM_PCT / 100.0)
-            if free < need:
-                rejected.append({**base, "reason": f"boş Memory {free:.0f} GB < gerekli {need:.0f} GB"})
+            bud = (budgets.get(name) or {}).get("free_gb", 0.0)
+            if not cap_place.fits_host(bud, memory_gb):
+                rejected.append({**base, "reason": f"Memory bütçesi {bud:.0f} GB < gerekli {memory_gb:.0f} GB "
+                                                   f"(HA rezervi / havuz / %{mem_thr:.0f} eşik uygulanmış; ham boş {free:.0f} GB)"})
                 continue
             if n1_after is not None and n1_after > 100 and not in_cluster:
                 rejected.append({**base, "reason": f"cluster N+1 bozulur (Memory %{n1_after:.0f})"})
@@ -250,7 +257,9 @@ def recommend_placement(db: Session, *, vm_name: Optional[str] = None, vcpu: Opt
                 "informational": platform == "ocp_virt",
             })
     candidates.sort(key=lambda c: -c["score"])
-    notes = ["Puan: boş Memory %35 · CPU payı %25 · CPU ready p95 %15 · disk latency p95 %15 · denge %10; "
+    notes = ["Host uygunluğu (Memory): What-if / toplu yerleşim / host arızası ile AYNI kuralla — HA rezervi, resource pool "
+             "rezervasyonu ve cluster Memory eşiği düşülmüş bütçe VM'e yetmeli.",
+             "Puan: boş Memory %35 · CPU payı %25 · CPU ready p95 %15 · disk latency p95 %15 · denge %10; "
              "'should' kural ihlali başına -15."]
     if any(c["informational"] for c in candidates):
         notes.append("OpenShift Virtualization: son kararı kube-scheduler verir; liste bilgi amaçlıdır.")
