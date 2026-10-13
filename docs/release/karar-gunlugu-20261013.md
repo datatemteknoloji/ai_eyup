@@ -19,3 +19,15 @@
 - Canlı `capacity_policies`: 0 satır (varsayılanlar geçerli). Audit'te yalnız 2 kayıt var (2026-10-12 22:42, 1 sn arayla: `memory 70/datastore 60`, sonra `85/85` = varsayılan → satırlar kalkar).
   Son durum varsayılan olduğundan kaybolmuş özelleştirme YOK; geri yazılacak değer yok, tablo boş bırakıldı, varsayılan değer yazılmadı.
 - Doğrulama: canlı DB engelliyken tüm backend paketi: **1759 passed, 11 skipped, 0 failed** (artık hiçbir test canlı DB'ye gitmiyor; skip'ler değiştirilmedi).
+- Kalan risk (kayıt): bazı RAG testleri `rag_store.ensure_schema()`'yı (idempotent `CREATE ... IF NOT EXISTS`) canlı motor üzerinden tetikleyebilir; veri yazmaz/silmez. Canlı-DB-engelli koşuda
+  bu yolun `/app/uploads/.pgvector_unsupported` marker'ı yazdığı görüldü (marker iki kez silindi; normal koşuda yazılmaz). Sonraki sürümde `ensure_schema` testlerde izole motora yönlendirilmeli.
+
+## Aşama 2 — Commit'ler (dosya yolu gruplarına göre, hunk bölme yok)
+Sıra: test izolasyonu `6b09231a` · LLM `83bcc203` · Zaman `40e8e9df` · RAG `abe29c5b` · What-if v2 `c4f3e932` · Bulgular `73b34b82` · Automic `8848de79` · docs `c9690e75`.
+Ortak dosyaların atandığı commit (ilk bağımlı konu):
+- `messages.ts` (virt + Automic anahtarları karışık) → What-if v2 (`c4f3e932`).
+- `models/__init__.py` (FindingAi*) → Bulgular; `router.py`, `module_policy.py`, `agent/tools.py`, `background_tasks.py`, `models/module.py`, `module_orchestrator.py`, `api/integrations.py`,
+  `product_guide.py`, `Layout.tsx`, `App.tsx`, `index.css`, `docker-compose.yml`, `deploy/docker-compose.prod.yml`, `requirements.txt` (oracledb), `integrations.md` (TR/EN), `test_module_policy.py` → Automic (`8848de79`).
+- `main.py` (agent_active_model), `api/settings.py`, `Settings.tsx`, `platform_status.py` → LLM; `api/unified_chat.py` (1 satır automic eşlemesi) → LLM.
+- Ara commit'ler tek başına yeşil olmayabilir (ör. LLM commit'i Automic ortak dosyalarına bağımlı değil ama messages.ts ters yönde olabilir); doğrulama yalnız SON commit'te yapılır.
+- `backend/app/tools/` (debug/tanı scratch: `_debug_hybrid*.py`, `rag_timing_small.py` vb.) commit'lenmedi; `.gitignore`'a eklendi.
