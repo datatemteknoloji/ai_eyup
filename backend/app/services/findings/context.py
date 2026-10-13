@@ -208,7 +208,7 @@ def host_impact(db: Session, row: InfraFinding) -> Optional[Dict[str, Any]]:
     if not res.get("ok"):
         return {"available": False, "reason": res.get("error")}
     return {
-        "available": True, "cluster": label, "verdict": res["overall"]["verdict"], "status": res["overall"]["status"],
+        "available": True, "cluster": label, "hypervisor_id": row.source_id, "host": row.entity_name, "verdict": res["overall"]["verdict"], "status": res["overall"]["status"],
         "limiting": res["overall"]["limiting"],
         "vms": res["displaced"]["count"], "memory_gb": res["displaced"]["memory_gb"],
         "unplaced": len(res["unplaced"]), "remaining_hosts": len(res["remaining_hosts"]),

@@ -802,6 +802,9 @@ def host_failure_matrix(db: Session, *, hypervisor_id: int, cluster: str) -> Dic
                      "ratio_warn": cpu.get("ratio_warn")} if cpu else None),
             "overall": r["overall"],
         })
+    # F3: riske göre sırala (Sığmaz → Sınırda → Sığar → VM yok; hesaplanamayanlar sonda), eşitlikte host adı.
+    _rank = {"fail": 0, "tight": 1, "fit": 2, "no_vm": 3}
+    rows.sort(key=lambda r: (_rank.get((r.get("overall") or {}).get("verdict"), 9) if r.get("ok") else 9, r["host"]))
     capacity_policy.activate(db)
     c = ctx["c"]
     return {"ok": True, "hypervisor_id": hypervisor_id, "cluster": cluster, "platform": c["platform"],

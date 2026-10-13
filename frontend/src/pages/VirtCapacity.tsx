@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Gauge } from 'lucide-react'
 import { useT } from '../i18n/LocaleProvider'
 import { GhostButton, NEON, PageHeader, Tabs } from '../components/aiops/ui'
@@ -152,7 +152,7 @@ function VmPicker({ label, placeholder, onPick, listId }: { label: string; place
 }
 
 /** H.0 kapsam seçici: instance → datacenter → cluster(lar) → (opsiyonel) host(lar). Seçim yoksa her cluster bağımsız. */
-export function ScopeSelect({ clusters, value, onChange }: { clusters: Cluster[]; value: Scope; onChange: (s: Scope) => void }) {
+export function ScopeSelect({ clusters, value, onChange, showHosts = true }: { clusters: Cluster[]; value: Scope; onChange: (s: Scope) => void; showHosts?: boolean }) {
   const t = useT()
   const inst = Array.from(new Map(clusters.map((c: any) => [c.hypervisor_id, c.hypervisor])).entries())
   const inInst = clusters.filter((c: any) => !value.instance || String(c.hypervisor_id) === value.instance)
@@ -188,9 +188,11 @@ export function ScopeSelect({ clusters, value, onChange }: { clusters: Cluster[]
         <label className="flex flex-col gap-1 text-xs text-slate-400">{t('vi_scope_cluster')}
           {multi(cls, value.clusters, v => onChange({ ...value, clusters: v, hosts: [] }), 'scope-clusters')}
         </label>
-        <label className="flex flex-col gap-1 text-xs text-slate-400">{t('vi_scope_host')}
-          {multi(hosts, value.hosts, v => onChange({ ...value, hosts: v }), 'scope-hosts')}
-        </label>
+        {showHosts && (
+          <label className="flex flex-col gap-1 text-xs text-slate-400">{t('vi_scope_host')}
+            {multi(hosts, value.hosts, v => onChange({ ...value, hosts: v }), 'scope-hosts')}
+          </label>
+        )}
       </div>
       <div className="text-[11px] text-slate-500 inline-flex items-center">{t('vi_scope_all_hint')}<TermHint k="scope" /></div>
     </div>
@@ -215,12 +217,21 @@ export function scopeSummaryParts(clusters: Cluster[], value: Scope, t: (k: any,
 
 /** Kapsam seçicisi varsayılan KAPALI: başlıkta özet ("Kapsam: tüm ortamlar" / "2 cluster seçili") + aç/daralt.
  *  Seçim durumu üstte tutulur; daraltmak seçimi silmez. */
-export function CollapsibleScope({ clusters, value, onChange, defaultOpen = false }:
-  { clusters: Cluster[]; value: Scope; onChange: (s: Scope) => void; defaultOpen?: boolean }) {
+export function CollapsibleScope({ clusters, value, onChange, defaultOpen = false, showHosts = true }:
+  { clusters: Cluster[]; value: Scope; onChange: (s: Scope) => void; defaultOpen?: boolean; showHosts?: boolean }) {
   const t = useT()
   const [open, setOpen] = useState(defaultOpen)
   const parts = scopeSummaryParts(clusters, value, t)
   const summary = parts.length ? parts.join(' · ') : t('vi_scope_sum_all')
+  // Seçimler tek tek kaldırılabilir çip olarak gösterilir (× ile o seçim silinir; üst seviye silinince altındakiler de temizlenir).
+  const chips: { key: string; label: string; remove: () => void }[] = []
+  if (value.instance) {
+    const c = clusters.find((x: any) => String(x.hypervisor_id) === value.instance)
+    chips.push({ key: `inst-${value.instance}`, label: c?.hypervisor || value.instance, remove: () => onChange({ ...EMPTY_SCOPE }) })
+  }
+  if (value.datacenter) chips.push({ key: `dc-${value.datacenter}`, label: value.datacenter, remove: () => onChange({ ...value, datacenter: '', clusters: [], hosts: [] }) })
+  value.clusters.forEach(cl => chips.push({ key: `cl-${cl}`, label: cl, remove: () => onChange({ ...value, clusters: value.clusters.filter(x => x !== cl), hosts: [] }) }))
+  if (showHosts) value.hosts.forEach(h => chips.push({ key: `h-${h}`, label: h, remove: () => onChange({ ...value, hosts: value.hosts.filter(x => x !== h) }) }))
   return (
     <div className="rounded border border-white/[0.06]" data-testid="scope-collapsible">
       <div className="flex items-center gap-2 px-3 py-2 text-xs">
@@ -231,12 +242,25 @@ export function CollapsibleScope({ clusters, value, onChange, defaultOpen = fals
           <span className="text-blue-300">— {open ? t('vi_scope_collapse') : t('vi_scope_expand')}</span>
         </button>
       </div>
+      {chips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2" data-testid="scope-chips">
+          {chips.map(c => (
+            <span key={c.key} className="inline-flex items-center gap-1 rounded-full border border-blue-500/40 bg-blue-600/10 px-2 py-0.5 text-[11px] text-blue-200">
+              {c.label}
+              <button type="button" aria-label={`${t('vi_scope_remove')}: ${c.label}`} data-testid={`scope-chip-x-${c.key}`} onClick={c.remove}
+                className="text-blue-300 hover:text-white leading-none">×</button>
+            </span>
+          ))}
+        </div>
+      )}
       {open && (
         <div className="px-3 pb-3 space-y-2" data-testid="scope-body">
-          <ScopeSelect clusters={clusters} value={value} onChange={onChange} />
-          <div className="text-[11px] text-slate-500 inline-flex items-center" data-testid="scope-host-note">
-            {t('vi_scope_host_note')}<TermHint k="scope_host" />
-          </div>
+          <ScopeSelect clusters={clusters} value={value} onChange={onChange} showHosts={showHosts} />
+          {showHosts && (
+            <div className="text-[11px] text-slate-500 inline-flex items-center" data-testid="scope-host-note">
+              {t('vi_scope_host_note')}<TermHint k="scope_host" />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -284,8 +308,7 @@ function WhatIf({ clusters }: { clusters: Cluster[] }) {
       if (scope.instance) body.hypervisor_id = Number(scope.instance)
       if (scope.datacenter) body.datacenter = scope.datacenter
       if (scope.clusters.length) body.clusters = scope.clusters
-      if (scope.hosts.length) body.hosts = scope.hosts
-      if (platforms.length) body.platforms = platforms
+      if (platforms.length) body.platforms = platforms        // F2: bu ekranda host seçici yok (host daraltması Toplu yerleşim'de)
       setRes(await apiSend('virt-insights', '/capacity/simulate', 'POST', body))
     } catch (e: any) { setErr(e.message) }
   }
@@ -293,7 +316,7 @@ function WhatIf({ clusters }: { clusters: Cluster[] }) {
     <Panel title={t('vi_whatif_title')} method="cap.sim.add_vms">
       <div className="p-4 space-y-4">
         <PlatformChips clusters={clusters} value={platforms} onChange={setPlatforms} />
-        <CollapsibleScope clusters={clusters} value={scope} onChange={setScope} />
+        <CollapsibleScope clusters={clusters} value={scope} onChange={setScope} showHosts={false} />
         <div className="flex flex-wrap items-end gap-3">
           <VmPicker label={t('vi_whatif_clone')} placeholder={t('vi_whatif_clone_ph')} listId="vi-whatif-vm-list"
             onPick={vm => {
@@ -442,7 +465,9 @@ function PolicyPanel({ onSaved }: { onSaved: () => void }) {
 
 export default function VirtCapacity() {
   const t = useT()
-  const [tab, setTab] = useState('clusters')
+  // Bulgular → N+1 derin bağlantısı: /virt/capacity?tab=hostfail&hv=<id>&cluster=<ad>&host=<ad>
+  const qp = useMemo(() => new URLSearchParams(window.location.search), [])
+  const [tab, setTab] = useState(qp.get('tab') || 'clusters')
   const q = useInsights<any>('virt-insights', '/capacity')
   const sum = useInsights<any>('virt-insights', '/summary')
   const clusters: Cluster[] = q.data?.clusters || []
@@ -492,7 +517,7 @@ export default function VirtCapacity() {
         </Panel>
       )}
       {tab === 'whatif' && <WhatIf clusters={clusters} />}
-      {tab === 'hostfail' && <Panel title={t('vi_hf_tab')} method="cap.sim.host_failure"><HostFailure clusters={clusters} /></Panel>}
+      {tab === 'hostfail' && <Panel title={t('vi_hf_tab')} method="cap.sim.host_failure"><HostFailure clusters={clusters} initialKey={qp.get('hv') && qp.get('cluster') ? `${qp.get('hv')}:${qp.get('cluster')}` : undefined} initialHost={qp.get('host') || undefined} /></Panel>}
       {tab === 'reclaim' && <Panel title={t('vi_rc_title')} method="cap.sim.reclaim"><ReclaimSim clusters={clusters} /></Panel>}
       {tab === 'bulk' && <Panel title={t('vi_bp_title')} method="cap.sim.bulk_placement"><BulkTab clusters={clusters} /></Panel>}
       {tab === 'placement' && <Placement />}

@@ -3,6 +3,9 @@ import { useT } from '../../i18n/LocaleProvider'
 import { apiSend, fmt } from './insightsKit'
 import { LimitChip } from './WhatIfResults'
 import { TermHint } from './InfoDot'
+import { useInRouterContext } from 'react-router-dom'
+import { MethodBadge } from './MethodBadge'
+import SmartLink from './SmartLink'
 
 type Cluster = any
 
@@ -270,9 +273,12 @@ export function HostFailureMatrix({ mat, onOpen, active, selected, onToggle }:
   )
 }
 
-export default function HostFailure({ clusters }: { clusters: Cluster[] }) {
+export default function HostFailure({ clusters, initialKey, initialHost }: { clusters: Cluster[]; initialKey?: string; initialHost?: string }) {
   const t = useT()
-  const [key, setKey] = useState(clusters.length === 1 ? `${clusters[0].hypervisor_id}:${clusters[0].cluster}` : '')
+  const inRouter = useInRouterContext()   // MethodBadge Router + QueryClient ister; izole render'da (birim testi) gösterilmez
+  const [key, setKey] = useState(
+    initialKey && clusters.some(c => `${c.hypervisor_id}:${c.cluster}` === initialKey) ? initialKey
+      : clusters.length === 1 ? `${clusters[0].hypervisor_id}:${clusters[0].cluster}` : '')
   const [hosts, setHosts] = useState<string[]>([])
   const [mat, setMat] = useState<any>(null)
   const [matBusy, setMatBusy] = useState(false)
@@ -288,18 +294,23 @@ export default function HostFailure({ clusters }: { clusters: Cluster[] }) {
     let cancelled = false
     setMatBusy(true)
     apiSend('virt-insights', '/capacity/host-failure/matrix', 'POST', { hypervisor_id: sel.hypervisor_id, cluster: sel.cluster })
-      .then(r => { if (!cancelled) setMat(r) })
+      .then(r => {
+        if (cancelled) return
+        setMat(r)
+        // Bulgular'dan derin bağlantı: ilgili host satırını otomatik aç.
+        if (initialHost && (r.rows || []).some((x: any) => x.host === initialHost)) void open(t('vi_hf_detail_one', { host: initialHost }), [initialHost], sel)
+      })
       .catch((e: any) => { if (!cancelled) setMatErr(e.message) })
       .finally(() => { if (!cancelled) setMatBusy(false) })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
-  const open = async (title: string, hs: string[]) => {
-    if (!sel) return
+  const open = async (title: string, hs: string[], cl: any = sel) => {
+    if (!cl) return
     setDetail({ title, hosts: hs, busy: true })
     try {
-      const res = await apiSend('virt-insights', '/capacity/host-failure', 'POST', { hypervisor_id: sel.hypervisor_id, cluster: sel.cluster, hosts: hs })
+      const res = await apiSend('virt-insights', '/capacity/host-failure', 'POST', { hypervisor_id: cl.hypervisor_id, cluster: cl.cluster, hosts: hs })
       setDetail({ title, hosts: hs, res, busy: false })
     } catch (e: any) { setDetail({ title, hosts: hs, err: e.message, busy: false }) }
   }
@@ -308,6 +319,10 @@ export default function HostFailure({ clusters }: { clusters: Cluster[] }) {
   return (
     <div className="p-4 space-y-4" data-testid="host-failure">
       <div className="text-xs text-slate-400 inline-flex items-center" data-testid="hf-intro">{t('vi_hf_intro')}<TermHint k="hf_matrix" /></div>
+      <div className="text-xs text-amber-300/90 flex flex-wrap items-center gap-2" data-testid="hf-sim-note">
+        <span>{t('vi_hf_sim_note')}</span>
+        <SmartLink to="/virt/health" data-testid="hf-findings-link" className="text-blue-300 hover:underline">{t('vi_hf_see_findings')}</SmartLink>
+      </div>
       <label className="flex flex-col gap-1 text-xs text-slate-400 max-w-md">{t('vi_scope_cluster')}
         <select data-testid="hf-cluster" value={key} onChange={e => setKey(e.target.value)}
           className="rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white">
@@ -318,6 +333,7 @@ export default function HostFailure({ clusters }: { clusters: Cluster[] }) {
       {!sel && <div className="text-xs text-slate-500" data-testid="hf-pick-hint">{t('vi_hf_pick_hint')}</div>}
       {sel && matBusy && <div className="text-xs text-slate-500" data-testid="hf-matrix-busy">{t('vi_hf_matrix_busy')}</div>}
       {sel && matErr && <div className="text-red-300 text-xs" data-testid="hf-matrix-err">{matErr}</div>}
+      {sel && mat && inRouter && <div className="flex items-center gap-2 text-xs text-slate-500" data-testid="hf-matrix-method"><MethodBadge id="cap.sim.host_failure_matrix" /></div>}
       {sel && mat && (
         <HostFailureMatrix mat={mat} selected={hosts} onToggle={toggle} active={detail && detail.hosts.length === 1 ? detail.hosts[0] : null}
           onOpen={h => (detail && detail.hosts.length === 1 && detail.hosts[0] === h) ? setDetail(null) : void open(t('vi_hf_detail_one', { host: h }), [h])} />

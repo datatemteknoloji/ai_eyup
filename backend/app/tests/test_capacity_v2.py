@@ -283,7 +283,15 @@ def test_host_failure_matrix_her_host_icin_tekil_hesapla_ayni(isolated_db):
     _vm(db, hv, "big", "e2", 60)
     m = vcp.host_failure_matrix(db, hypervisor_id=hv.id, cluster="A")
     assert m["ok"] and m["hosts_total"] == 3 and m["single_host"] is False
-    assert [r["host"] for r in m["rows"]] == ["e1", "e2", "e3"]
+    assert sorted(r["host"] for r in m["rows"]) == ["e1", "e2", "e3"]
+    rank = {"fail": 0, "tight": 1, "fit": 2, "no_vm": 3}                   # F3: backend sırası riske göre (en kötü önce)
+    ranks = [rank[r["overall"]["verdict"]] for r in m["rows"]]
+    assert ranks == sorted(ranks)
+    for a, b in zip(m["rows"], m["rows"][1:]):                             # eşitlikte host adı
+        if rank[a["overall"]["verdict"]] == rank[b["overall"]["verdict"]]:
+            assert a["host"] < b["host"]
+    from app.services import method_registry as mr
+    assert mr.resolve("cap.sim.host_failure_matrix") is not None and mr.resolve("cap.sim.host_failure") is not None
     for r in m["rows"]:                                                    # satır = tekil host_failure sonucu
         one = vcp.host_failure(db, hypervisor_id=hv.id, cluster="A", hosts=[r["host"]])
         assert r["overall"] == one["overall"] and r["vms"] == one["displaced"]["count"]

@@ -39,6 +39,7 @@
  "cap.sim.add_vms",
  "cap.sim.bulk_placement",
  "cap.sim.host_failure",
+ "cap.sim.host_failure_matrix",
  "cap.sim.host_placement",
  "cap.sim.reclaim",
  "cap.underlay",
