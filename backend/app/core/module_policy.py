@@ -198,6 +198,7 @@ ROLE_RULES: List[Tuple[Optional[FrozenSet[str]], "re.Pattern[str]", str]] = [
     (frozenset({"POST"}), re.compile(r"^/servers/[^/]+/credentials$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/events/bulk-delete$"), "operator"),
     (frozenset({"POST", "PUT", "DELETE"}), re.compile(r"^/centrify-mgmt/.*$"), "operator"),
+    (frozenset({"POST", "DELETE"}), re.compile(r"^/centrify-mgmt/demo/seed$"), "admin"),   # DEMO veri: yalnız admin
     (frozenset({"POST"}), re.compile(r"^/(hypervisors|exadata|openshift|ucmdb)/.*sync.*$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/(repos)/[^/]+/(sync|cancel-sync|sync-rhsm|sync-metadata)$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/monitoring/prometheus/sync.*$"), "operator"),

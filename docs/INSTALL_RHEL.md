@@ -104,6 +104,11 @@ Kurulum dizini : /data  (paket + .env)
 Veri dizini    : /data/data  (= $INSTALL_DIR/data — DB, Redis, uploads, certs, Ollama; RAG indeksi Postgres'te)
 ```
 
+> **⚠ Güvenlik uyarısı:** Kurulumdan sonra **varsayılan yönetici parolasını** ve
+> `compose.env` / `.env` içindeki **varsayılan değerleri değiştirin** (ilk admin parolası, veritabanı ve
+> `SECRET_KEY` gibi kurulumla gelen değerler). Varsayılan değerlerle üretim ortamında çalışmayın.
+> Ayrıntı: `docs/migration-and-secrets.md`.
+
 **Tarayıcı "bağlantı güvenli değil" uyarısı verecektir** — bu normaldir, çünkü
 sertifika self-signed'dır. Kurumsal bir CA sertifikanız varsa adım 5'i atlayıp
 `<kurulum-dizini>/data/certs/server.crt` ve `server.key` dosyalarının üzerine kendi

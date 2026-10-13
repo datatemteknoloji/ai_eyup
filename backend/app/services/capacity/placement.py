@@ -147,7 +147,11 @@ def place_vms(hosts: Sequence[Dict[str, Any]], vms: Sequence[Dict[str, Any]],
     on_host: Dict[str, set] = {}
     plan: List[Dict[str, Any]] = []
     unplaced: List[Dict[str, Any]] = []
-    order = sorted(vms, key=lambda x: (-float(x["memory_gb"]), -float(x.get("vcpu") or 0), str(x["vm"])))
+    def _vm_key(x: Dict[str, Any]):      # eşit boyutlarda sayısal VM no doğal sırada (1,2,…,10), metin ad alfabetik
+        vm = x["vm"]
+        return (0, vm, "") if isinstance(vm, int) else (1, 0, str(vm))
+
+    order = sorted(vms, key=lambda x: (-float(x["memory_gb"]), -float(x.get("vcpu") or 0), _vm_key(x)))
     for v in order:
         mem, disk, grp = float(v["memory_gb"]), float(v.get("disk_gb") or 0), v.get("group")
         allowed = v.get("allowed")

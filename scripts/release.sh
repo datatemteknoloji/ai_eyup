@@ -17,7 +17,7 @@
 #   - CHANGELOG.md'deki [Unreleased] bölümü varsa, yeni sürüm başlığının
 #     altına taşınır (böylece geliştirme sırasında CHANGELOG'a eklenen
 #     maddeler kaybolmaz).
-#   - VERSION dosyası güncellenir.
+#   - VERSION ve backend/VERSION dosyaları güncellenir (ikisi de commit'lenir).
 #   - dist/ paketi scripts/build-distribution.sh ile üretilir.
 #   - Değişiklikler commit'lenir, git tag atılır, `gh release create` ile
 #     CHANGELOG'daki AYNI metinle GitHub Release oluşturulur.
@@ -59,8 +59,11 @@ fi
 echo "▶ Sürüm: ${VERSION}  (${TODAY})"
 echo "▶ Özet : ${SUMMARY}"
 
-# 1) VERSION dosyasını güncelle
+# 1) Sürüm dosyalarını güncelle (kök VERSION + backend/VERSION — backend imajı yalnız ./backend bağlamından
+#    derlenir, bu yüzden ikisi her zaman aynı olmalı; commit'e de ikisi birlikte girer)
+VERSION_FILES=(VERSION backend/VERSION)
 echo "$VERSION" > VERSION
+echo "$VERSION" > backend/VERSION
 
 # 2) CHANGELOG.md: [Unreleased] bölümünü [VERSION] - TARIH başlığına çevir
 #    (madde listesi olduğu gibi korunur), üstüne boş yeni bir [Unreleased] ekle.
@@ -123,8 +126,8 @@ done
 
 if [[ "$NO_PUBLISH" -eq 1 ]]; then
   echo
-  echo "▶ --no-publish: GitHub Release atlanıyor; VERSION/CHANGELOG commit + yerel tag."
-  git add VERSION "$CHANGELOG"
+  echo "▶ --no-publish: GitHub Release atlanıyor; VERSION/backend/VERSION/CHANGELOG commit + yerel tag."
+  git add "${VERSION_FILES[@]}" "$CHANGELOG"
   git commit -m "chore(release): v${VERSION}" || true
   git tag "v${VERSION}" 2>/dev/null || true
   echo "✓ Paket: dist/ainew-${VERSION}-linux-amd64*.tar.gz (varsa)"
@@ -135,7 +138,7 @@ elif [[ -x scripts/publish-github-release.sh ]]; then
   echo "▶ GitHub'a yayınlanıyor (scripts/publish-github-release.sh)..."
   ./scripts/publish-github-release.sh "${PUBLISH_ARGS[@]}"
 else
-  git add VERSION "$CHANGELOG"
+  git add "${VERSION_FILES[@]}" "$CHANGELOG"
   git commit -m "chore(release): v${VERSION}" || true
   git tag "v${VERSION}" 2>/dev/null || true
   echo

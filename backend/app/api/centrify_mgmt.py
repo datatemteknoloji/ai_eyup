@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/centrify-mgmt", tags=["centrify"])
 
+# DEMO veri uçları: varsayılan KAPALI (CENTRIFY_DEMO_ENABLED) ve yalnız admin
+from app.core.auth import require_role as _require_role  # noqa: E402
+from app.services.centrify import demo_gate as _demo_gate  # noqa: E402
+
+_require_admin = _require_role("admin")
+
 # Router yüklendiğinde tabloları oluşturmayı dene (DB yoksa sessizce geç)
 try:
     from app.services.centrify.database import create_centrify_tables
@@ -1907,14 +1913,14 @@ async def global_search(q: str = "", limit: int = 50):
 # ── Demo seed ─────────────────────────────────────────────────
 
 
-@router.post("/demo/seed")
+@router.post("/demo/seed", dependencies=[Depends(_demo_gate.require_demo_enabled), Depends(_require_admin)])
 async def seed_demo_data():
     """Demo verisi oluştur — gerçekçi zone/role/command/assignment/audit."""
     from app.services.centrify.demo_seed import seed_demo_data as do_seed
     return do_seed()
 
 
-@router.delete("/demo/seed")
+@router.delete("/demo/seed", dependencies=[Depends(_demo_gate.require_demo_enabled), Depends(_require_admin)])
 async def clear_demo_data():
     """Demo verisini temizle."""
     from app.services.centrify.database import get_centrify_thread_session

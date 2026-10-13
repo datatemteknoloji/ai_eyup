@@ -17,6 +17,12 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 - E6: OpenShift Virt vCPU:çekirdek oranı VMI okumasından / HCO'dan (`cpuAllocationRatio`) alınır; okunamazsa varsayım etiketli.
 - E7: Kapasite › Eşikler'de cluster/instance override'ları listelenir (PolicyOverrides).
 - E9: Sohbet PDF dışa aktarımına yöntem notları ve kanıt eklendi.
+- Önce/sonra ölçümü (v1.0.9.41 ↔ main, aynı DB): cluster sayıları, N+1 tablosu, runway ve "nereye sığar/en fazla N" kararlarında 0 fark; tek fark E6 `cpu_request` etiketi. Eşit boyutlu VM'lerde yerleşim sırası doğal sıraya döndürüldü. E3 kuralları (ayrılmış host, HA slot) bu ortamda HA politikalı vCenter olmadığı için yalnız testle doğrulandı. Rapor: `docs/release/kapasite-once-sonra-20261013.md`.
+
+### Güvenlik ve paketleme
+- Centrify DEMO veri uçları (`POST/DELETE /centrify-mgmt/demo/seed`) varsayılan KAPALI (`CENTRIFY_DEMO_ENABLED=true` yalnız geliştirme/demo) ve yalnız `admin` rolüne açık (RBAC kuralı + uç bağımlılığı). Önceden operatör rolü yeterliydi ve `DELETE` Centrify tablolarını boşaltıyordu.
+- Kurulum kılavuzuna (`docs/INSTALL_RHEL.md`) "kurulumdan sonra varsayılan yönetici parolasını ve `compose.env`/`.env` varsayılanlarını değiştirin" uyarısı eklendi (yalnız doküman).
+- `scripts/release.sh`: `backend/VERSION` artık kök `VERSION` ile birlikte yazılır ve commit'lenir.
 
 ## [1.0.9.41] - 2026-10-13
 
