@@ -124,6 +124,10 @@ RULES: List[Rule] = [
     _m("/centrify-mgmt", "centrify", "level1", "integrations"),
     _m("/centrify-chat", "centrify", "level1"),
 
+    # ── Automic (UC4) — bağlantı yönetimi Entegrasyonlar'da, veri/sohbet 'automation' ──
+    _m("/automation", "automation"),
+    _m("/automation/systems", "integrations"),
+
     # ── Entegrasyonlar ──
     _m("/ucmdb", "integrations"),
     _m("/integrations", "integrations"),
@@ -175,6 +179,11 @@ GRANTS: List[Grant] = [
       for m in _CHAT_PAGE_MODULES],
     *[_g(m, r"^/windows/servers/summary$", _GET, "Tüm Altyapı sohbeti › Windows özeti")
       for m in ("ai_automation", "executive")],
+
+    # ── Automic sayfaları sistem seçici için kayıtlı sistemleri okur (şifre dönmez) ──
+    _g("automation", r"^/automation/systems(/\d+)?$", _GET, "Automic › sistem seçici"),
+    # ── Entegrasyonlar › Automic sihirbazı profil/projeksiyon/durum uçlarını kullanır ──
+    _g("integrations", r"^/automation/(profiles|projection|status)$", why="Entegrasyonlar › Automic sihirbazı"),
 ]
 
 # (yöntemler | None=hepsi, yol regex, minimum rol)
@@ -192,6 +201,7 @@ ROLE_RULES: List[Tuple[Optional[FrozenSet[str]], "re.Pattern[str]", str]] = [
     (frozenset({"POST"}), re.compile(r"^/(hypervisors|exadata|openshift|ucmdb)/.*sync.*$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/(repos)/[^/]+/(sync|cancel-sync|sync-rhsm|sync-metadata)$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/monitoring/prometheus/sync.*$"), "operator"),
+    (frozenset({"POST", "PUT", "DELETE"}), re.compile(r"^/automation/systems(/.*)?$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/anomalies/run-cycle$"), "operator"),
     # OpenShift › Planlama ve Denetim sayfaları yalnız admin (özet/değişiklik/olay zaman çizelgesi diğer sayfalarca kullanılır)
     (None, re.compile(r"^/ocp-insights/(capacity|reclaim|findings|node-risk|run|baseline)(/.*)?$"), "admin"),

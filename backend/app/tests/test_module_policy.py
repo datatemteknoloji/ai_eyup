@@ -66,8 +66,11 @@ def test_admin_bypass(path):
     (("ai_automation",), "/api/v1/windows/servers"),
     (("ai_automation",), "/api/v1/events/"),
     (("ai_automation",), "/api/v1/ops/summary"),
+    (("ai_automation",), "/api/v1/automation/overview"),
+    (("linux",), "/api/v1/automation/overview"),
     (("integrations",), "/api/v1/windows/servers"),
     (("integrations",), "/api/v1/events/"),
+    (("integrations",), "/api/v1/automation/overview"),
     (("level1",), "/api/v1/rag/status"),
     (("linux",), "/api/v1/rag/status"),
     (("linux",), "/api/v1/tasks/"),
@@ -101,6 +104,11 @@ def test_missing_module_is_denied(modules, path):
     (("applications",), "/api/v1/applications/"),
     (("custom_reports",), "/api/v1/custom-reports/"),
     (("ai_automation",), "/api/v1/unified-chat/sessions"),
+    (("automation",), "/api/v1/automation/overview"),
+    (("automation",), "/api/v1/automation/info"),
+    (("automation",), "/api/v1/automation/executions"),
+    (("integrations",), "/api/v1/automation/status"),
+    (("integrations",), "/api/v1/automation/profiles"),
     (("linux",), "/api/v1/events/"),
     (("windows",), "/api/v1/incidents/"),
     ((), "/api/v1/modules/my"),
@@ -108,6 +116,12 @@ def test_missing_module_is_denied(modules, path):
 ])
 def test_assigned_module_is_allowed(modules, path):
     assert _d(modules=modules, path=path).allowed
+
+
+def test_automic_systems_write_needs_operator_and_integrations():
+    assert not _d(role="viewer", modules=("integrations",), path="/api/v1/automation/systems", method="POST").allowed
+    assert _d(role="operator", modules=("integrations",), path="/api/v1/automation/systems", method="POST").allowed
+    assert not _d(role="operator", modules=("automation",), path="/api/v1/automation/systems", method="POST").allowed
 
 
 def test_executive_sees_only_its_own_page_and_chat():
@@ -253,6 +267,12 @@ def test_chat_route_denied_modules():
     assert _route_denied_modules(r(modules=("openshift",)), None) == []
     assert _route_denied_modules(r(mode="knowledge", modules=()), set()) == []
     assert _route_denied_modules(r(wants_openshift=True), {"windows"}) == ["openshift"]
+    # Unified Yönetici (allowed=None): Automic sorusu reddedilmez
+    assert _route_denied_modules(r(modules=("automic",)), None) == []
+    # Yalnız linux yetkisi olan operatör Automic soramaz
+    assert _route_denied_modules(r(modules=("automic",)), {"linux"}) == ["automic"]
+    # automation modülü olan kullanıcı automic sorabilir
+    assert _route_denied_modules(r(modules=("automic",)), {"linux", "automic"}) == []
 
 
 # ── Middleware entegrasyonu ──────────────────────────────────────────────────

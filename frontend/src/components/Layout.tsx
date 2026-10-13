@@ -9,7 +9,7 @@ import {
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
   BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
   KeyRound, X, Check, AlertTriangle, Crown, Boxes, Moon, Sun, Languages, Star,
-  Gauge, Recycle, ShieldCheck, GitCompare,
+  Gauge, Recycle, ShieldCheck, GitCompare, Workflow, ListChecks, PlayCircle,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useTheme } from '../theme/ThemeProvider'
@@ -402,6 +402,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ],
     },
     {
+      type: 'group', key: 'automation', name: t('nav_automation'), icon: <Workflow size={18} />, moduleId: 'automation',
+      children: [
+        { type: 'link', path: '/automation', name: t('nav_automation_overview'), icon: <LayoutDashboard size={15} /> },
+        { type: 'link', path: '/automation/executions', name: t('nav_automation_executions'), icon: <ListChecks size={15} /> },
+        { type: 'link', path: '/automation/active', name: t('nav_automation_active'), icon: <PlayCircle size={15} /> },
+        { type: 'link', path: '/automation/infrastructure', name: t('nav_automation_infrastructure'), icon: <Server size={15} /> },
+        { type: 'link', path: '/automation/chat', name: t('nav_automation_chat'), icon: <Brain size={15} /> },
+      ],
+    },
+    {
       type: 'group', key: 'integrations', name: t('nav_integrations'), icon: <FileUp size={18} />, moduleId: 'integrations',
       children: [
         { type: 'link', path: '/integrations', name: t('nav_inventory_hub'), icon: <Database size={15} /> },
@@ -411,6 +421,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/integrations/exadata', name: t('nav_exadata_inventory'), icon: <Layers size={15} /> },
         { type: 'link', path: '/integrations/openshift', name: t('nav_openshift_inventory'), icon: <Boxes size={15} /> },
         { type: 'link', path: '/integrations/centrify', name: 'Centrify / Delinea', icon: <Shield size={15} /> },
+        { type: 'link', path: '/integrations/automic', name: 'UC4 Automic', icon: <Workflow size={15} /> },
         { type: 'link', path: '/integrations/backup', name: 'Veeam', icon: <HardDrive size={15} /> },
       ],
     },
@@ -473,7 +484,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   })
 
   const currentPath = location.pathname || '/'
+  const detailTitles: [string, string][] = [
+    ['/automation/executions/', `${t('nav_automation')} — ${t('nav_automation_execution_detail')}`],
+    ['/automation/objects/', `${t('nav_automation')} — ${t('nav_automation_object')}`],
+    ['/automation/agents/', `${t('nav_automation')} — ${t('nav_automation_agent')}`],
+    ['/automation/infrastructure/engines/', `${t('nav_automation')} — ${t('nav_automation_infrastructure')}`],
+  ]
+  const prefixLink = allLinks
+    .filter(l => l.path !== '/' && currentPath.startsWith(`${l.path}/`))
+    .sort((a, b) => b.path.length - a.path.length)[0]
   const pageTitle = allLinks.find(l => isActive(l.path))?.name
+    || detailTitles.find(([p]) => currentPath.startsWith(p))?.[1]
+    || prefixLink?.name
     || (currentPath !== '/' && currentPath !== '/dashboard' ? currentPath.replace(/^\//, '') : t('nav_dashboard'))
   const isCurrentFavorite = (user?.favorite_paths ?? []).some(f => f.path === currentPath)
 
@@ -851,6 +873,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </header>
 
+        {/* F.0: DEMO yedek verisi etkinken her ekranda uyarı bandı */}
+        <DemoBanner />
+
         {/* Page Content — chat/konsol tam ekran; diğer sayfalar main scroll */}
         <main
           className={`flex-1 min-h-0 ${
@@ -873,9 +898,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           style={{ background: 'var(--bg-base)' }}
         >
           {children}
-        {/* F.0: DEMO yedek verisi etkinken her ekranda uyarı bandı */}
-        <DemoBanner />
-
         </main>
       </div>
 

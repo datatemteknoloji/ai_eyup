@@ -106,6 +106,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_linux_inventory_nlq()))
         self.tasks.append(asyncio.create_task(self._periodic_windows_live_metrics()))
         self.tasks.append(asyncio.create_task(self._periodic_dashboard_stats()))
+        self.tasks.append(asyncio.create_task(self._periodic_automic()))
         self.tasks.append(asyncio.create_task(self._syslog_receiver_supervisor()))
 
         logger.info("Background tasks started (intervals: Ayarlar → Gelişmiş)")
@@ -661,6 +662,32 @@ class BackgroundTaskManager:
             except Exception as e:
                 logger.error(f"Auto-onboarding task error: {e}")
                 await asyncio.sleep(_rt_sec("auto_onboarding_interval_sec", 600))
+
+    async def _periodic_automic(self):
+        """Automic (UC4) collector + bakım — ayrı executor, DB yoksa uzun bekleme."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        logger.info("Automic scheduler task started (60s tick)")
+        await asyncio.sleep(90)
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="automic")
+        try:
+            while self.running:
+                delay = 60
+                try:
+                    from app.services.automic.scheduler import step
+                    res = await asyncio.get_event_loop().run_in_executor(pool, step)
+                    if not res.get("db"):
+                        delay = 600
+                    elif not res.get("systems", 1):
+                        delay = 300
+                except asyncio.CancelledError:
+                    logger.info("Automic scheduler cancelled")
+                    break
+                except Exception as e:
+                    logger.error(f"Automic scheduler error: {e}", exc_info=True)
+                await asyncio.sleep(delay)
+        finally:
+            pool.shutdown(wait=False)
 
     async def _periodic_linux_inventory_nlq(self):
         """Linux NL inventory snapshot — Celery."""

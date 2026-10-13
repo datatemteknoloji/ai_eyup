@@ -66,6 +66,16 @@ const Level1Audit = lazy(() => import('./pages/level1/Level1Audit'))
 const Level1Settings = lazy(() => import('./pages/level1/Level1Settings'))
 const CentrifyPage = lazy(() => import('./pages/level1/CentrifyPage'))
 const CentrifySettingsPage = lazy(() => import('./pages/level1/CentrifySettingsPage'))
+const AutomationOverview = lazy(() => import('./pages/automation/AutomationOverview'))
+const AutomationExecutions = lazy(() => import('./pages/automation/AutomationExecutions'))
+const AutomationExecutionDetail = lazy(() => import('./pages/automation/AutomationExecutionDetail'))
+const AutomationActive = lazy(() => import('./pages/automation/AutomationActive'))
+const AutomationObject = lazy(() => import('./pages/automation/AutomationObject'))
+const AutomationAgent = lazy(() => import('./pages/automation/AutomationAgent'))
+const AutomationInfrastructure = lazy(() => import('./pages/automation/AutomationInfrastructure'))
+const AutomationEngineServer = lazy(() => import('./pages/automation/AutomationEngineServer'))
+const AutomationChat = lazy(() => import('./pages/automation/AutomationChat'))
+const AutomicIntegrationPage = lazy(() => import('./pages/automation/AutomicIntegrationPage'))
 const UserManager = lazy(() => import('./pages/UserManager'))
 const CustomReports = lazy(() => import('./pages/CustomReports'))
 
@@ -424,6 +434,16 @@ function App() {
                       <Route path="/integrations/openshift" element={<RequireAnyModule moduleIds={['integrations', 'openshift']}><ErrorBoundary><OpenShiftDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/backup" element={<RequireModule moduleId="integrations"><ErrorBoundary><BackupIntegrationPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/centrify" element={<RequireAnyModule moduleIds={['integrations', 'level1']}><ErrorBoundary><CentrifySettingsPage /></ErrorBoundary></RequireAnyModule>} />
+                      <Route path="/integrations/automic" element={<RequireAnyModule moduleIds={['integrations', 'automation']}><ErrorBoundary><AutomicIntegrationPage /></ErrorBoundary></RequireAnyModule>} />
+                      <Route path="/automation" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationOverview /></ErrorBoundary></RequireModule>} />
+                      <Route path="/automation/executions" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationExecutions /></ErrorBoundary></RequireModule>} />
+                      <Route path="/automation/executions/:systemId/:client/:runId" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationExecutionDetail /></ErrorBoundary></RequireModule>} />
+                      <Route path="/automation/active" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationActive /></ErrorBoundary></RequireModule>} />
+                      <Route path="/automation/objects/:systemId/:name" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationObject /></ErrorBoundary></RequireModule>} />
+                      <Route path="/automation/agents/:systemId/:name" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationAgent /></ErrorBoundary></RequireModule>} />
+                      <Route path="/automation/infrastructure" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationInfrastructure /></ErrorBoundary></RequireModule>} />
+                      <Route path="/automation/infrastructure/engines/:systemId/:ip" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationEngineServer /></ErrorBoundary></RequireModule>} />
+                      <Route path="/automation/chat" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationChat /></ErrorBoundary></RequireModule>} />
                       <Route path="/ucmdb/import" element={<Navigate to="/integrations/ucmdb" replace />} />
                       <Route path="/level1" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1OpsCenter /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/ops/*" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />

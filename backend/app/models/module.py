@@ -66,6 +66,8 @@ DEFAULT_MODULES = [
      "icon": "Activity", "color": "sky",     "sort_order": 12},
     {"id": "centrify",       "name": "Centrify / Delinea", "description": "Delinea Server Suite zone, role, right, assignment yönetimi",
      "icon": "KeyRound", "color": "purple",  "sort_order": 13},
+    {"id": "automation",     "name": "Automic (UC4)",    "description": "Automic iş zamanlama izleme, çalışma/hata analizi ve salt okunur AI asistanı — ayrı atama gerektirir",
+     "icon": "Workflow", "color": "amber",   "sort_order": 14},
 ]
 
 # 'aiops' kaldırıldı (2026-07) — Komuta Merkezi/Events özellikleri 'linux' kapsamında.

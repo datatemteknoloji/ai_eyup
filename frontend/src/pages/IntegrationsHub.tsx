@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Database, Cloud, Server, Layers, FileUp, RefreshCw,
-  AlertTriangle, CheckCircle2, Merge, ChevronRight, Boxes, Shield,
+  AlertTriangle, CheckCircle2, Merge, ChevronRight, Boxes, Shield, Workflow,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useT } from '../i18n/LocaleProvider'
@@ -14,6 +14,7 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
   exadata: <Layers size={22} />,
   openshift: <Boxes size={22} />,
   centrify: <Shield size={22} />,
+  automic: <Workflow size={22} />,
   backup: <Database size={22} />,
 }
 
@@ -123,7 +124,7 @@ export default function IntegrationsHub() {
                   {src.rack_count != null && <span className="text-slate-400">Rack: <strong className="text-white">{src.rack_count}</strong></span>}
                   {src.node_count != null && <span className="text-slate-400">Node: <strong className="text-white">{src.node_count}</strong></span>}
                   {src.project_count != null && <span className="text-slate-400">{t('int_project')} <strong className="text-white">{src.project_count}</strong></span>}
-                  {src.id === 'centrify' && (
+                  {(src.id === 'centrify' || src.id === 'automic') && (
                     src.enabled
                       ? <span className="inline-flex items-center gap-1 text-green-400"><CheckCircle2 size={12} /> Bağlı</span>
                       : <span className="inline-flex items-center gap-1 text-amber-400"><AlertTriangle size={12} /> Yapılandırma Gerekli</span>

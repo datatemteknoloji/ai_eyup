@@ -51,6 +51,12 @@ PACKS: Dict[str, Dict[str, Any]] = {
         "title_en": "ainew OpenShift and oVirt GUIDE",
         "sort": 40,
     },
+    "automation": {
+        "files": ["modules/automation.md"],
+        "title_tr": "ainew Otomasyon (Automic) GUIDE",
+        "title_en": "ainew Automation (Automic) GUIDE",
+        "sort": 45,
+    },
     # AI sohbet/tool/RAG davranış haritası. Routing veya tool değişince
     # docs/guides/{tr,en}/modules/ai-architecture.md aynı turda güncellenir.
     "ai-architecture": {

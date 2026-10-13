@@ -1,0 +1,197 @@
+# =====================================================================
+# ainew — Automic modülü: Veri Saklama ve Kapasite Politikası (Revizyon 2)
+# =====================================================================
+# Kurallar:
+#  - Detay veriler (çalışma kayıtları, rapor kırpıntıları, sohbetler) en fazla 90 gün.
+#  - Özet katmanları (rapor/kişisel veri içermeyen istatistikler) daha uzun tutulabilir.
+#    Katı 90 gün isteniyorsa *_days değerlerini 90 yapmak yeterlidir.
+#  - SÜRE ve KOTA birlikte çalışır; hangisi önce dolarsa o uygulanır.
+#  - "min" / "max" alanları kurulum sihirbazındaki doğrulama sınırlarıdır.
+#  - Politika yalnızca Automic modül DB'sine (ayrı Postgres/Timescale, :5435) uygulanır.
+#    ainew ortak tablolarında yalnızca platform=automic / category=automic kayıtları etkilenir.
+#  - Revizyon 1'deki "raw_api_json" katmanı kaldırıldı (ilk sürümde REST yok; kaynak DB).
+# =====================================================================
+
+storage:
+  quota_gb:
+    default: 100          # Kurulumda kullanıcı belirler
+    min: 10
+    max: 2000
+  # Kota, Automic modül veritabanının toplam boyutu içindir (tablolar + index'ler + TOAST).
+  # Disk tarafında WAL, temp, vacuum ve yerel yedek için kotanın en az 1.5 katı ayrılmalı.
+  # Örnek: 100 GB kota -> en az 150 GB disk.
+  disk_overhead_factor: 1.5
+  measure: database_size   # pg_database_size(automic DB); ayrı konteyner olduğu için doğrudan ölçülür
+
+  watermarks_percent:
+    warn: 70              # UI banner + admin bildirimi
+    prune: 85             # Süre dolmasını beklemeden quota_eviction_order sırasıyla erken temizlik
+    critical: 95          # Opsiyonel veri alımı durur (rapor kırpıntıları); yalnızca meta veri alınır
+
+  check_interval_minutes: 15
+
+# ---------------------------------------------------------------------
+# SÜRE TABANLI SAKLAMA
+# ---------------------------------------------------------------------
+retention:
+
+  # --- Detay katmanı (en fazla 90 gün) ---
+  executions:               # Tüm biten çalışmalar, sade kolonlar (Timescale hypertable)
+    days: 90
+    min: 30
+    max: 90
+    compress_after_days: 7  # Timescale native compression; eski chunk'lar sıkıştırılır
+    columns: [system_id, client, run_id, parent_run_id, top_run_id, restart_ref_run_id,
+              object_name, object_type, folder, status_code, status_class,
+              activation_time, start_time, end_time, duration_sec,
+              agent, platform, queue, user, return_code]
+
+  active_snapshot:          # EH'den alınan "şu an aktif" görüntüsü; yalnızca son görüntü
+    keep: latest_only
+
+  failed_report_excerpts:   # Yalnızca "failed" sınıfındaki çalışmaların rapor kırpıntıları (maskeli)
+    days: 90
+    min: 14
+    max: 90
+    excerpt:
+      head_lines: 50
+      tail_lines: 200
+      context_lines_around_match: 5
+      max_kb_per_report: 64
+      max_reports_per_execution: 3
+      match_patterns: ["ERROR", "ERR", "FATAL", "Exception", "ORA-", "return code",
+                       "Permission denied", "No such file", "No space left", "timeout"]
+      report_types: auto      # Keşifte RH'deki gerçek tiplerden belirlenir (örn. REP, ACT, LOG, PLOG)
+    compression: lz4          # Postgres TOAST (ALTER TABLE ... SET COMPRESSION lz4)
+
+  report_on_demand_cache:   # Başarılı/diğer raporlar: istendiğinde kaynaktan (RT) okunur
+    hours: 24
+    min: 0
+    max: 72
+
+  object_headers:           # OH'den nesne başlıkları; güncel kayıt her zaman tutulur
+    keep_current: true
+    deleted_objects_days: 90
+
+  object_script_versions:   # OT script metni; istendiğinde alınır, hash ile sürümlenir
+    keep_last_versions: 10
+    version_max_age_days: 90
+
+  conversations:            # Yalnızca platform=automic sohbetleri (ainew chat_session/chat_turn)
+    days: 90
+    min: 7
+    max: 90
+    store_tool_payloads: false   # true -> araç sonuçları da saklanır (boyut artar)
+
+  audit_log:                # Yalnızca category=automic (ainew audit_log)
+    days: 90                # Kurum KVKK/log politikası daha uzununu gerektirirse artırılır
+    min: 30
+    max: 365
+
+  # --- Özet katmanı (rapor/kişisel veri içermez) ---
+  failed_execution_index:   # Hatalı çalışmalar: kayıt + hata imzası (rapor yok); ingest anında yazılır
+    days: 365
+    min: 90
+    max: 730
+    fields: [system_id, client, run_id, date, object_name, object_type, agent,
+             status_code, return_code, error_signature]
+
+  daily_aggregates:         # Nesne başına günlük özet (hypertable, sıkıştırılmış)
+    days: 730
+    min: 90
+    max: 1825
+    fields: [system_id, client, date, object_name, object_type, folder,
+             run_count, ok_count, failed_count, cancelled_count,
+             duration_min, duration_avg, duration_p95, duration_max,
+             first_start, last_end, top_error_signature, agents]
+
+# ---------------------------------------------------------------------
+# DURUM SINIFLANDIRMASI (varsayılan; kurulumda / ayarlarda değiştirilebilir)
+# ---------------------------------------------------------------------
+# Değişiklik geçmişe dönük yeniden sınıflandırma job'ını tetikler (özet tablolar dahil).
+status_classes:
+  failed:    { ranges: [[1800, 1899]], exclude: [1850, 1851] }   # ANY_ABEND, iptaller hariç
+  cancelled: { codes: [1850, 1851] }
+  ok:        { ranges: [[1900, 1999]] }
+  active:    { source: EH }   # running / waiting / blocked ayrımı keşifteki durum dağılımıyla doğrulanır
+
+# ---------------------------------------------------------------------
+# KOTA TABANLI TEMİZLİK (prune watermark aşıldığında)
+# ---------------------------------------------------------------------
+# Kullanım prune seviyesinin altına inene kadar, en eski veriden başlayarak sırayla uygulanır.
+# floor_days değerinden daha yeni veri bu mekanizmayla silinmez.
+quota_eviction_order:
+  - { dataset: report_on_demand_cache, floor_days: 0  }
+  - { dataset: object_script_versions, floor_days: 0, scope: old_versions_only }
+  - { dataset: conversations,          floor_days: 30 }
+  - { dataset: failed_report_excerpts, floor_days: 30 }
+  - { dataset: executions,             floor_days: 30 }
+
+# Otomatik temizlikte ASLA silinmeyenler (yalnızca süre dolunca silinir):
+quota_protected: [audit_log, daily_aggregates, failed_execution_index,
+                  object_headers_current, object_script_current]
+
+# floor değerlerine rağmen kota critical seviyesindeyse:
+critical_actions:
+  - stop_ingest: [failed_report_excerpts, report_on_demand_cache, object_script_versions]
+  - continue_ingest: [executions, active_snapshot, failed_execution_index, daily_aggregates]
+  - notify: [ui_banner, admin_notification]
+  - message: "Automic depolama kotası dolmak üzere. Kotayı artırın veya saklama sürelerini kısaltın."
+
+# ---------------------------------------------------------------------
+# UYGULAMA DETAYLARI
+# ---------------------------------------------------------------------
+implementation:
+  engine: timescaledb               # Ayrı konteyner: docker-compose.automic.yml, 127.0.0.1:5435
+  hypertables:
+    executions:             { time_column: end_time,  chunk_interval: 1 day }
+    failed_report_excerpts: { time_column: end_time,  chunk_interval: 1 day }
+    failed_execution_index: { time_column: date,      chunk_interval: 1 month }
+    daily_aggregates:       { time_column: date,      chunk_interval: 1 month, compress_after_days: 30 }
+  regular_tables_monthly_cleanup: [conversations_ref, report_on_demand_cache, object_script_versions]
+  # Süre tabanlı silme: hypertable'larda add_retention_policy (chunk DROP);
+  # diğer tablolarda retention job'ı DELETE + VACUUM.
+  retention_job_schedule: "30 3 * * *"   # Her gece 03:30
+  # Günlük özet: D-1 için, collector su seviyesi D-1 gün sonunu geçtikten SONRA çalışır.
+  # Son 3 günü idempotent olarak yeniden hesaplar (geç biten job'lar, yasak pencereler).
+  aggregate_job:
+    schedule: "15 1 * * *"
+    require_watermark_past_day_end: true
+    recompute_last_days: 3
+  # Retention job'ı, ilgili günün özeti başarıyla üretilmeden o günün detayını silmez.
+  retention_requires_aggregate: true
+  masking_before_storage: true
+
+# ---------------------------------------------------------------------
+# KAPASİTE PROJEKSİYONU (kurulum sihirbazı)
+# ---------------------------------------------------------------------
+# Girdiler (keşiften otomatik tahmin; kullanıcı düzeltebilir):
+#   daily_exec            : günlük biten çalışma sayısı (tüm izlenen client'lar)
+#   failure_rate          : hatalı oranı (0..1)
+#   active_objects_daily  : günde en az bir kez çalışan farklı nesne sayısı
+#
+# Tahmini ihtiyaç (GB) = index_overhead_factor * (
+#     daily_exec * compress_after_days * 1 KB                                   # sıkıştırılmamış son günler
+#   + daily_exec * (executions.days - compress_after_days) * 1 KB / compression_ratio
+#   + daily_exec * failure_rate * failed_report_excerpts.days * avg_excerpt_kb
+#   + daily_exec * failure_rate * failed_execution_index.days * 0.5 KB
+#   + active_objects_daily * daily_aggregates.days * 0.3 KB / compression_ratio
+#   ) + 2 GB (nesne başlıkları/script'ler, sohbetler, audit için sabit pay)
+#
+# Kural: Tahmini ihtiyaç > quota_gb * (prune / 100) ise sihirbaz uyarır ve kotayı
+#        artırmayı veya saklama sürelerini kısaltmayı önerir.
+#
+# Örnek (ilk kurulum profili: ~870.000 çalışma/gün, %1 hata, 50.000 aktif nesne/gün):
+#   son 7 gün          ≈ 6,1 GB
+#   sıkıştırılmış 83 g ≈ 9,0 GB   (oran 8)
+#   rapor kırpıntıları ≈ 11,7 GB  (15 KB ort.)
+#   hata indeksi       ≈ 1,6 GB
+#   günlük özet        ≈ 1,4 GB
+#   toplam × 1,4 + 2   ≈ 44 GB  -> 100 GB kota (%85 eşiği 85 GB) yeterli; disk ≥ 150 GB
+setup_validation:
+  require_inputs: [daily_exec, failure_rate, active_objects_daily]
+  defaults:
+    compression_ratio: 8          # İlk 7 günlük gerçek ölçümle güncellenir
+    avg_excerpt_kb: 15
+    index_overhead_factor: 1.4
+  warn_if_projection_exceeds_percent_of_quota: 85

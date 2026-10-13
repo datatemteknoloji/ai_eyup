@@ -395,3 +395,10 @@ try:
     api_router.include_router(centrify_chat.router, prefix="/centrify-chat", tags=["centrify-chat"])
 except Exception as e:
     logger.error(f"Could not load centrify_chat router: {e}", exc_info=True)
+
+# Automic (UC4) — izleme + salt okunur asistan
+try:
+    from app.api import automation
+    api_router.include_router(automation.router, prefix="/automation", tags=["automation"])
+except Exception as e:
+    logger.error(f"Could not load automation router: {e}", exc_info=True)

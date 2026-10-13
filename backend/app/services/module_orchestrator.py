@@ -18,8 +18,9 @@ MOD_WINDOWS = "windows"
 MOD_VIRT = "virt"          # vCenter / ESXi / VMware (+ tool domain vcenter)
 MOD_OPENSHIFT = "openshift"
 MOD_EXADATA = "exadata"
+MOD_AUTOMIC = "automic"
 
-ALL_MODULES = (MOD_LINUX, MOD_WINDOWS, MOD_VIRT, MOD_OPENSHIFT, MOD_EXADATA)
+ALL_MODULES = (MOD_LINUX, MOD_WINDOWS, MOD_VIRT, MOD_OPENSHIFT, MOD_EXADATA, MOD_AUTOMIC)
 
 MODULE_TO_DOMAINS: Dict[str, FrozenSet[str]] = {
     MOD_LINUX: frozenset({"linux", "infra"}),
@@ -27,6 +28,7 @@ MODULE_TO_DOMAINS: Dict[str, FrozenSet[str]] = {
     MOD_VIRT: frozenset({"vcenter", "infra"}),
     MOD_OPENSHIFT: frozenset({"openshift", "infra"}),
     MOD_EXADATA: frozenset({"exadata", "linux", "infra"}),
+    MOD_AUTOMIC: frozenset({"automic"}),
 }
 
 # Güçlü kimlik sinyalleri (yüksek skor)
@@ -55,6 +57,11 @@ _STRONG: Dict[str, Tuple[str, ...]] = {
     ),
     MOD_EXADATA: (
         "exadata", "cell server", "db node", "asm diskgroup", "oracle rac cell",
+    ),
+    MOD_AUTOMIC: (
+        "automic", "uc4", "ae db", "runid", "run id", "jobp.", "jobs.",
+        "workflow hatası", "iş akışı hatası", "uc4 job", "automic job",
+        "p95 süre", "abend", "any_abend", "client 100", "client 200",
     ),
 }
 
@@ -465,6 +472,7 @@ def persona_addendum(plan: ModulePlan) -> str:
         ),
         MOD_OPENSHIFT: "Kıdemli OpenShift Admin (pod/project/event — read-only)",
         MOD_EXADATA: "Kıdemli Exadata Admin (read-only)",
+        MOD_AUTOMIC: "Kıdemli Automic/UC4 Operatör (read-only; automic_* araçları)",
     }
     if plan.mode == "single":
         lab = labels.get(plan.primary() or "", "Uzman admin")

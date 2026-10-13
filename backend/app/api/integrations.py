@@ -47,6 +47,29 @@ def _centrify_source() -> dict:
                 "count": 0, "enabled": False, "path": "/integrations/centrify"}
 
 
+def _automic_source() -> dict:
+    """Automic (UC4) kaynağı — modül DB erişilmezse sessizce kapalı döner."""
+    base = {"id": "automic", "name": "UC4 Automic",
+            "description": "UC4 Automic iş zamanlama — salt okunur DB kopyasından çalışma/hata toplama",
+            "count": 0, "enabled": False, "path": "/integrations/automic"}
+    try:
+        from app.services.automic.database import automic_db_available, get_automic_thread_session
+        if not automic_db_available():
+            return base
+        from app.models.automic import AutomicSystem
+
+        db = get_automic_thread_session()
+        if db is None:
+            return base
+        try:
+            n = db.query(AutomicSystem).filter(AutomicSystem.enabled.is_(True)).count()
+            return {**base, "count": n, "enabled": n > 0}
+        finally:
+            db.close()
+    except Exception:
+        return base
+
+
 class MergeRequest(BaseModel):
     keep_id: int
     merge_ids: list[int]
@@ -122,6 +145,7 @@ async def integrations_summary(db: Session = Depends(get_db)):
                 "path": "/integrations/openshift",
             },
             _centrify_source(),
+            _automic_source(),
         ],
         "inventory": {
             "total_servers": total_servers,

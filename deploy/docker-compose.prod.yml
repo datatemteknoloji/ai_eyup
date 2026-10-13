@@ -91,6 +91,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # Automic (UC4) modül DB'si — ana DB'den ayrı (kota bu DB'nin boyutu üzerinden ölçülür)
+  automic-db:
+    image: timescale/timescaledb:2.17.2-pg15
+    pull_policy: never
+    container_name: automic_db
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      TZ: ${TZ:-Europe/Istanbul}
+      POSTGRES_USER: ${AUTOMIC_DB_USER:-automic}
+      POSTGRES_PASSWORD: ${AUTOMIC_DB_PASSWORD:-${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env dosyasinda tanimli olmali}}
+      POSTGRES_DB: ${AUTOMIC_DB_NAME:-automic}
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - ${DATA_DIR:-./data}/automic/postgres:/var/lib/postgresql/data:Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTOMIC_DB_USER:-automic} -d ${AUTOMIC_DB_NAME:-automic}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   backend:
     image: ${BACKEND_IMAGE:-ainew-backend:latest}
     pull_policy: never
@@ -131,6 +153,11 @@ services:
       - DROPT_POSTGRES_USER=${DROPT_POSTGRES_USER:-dtt}
       - DROPT_POSTGRES_PASSWORD=${DROPT_POSTGRES_PASSWORD:-}
       - DROPT_POSTGRES_DB=${DROPT_POSTGRES_DB:-dttportal}
+      - AUTOMIC_DB_HOST=${AUTOMIC_DB_HOST:-localhost}
+      - AUTOMIC_DB_PORT=${AUTOMIC_DB_PORT:-5435}
+      - AUTOMIC_DB_USER=${AUTOMIC_DB_USER:-automic}
+      - AUTOMIC_DB_PASSWORD=${AUTOMIC_DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      - AUTOMIC_DB_NAME=${AUTOMIC_DB_NAME:-automic}
       - HOST_ETC_HOSTS=/host-etc-hosts
       - AINEW_INSTALL_MOUNT=/ainew-install
       - RAG_SEED_PATH=${RAG_SEED_PATH:-/app/docs/rag_seed}

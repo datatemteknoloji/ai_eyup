@@ -1,0 +1,368 @@
+# Automic AE 24.4 — ainew SELECT kolonları (resmi TechDocs DB Schema).
+# Her kolon: 24.4 Description + docs/official/24.4/<TABLO>.md referansı.
+# Profil (sql/oracle/ae-24.yaml) yalnızca buradaki kolonları kullanabilir;
+# kodda olup burada olmayan kolon → test_automic_official_schema.py kırılır.
+version: "24.4"
+accessed: "2026-10-10"
+source: "Broadcom TechDocs Automic DB Schema 24.4 — yalnızca ainew SQL profilinde SELECT edilen kolonlar"
+source_index: "https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/index.html"
+local_docs: "docs/official/24.4/"
+tables:
+  AH:
+    doc: docs/official/24.4/AH.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/AH.html
+    columns:
+      AH_HGDst:
+        description: "Name of destination hostgroup"
+        doc: docs/official/24.4/AH.md
+      AH_Client:
+        description: "number of the client"
+        doc: docs/official/24.4/AH.md
+      AH_ERT:
+        description: "Estimated Runtime"
+        doc: docs/official/24.4/AH.md
+      AH_HostAttrTypeD:
+        description: "attribute type of the host (destination)"
+        doc: docs/official/24.4/AH.md
+      AH_HostDst:
+        description: "name of the host or hostgroup"
+        doc: docs/official/24.4/AH.md
+      AH_Idnr:
+        description: "primary key of the archive header"
+        doc: docs/official/24.4/AH.md
+      AH_Name:
+        description: "name of the object"
+        doc: docs/official/24.4/AH.md
+      AH_OH_Idnr:
+        description: "processed IDNR"
+        doc: docs/official/24.4/AH.md
+      AH_OType:
+        description: "objecttype"
+        doc: docs/official/24.4/AH.md
+      AH_ParentAct:
+        description: "AH_Idnr of activator parent"
+        doc: docs/official/24.4/AH.md
+      AH_Queue:
+        description: "Name of the Queue the Object runs within"
+        doc: docs/official/24.4/AH.md
+      AH_RefNr:
+        description: "reference job number"
+        doc: docs/official/24.4/AH.md
+      AH_RetCode:
+        description: "return code"
+        doc: docs/official/24.4/AH.md
+      AH_RunTime:
+        description: "Runtime in Seconds"
+        doc: docs/official/24.4/AH.md
+      AH_Status:
+        description: "state of the activity"
+        doc: docs/official/24.4/AH.md
+      AH_TimeStamp1:
+        description: "activation time"
+        doc: docs/official/24.4/AH.md
+      AH_TimeStamp2:
+        description: "start time"
+        doc: docs/official/24.4/AH.md
+      AH_TimeStamp4:
+        description: "end time (including post processing time if available)"
+        doc: docs/official/24.4/AH.md
+      AH_TopNr:
+        description: "job number of the topmost activity"
+        doc: docs/official/24.4/AH.md
+      AH_USR_Idnr:
+        description: "IDNR of the user that executed this activity"
+        doc: docs/official/24.4/AH.md
+  EH:
+    doc: docs/official/24.4/EH.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/EH.html
+    columns:
+      EH_HGDst:
+        description: "Name of destination hostgroup"
+        doc: docs/official/24.4/EH.md
+      EH_ActivationTime:
+        description: "Activation time (= AH_Timestamp1)"
+        doc: docs/official/24.4/EH.md
+      EH_AH_Idnr:
+        description: "reference to the archive header (AH), Primary Key"
+        doc: docs/official/24.4/EH.md
+      EH_Client:
+        description: "client"
+        doc: docs/official/24.4/EH.md
+      EH_Ert:
+        description: "Estimated Runtime"
+        doc: docs/official/24.4/EH.md
+      EH_ERTCalc:
+        description: "The status of ERT calculation (0=no ERT, 1=ERT calculation active, 2=ERT calculation succeeded, 3=ERT calculation failed)"
+        doc: docs/official/24.4/EH.md
+      EH_ERTEnd:
+        description: "Estimated end of the Task"
+        doc: docs/official/24.4/EH.md
+      EH_HostAttrType:
+        description: "attribute type of the host"
+        doc: docs/official/24.4/EH.md
+      EH_HostDst:
+        description: "host name"
+        doc: docs/official/24.4/EH.md
+      EH_Mrt:
+        description: "maximum running time (in seconds)"
+        doc: docs/official/24.4/EH.md
+      EH_Name:
+        description: "name of the object"
+        doc: docs/official/24.4/EH.md
+      EH_OH_Idnr:
+        description: "reference to the object header (OH)"
+        doc: docs/official/24.4/EH.md
+      EH_OType:
+        description: "type of the activity"
+        doc: docs/official/24.4/EH.md
+      EH_ParentAct:
+        description: "AH_Idnr of activator parent"
+        doc: docs/official/24.4/EH.md
+      EH_Queue:
+        description: "Name of the Queue the Object runs within"
+        doc: docs/official/24.4/EH.md
+      EH_RunTime:
+        description: "Runtime in Seconds"
+        doc: docs/official/24.4/EH.md
+      EH_Signal:
+        description: "Signals in this task (bitmask): 1=TCP exceeded, 2=MRT exceeded, 4=SRT not reached"
+        doc: docs/official/24.4/EH.md
+      EH_Srt:
+        description: "SRT in Seconds"
+        doc: docs/official/24.4/EH.md
+      EH_StartTime:
+        description: "job starttime"
+        doc: docs/official/24.4/EH.md
+      EH_Status:
+        description: "job state"
+        doc: docs/official/24.4/EH.md
+      EH_TopNr:
+        description: "job number of the topmost activity"
+        doc: docs/official/24.4/EH.md
+      EH_USR_Idnr:
+        description: "executing user"
+        doc: docs/official/24.4/EH.md
+  JPP:
+    doc: docs/official/24.4/JPP.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/JPP.html
+    columns:
+      JPP_Lnr:
+        description: "Sequenced number of the workflow tasks."
+        doc: docs/official/24.4/JPP.md
+      JPP_Object:
+        description: "Name of the workflow task."
+        doc: docs/official/24.4/JPP.md
+      JPP_OH_Idnr:
+        description: "ID of the object."
+        doc: docs/official/24.4/JPP.md
+      JPP_OType:
+        description: "Type of the workflow task."
+        doc: docs/official/24.4/JPP.md
+  OFS:
+    doc: docs/official/24.4/OFS.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/OFS.html
+    columns:
+      OFS_Link:
+        description: "Links: 0 = Home Folder, 1 = Linked Object"
+        doc: docs/official/24.4/OFS.md
+      OFS_OH_Idnr_F:
+        description: "OH_IDNR of the folder"
+        doc: docs/official/24.4/OFS.md
+      OFS_OH_Idnr_O:
+        description: "OH_IDNR of the object"
+        doc: docs/official/24.4/OFS.md
+  OH:
+    doc: docs/official/24.4/OH.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/OH.html
+    columns:
+      OH_Archive2:
+        description: "Second archive key"
+        doc: docs/official/24.4/OH.md
+      OH_Archive1:
+        description: "First archive key"
+        doc: docs/official/24.4/OH.md
+      OH_Client:
+        description: "Number/ID of the client."
+        doc: docs/official/24.4/OH.md
+      OH_CrDate:
+        description: "Creation date of the object."
+        doc: docs/official/24.4/OH.md
+      OH_CrUserIdnr:
+        description: "ID of the user who created the object."
+        doc: docs/official/24.4/OH.md
+      OH_DeleteFlag:
+        description: "Delete flag of the object. 0 = not deleted, 1 = deleted, 2 = versioned, 5 = archived/reorganized"
+        doc: docs/official/24.4/OH.md
+      OH_Ert:
+        description: "Estimated runtime (ERT) in seconds."
+        doc: docs/official/24.4/OH.md
+      OH_Idnr:
+        description: "ID of the object."
+        doc: docs/official/24.4/OH.md
+      OH_ModDate:
+        description: "Date of the object's last modification."
+        doc: docs/official/24.4/OH.md
+      OH_ModUserIdnr:
+        description: "ID of the user who modified the object last."
+        doc: docs/official/24.4/OH.md
+      OH_Name:
+        description: "Name of the object."
+        doc: docs/official/24.4/OH.md
+      OH_OType:
+        description: "Type of the object."
+        doc: docs/official/24.4/OH.md
+      OH_Title:
+        description: "Description of the object."
+        doc: docs/official/24.4/OH.md
+  OT:
+    doc: docs/official/24.4/OT.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/OT.html
+    columns:
+      OT_Content:
+        description: "Content of the script line."
+        doc: docs/official/24.4/OT.md
+      OT_Lnr:
+        description: "Sequenced number for the script lines."
+        doc: docs/official/24.4/OT.md
+      OT_OH_Idnr:
+        description: "ID of the object."
+        doc: docs/official/24.4/OT.md
+      OT_Type:
+        description: "Type of the script. 0 = process, 1 = pre-process, 2 = post-process, 3 = inherit post process (child tasks)"
+        doc: docs/official/24.4/OT.md
+  RH:
+    doc: docs/official/24.4/RH.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/RH.html
+    columns:
+      RH_AH_Idnr:
+        description: "reference to the archive header (AH)"
+        doc: docs/official/24.4/RH.md
+      RH_Client:
+        description: "client"
+        doc: docs/official/24.4/RH.md
+      RH_Type:
+        description: "report type (reference to type UC_RTYP)"
+        doc: docs/official/24.4/RH.md
+  RT:
+    doc: docs/official/24.4/RT.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/RT.html
+    columns:
+      RT_AH_Idnr:
+        description: "reference to RH/AH"
+        doc: docs/official/24.4/RT.md
+      RT_Content:
+        description: "memostype text if MSGNR is not present"
+        doc: docs/official/24.4/RT.md
+      RT_Lnr:
+        description: "ascending number of the report text"
+        doc: docs/official/24.4/RT.md
+      RT_MsgInsert:
+        description: "MSG_Insert if this is a logging record"
+        doc: docs/official/24.4/RT.md
+      RT_MsgNr:
+        description: "MSGNR if this is a logging record"
+        doc: docs/official/24.4/RT.md
+      RT_Type:
+        description: "report type (reference to type UC_RTYP)"
+        doc: docs/official/24.4/RT.md
+
+  HOST:
+    doc: docs/official/24.4/HOST.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/HOST.html
+    columns:
+      HOST_OH_Idnr:
+        description: "Primary Key"
+        doc: docs/official/24.4/HOST.md
+      HOST_HTYP_HW:
+        description: "hardware"
+        doc: docs/official/24.4/HOST.md
+      HOST_HTYP_SW:
+        description: "software"
+        doc: docs/official/24.4/HOST.md
+      HOST_HTYP_SWVers:
+        description: "version"
+        doc: docs/official/24.4/HOST.md
+      HOST_HostAttrType:
+        description: "attribute type corresponding to table UC_HTYP"
+        doc: docs/official/24.4/HOST.md
+      HOST_TcpIpAddr:
+        description: "TCP/IP address"
+        doc: docs/official/24.4/HOST.md
+      HOST_TcpIpPort:
+        description: "TCP/IP port number"
+        doc: docs/official/24.4/HOST.md
+      HOST_Active:
+        description: "PEER active = 1"
+        doc: docs/official/24.4/HOST.md
+      HOST_Version:
+        description: "Executor Version"
+        doc: docs/official/24.4/HOST.md
+      HOST_HostRoles:
+        description: "Role of host (from INI or edited in object)"
+        doc: docs/official/24.4/HOST.md
+      HOST_HostName:
+        description: "Hostname of CP/WP-Processes"
+        doc: docs/official/24.4/HOST.md
+  MQSRV:
+    doc: docs/official/24.4/MQSRV.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/MQSRV.html
+    columns:
+      MQSRV_Name:
+        description: "server name"
+        doc: docs/official/24.4/MQSRV.md
+      MQSRV_System:
+        description: "system name"
+        doc: docs/official/24.4/MQSRV.md
+      MQSRV_TcpIpAddr:
+        description: "IP address"
+        doc: docs/official/24.4/MQSRV.md
+      MQSRV_TcpIpPort:
+        description: "IP port number"
+        doc: docs/official/24.4/MQSRV.md
+      MQSRV_Type:
+        description: "type (1=CP, 2=WP, 4=PWP, 8=Agent, 16=JWP, 32=REST API, 64=JCP)"
+        doc: docs/official/24.4/MQSRV.md
+      MQSRV_StartTime:
+        description: "start date"
+        doc: docs/official/24.4/MQSRV.md
+      MQSRV_LastUpdate:
+        description: "last update"
+        doc: docs/official/24.4/MQSRV.md
+      MQSRV_RestEndpoint:
+        description: "REST Endpoint Url (protocol://hostname:port/api) for REST process and Websocket Url for JCP process"
+        doc: docs/official/24.4/MQSRV.md
+      MQSRV_ConnCnt:
+        description: "Connection count"
+        doc: docs/official/24.4/MQSRV.md
+      MQSRV_PWPConnected:
+        description: "Is Process connected to PWP"
+        doc: docs/official/24.4/MQSRV.md
+  OHG:
+    doc: docs/official/24.4/OHG.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/OHG.html
+    columns:
+      OHG_OH_Idnr:
+        description: "ID of the agent group."
+        doc: docs/official/24.4/OHG.md
+      OHG_HostAttrType:
+        description: "Platform the selected agents run on."
+        doc: docs/official/24.4/OHG.md
+      OHG_Mode:
+        description: "Mode of the agent group. A = any, F = first, N = next, L = load dependent, X = all"
+        doc: docs/official/24.4/OHG.md
+  OHGF:
+    doc: docs/official/24.4/OHGF.md
+    url: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/automic-reference-guides/24-4/automic-db-schema/OHGF.html
+    columns:
+      OHGF_OH_Idnr:
+        description: "ID of the agent group."
+        doc: docs/official/24.4/OHGF.md
+      OHGF_Lnr:
+        description: "Sequenced number for the filter entries."
+        doc: docs/official/24.4/OHGF.md
+      OHGF_Type:
+        description: "Type of the filter. H = single agent, F = filter"
+        doc: docs/official/24.4/OHGF.md
+      OHGF_Name:
+        description: "Filter for the name of the agent."
+        doc: docs/official/24.4/OHGF.md

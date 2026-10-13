@@ -8,6 +8,8 @@ include:
   - path: docker-compose.dropt.yml
   - path: docker-compose.centrify.yml
     env_file: .env
+  - path: docker-compose.automic.yml
+    env_file: .env
 
 x-logging: &default-logging
   driver: json-file
@@ -120,6 +122,12 @@ services:
       - CENTRIFY_SYNC_ZONE_DELAY_SEC=${CENTRIFY_SYNC_ZONE_DELAY_SEC:-2}
       - CENTRIFY_SYNC_INVENTORY_TIMEOUT=${CENTRIFY_SYNC_INVENTORY_TIMEOUT:-300}
       - CENTRIFY_SYNC_MAX_RETRIES=${CENTRIFY_SYNC_MAX_RETRIES:-2}
+      - AUTOMIC_DB_HOST=${AUTOMIC_DB_HOST:-localhost}
+      - AUTOMIC_DB_PORT=${AUTOMIC_DB_PORT:-5435}
+      - AUTOMIC_DB_USER=${AUTOMIC_DB_USER:-automic}
+      - AUTOMIC_DB_PASSWORD=${AUTOMIC_DB_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}
+      - AUTOMIC_DB_NAME=${AUTOMIC_DB_NAME:-automic}
+      - AUTOMIC_FAKE=${AUTOMIC_FAKE:-0}
       - HOST_ETC_HOSTS=/host-etc-hosts
       # Restore: migration-secrets → host .env yazımı
       - AINEW_INSTALL_MOUNT=/ainew-install

@@ -4337,6 +4337,8 @@ TOOLS.update(VIRT_INSIGHTS_TOOLS)
 from app.services.agent.tools_backup import BACKUP_TOOLS  # noqa: E402
 TOOLS.update(BACKUP_TOOLS)  # requires_capability={"backup"}: Veeam/provider yoksa LLM'e görünmez
 
+from app.services.agent.tools_automic import AUTOMIC_TOOLS  # noqa: E402
+TOOLS.update(AUTOMIC_TOOLS)
 
 
 # Platform domain etiketleri — sohbet kapsamına göre tool filtresi için.
@@ -4422,6 +4424,8 @@ PLATFORM_TOOL_DOMAINS = {
     "windows": frozenset({"windows", "infra"}),
     "virt": frozenset({"vcenter", "infra"}),
     "exadata": frozenset({"exadata", "linux", "infra"}),
+    # "infra" yok: Automic sohbeti fleet/Prometheus araçlarına dağılmasın.
+    "automic": frozenset({"automic"}),
     "unified": None,
 }
 
@@ -4432,6 +4436,7 @@ _PLATFORM_ALIASES: Dict[str, str] = {
     "hypervisor": "virt", "sanallastirma": "virt", "sanallaştırma": "virt",
     "ocp": "openshift", "kubernetes": "openshift", "k8s": "openshift",
     "rhel": "linux", "all": "unified", "admin": "unified", "executive": "unified",
+    "uc4": "automic", "automation": "automic",
 }
 
 
@@ -4457,6 +4462,12 @@ def domains_for_platform(platform: Optional[str]) -> Optional[frozenset]:
 
 def get_tool(name: str) -> Optional[Tool]:
     return TOOLS.get(name)
+
+
+# Bu domain'lerdeki araçlar yalnız domain açıkça istenince şemaya girer
+# (Unified domains=None ve Linux agent tool_specs() dahil değil) — modül yetkisi
+# yalnız o modülün sohbet endpoint'inde kontrol edilir.
+_EXPLICIT_ONLY_DOMAINS = frozenset({"automic"})
 
 
 # ask_user: gerçek bir shell tool değil — orchestrator tarafından özel işlenir.
@@ -4517,7 +4528,7 @@ def tool_specs() -> List[Dict[str, Any]]:
             },
         }
         for t in TOOLS.values()
-        if t.llm_visible and _tool_capabilities_met(t)
+        if t.llm_visible and not (t.domains & _EXPLICIT_ONLY_DOMAINS) and _tool_capabilities_met(t)
     ]
     # Windows tools
     try:
@@ -4547,6 +4558,10 @@ def tool_specs_read_only(domains: Optional[frozenset] = None) -> List[Dict[str, 
         }
         for t in TOOLS.values()
         if t.risk_level == RiskLevel.READ_ONLY and t.llm_visible and _tool_capabilities_met(t)
+        and (
+            (domains is None and not (t.domains & _EXPLICIT_ONLY_DOMAINS))
+            or (domains is not None and (t.domains & domains))
+        )
     ]
     try:
         from app.services.agent.tools_windows import WINDOWS_TOOLS, MUTATING_WIN_TOOLS

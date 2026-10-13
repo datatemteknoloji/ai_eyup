@@ -1094,3 +1094,105 @@ html[data-theme="light"] .chat-md-table-wrap {
 .hex-bg {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cg fill='none' stroke='rgba(99%2C130%2C194%2C0.06)' stroke-width='1'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15z'/%3E%3Cpath d='M13.99.25l13 7.5v15l-13 7.5L1 22.75v-15zM27.99 16.75l13 7.5v15l-13 7.5L15 31.75v-15z'/%3E%3C/g%3E%3C/svg%3E");
 }
+
+/* ── Automic asistan yanıtı (AnswerView.tsx) ─────────────────────────────────
+   Model Markdown üretir; görünümü burası belirler. Renkler tema değişkenlerinden gelir
+   (dark/light otomatik). Başlıklar sade etiket, ilk paragraf giriş cümlesi, maddeler aralıklı bloklar. */
+.automic-md {
+  --am-accent: #3b82f6;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.automic-md[data-severity="ok"] { --am-accent: #22c55e; }
+.automic-md[data-severity="warning"] { --am-accent: #f59e0b; }
+.automic-md[data-severity="critical"] { --am-accent: #ef4444; }
+
+.automic-md > :first-child { margin-top: 0; }
+.automic-md > :last-child { margin-bottom: 0; }
+
+.automic-md .am-p { margin: 0.7rem 0; }
+.automic-md > .am-p:first-of-type {
+  font-size: 0.97rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+  padding-left: 0.8rem;
+  border-left: 3px solid var(--am-accent);
+  margin: 0 0 0.9rem;
+}
+.automic-md .am-strong { font-weight: 600; color: var(--text-primary); }
+
+.automic-md .am-h {
+  margin: 1.35rem 0 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+.automic-md > .am-h:first-child { margin-top: 0; }
+
+.automic-md .am-ul,
+.automic-md .am-ol { margin: 0.7rem 0; padding: 0; }
+.automic-md .am-ul { list-style: none; }
+.automic-md .am-ol { list-style: decimal; padding-left: 1.3rem; }
+.automic-md .am-ol > .am-li::marker { color: var(--text-muted); font-size: 0.85em; }
+.automic-md .am-ul > .am-li {
+  margin: 0.55rem 0;
+  padding-left: 0.85rem;
+  border-left: 2px solid var(--border-strong);
+}
+.automic-md .am-ol > .am-li { margin: 0.45rem 0; padding-left: 0.2rem; }
+.automic-md .am-li > .am-ul,
+.automic-md .am-li > .am-ol { margin: 0.35rem 0 0.1rem; }
+.automic-md .am-li > p { margin: 0.2rem 0; }
+
+.automic-md .am-quote {
+  margin: 0.9rem 0;
+  padding: 0.55rem 0.9rem;
+  border-left: 3px solid var(--am-accent);
+  background: var(--bg-elevated);
+  border-radius: 0 0.5rem 0.5rem 0;
+  color: var(--text-primary);
+}
+.automic-md .am-quote > :first-child { margin-top: 0; }
+.automic-md .am-quote > :last-child { margin-bottom: 0; }
+.automic-md .am-hr { border: 0; border-top: 1px solid var(--border-strong); margin: 1.1rem 0; }
+.automic-md .am-a { color: #60a5fa; text-decoration: none; }
+.automic-md .am-a:hover { text-decoration: underline; }
+html[data-theme="light"] .automic-md .am-a { color: #1d4ed8; }
+
+.automic-md .am-code {
+  font-size: 0.82em;
+  padding: 0.08rem 0.38rem;
+  border-radius: 0.3rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+.automic-md .chat-md-table-wrap { margin: 0.9rem 0; border-color: var(--border-strong); box-shadow: none; }
+
+/* İkincil bilgi: sorgu detayı altlığı + güven rozeti */
+.am-footer { margin-top: 0.9rem; padding-top: 0.55rem; border-top: 1px solid var(--border); font-size: 0.72rem; color: var(--text-muted); }
+.am-footer-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.am-footer-toggle {
+  display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0; padding: 0;
+  background: none; border: 0; color: inherit; cursor: pointer; text-align: left;
+}
+.am-footer-toggle:hover { color: var(--text-secondary); }
+.am-footer-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.am-chevron { flex: none; transition: transform 0.15s ease; }
+.am-chevron-open { transform: rotate(180deg); }
+.am-footer-detail {
+  display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.6rem 0 0;
+}
+.am-footer-detail dt { color: var(--text-muted); }
+.am-footer-detail dd { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.am-conf { display: inline-flex; align-items: center; gap: 0.35rem; flex: none; white-space: nowrap; }
+.am-conf i { width: 0.45rem; height: 0.45rem; border-radius: 9999px; background: currentColor; display: inline-block; }
+.am-conf-high { color: #22c55e; }
+.am-conf-medium { color: #f59e0b; }
+.am-conf-low { color: #ef4444; }

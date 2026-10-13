@@ -1,0 +1,302 @@
+# Automic Automation Engine (AE) Oracle şeması — YALNIZCA resmi Broadcom TechDocs "Automic DB Schema"
+# 24.4 kolonları (SELECT edilenler: source/sql/official/ae-24.4-columns.yaml + docs/official/24.4/).
+# Kaynak: https://techdocs.broadcom.com/us/en/ca-enterprise-software/intelligent-automation/
+#         automic-reference-guides/24-4/automic-db-schema/<TABLO>.html  (erişim: 2026-10-10)
+# Her alan için (varsa) yalnız resmi kolon adı listelenir; keşif (ALL_TAB_COLUMNS) o kolonun bu
+# veritabanında bulunup bulunmadığını doğrular. Bulunamayan opsiyonel alan NULL döner, zorunlu alan
+# yoksa ilgili yetenek "unavailable" olur. Kuruma özgü değer içermez.
+#
+# Zaman: AH_TimeStamp1=activation, 2=start, 3=end before post, 4=end including post (docs/official/24.4/AH.md).
+# Kullanıcı adı : AH_USR_Idnr / EH_USR_Idnr → OH_Idnr (USER nesnesi) varsayımı.
+#   24.4 AH şeması yalnız "IDNR of the user that executed this activity" der —
+#   AH_USR_Idnr ↔ OH_Idnr eşlemesi GERÇEK VERİYLE DOĞRULANACAK (collector eşleşmeme uyarısı).
+#   USR tablosu ASLA okunmaz (şifre riski); yalnız OH (OType=USER).
+# Klasör        : OFS_OH_Idnr_O → OFS_OH_Idnr_F; OFS_Link = 0 = Home Folder (docs/official/24.4/OFS.md).
+# Sürümlü nesne : OH_DeleteFlag 0=not deleted, 1=deleted, 2=versioned, 5=archived/reorganized (OH.md).
+profile: ae-24
+rev: 5
+engine: oracle
+ae_versions: ["12.3", "21", "24", "26"]
+# rev 5: min_run_id client filtresiz (INDEX FULL SCAN MIN/MAX); rev 4: children/restarts Idnr aralığı.
+
+tables:
+  # AH — archive header: her aktivasyon (RunID = AH_Idnr)
+  executions:
+    table: [AH]
+    required:
+      run_id: [AH_IDNR]
+      client: [AH_CLIENT]
+      object_name: [AH_NAME]
+      status_code: [AH_STATUS]
+      end_time: [AH_TIMESTAMP4]        # bitiş (varsa post-process dahil)
+    optional:
+      object_id: [AH_OH_IDNR]          # işlenen nesnenin OH_Idnr'i
+      object_type: [AH_OTYPE]
+      activation_time: [AH_TIMESTAMP1]
+      start_time: [AH_TIMESTAMP2]
+      agent: [AH_HOSTDST]              # fiili host (grup çözülmüşse) veya host/grup adı
+      agent_group: [AH_HGDST]          # destination hostgroup adı
+      platform: [AH_HOSTATTRTYPED]     # hedef host attribute type
+      parent_run_id: [AH_PARENTACT]    # aktivatör ebeveyn RunID
+      top_run_id: [AH_TOPNR]
+      restart_ref_run_id: [AH_REFNR]
+      return_code: [AH_RETCODE]
+      user_id: [AH_USR_IDNR]           # çalıştıran kullanıcı IDNR — OH_Idnr varsayımı (doğrulanacak)
+      queue: [AH_QUEUE]
+      run_time_sec: [AH_RUNTIME]       # saniye
+      ert_sec: [AH_ERT]                # tahmini çalışma süresi (saniye)
+
+  # EH — execution header: şu an aktif / bekleyen görevler
+  active:
+    table: [EH]
+    required:
+      run_id: [EH_AH_IDNR]
+      client: [EH_CLIENT]
+      object_name: [EH_NAME]
+      status_code: [EH_STATUS]
+    optional:
+      object_id: [EH_OH_IDNR]
+      object_type: [EH_OTYPE]
+      activation_time: [EH_ACTIVATIONTIME]
+      start_time: [EH_STARTTIME]
+      agent: [EH_HOSTDST]
+      agent_group: [EH_HGDST]
+      platform: [EH_HOSTATTRTYPE]
+      parent_run_id: [EH_PARENTACT]
+      top_run_id: [EH_TOPNR]
+      user_id: [EH_USR_IDNR]
+      queue: [EH_QUEUE]
+      run_time_sec: [EH_RUNTIME]
+      ert_sec: [EH_ERT]                # tahmini çalışma süresi (saniye)
+      ert_end_time: [EH_ERTEND]        # tahmini bitiş
+      ert_calc: [EH_ERTCALC]           # 0 ERT yok, 1 hesaplanıyor, 2 başarılı, 3 başarısız
+      signal: [EH_SIGNAL]              # bitmask: 1 TCP aşıldı, 2 MRT aşıldı, 4 SRT'ye ulaşılmadı
+      mrt_sec: [EH_MRT]                # maksimum çalışma süresi (saniye)
+      srt_sec: [EH_SRT]                # SRT (şemadaki tanım: SRT in Seconds; docs/official/24.4/EH.md)
+
+  # RH — rapor başlığı
+  report_headers:
+    table: [RH]
+    required:
+      run_id: [RH_AH_IDNR]
+      report_type: [RH_TYPE]
+    optional:
+      client: [RH_CLIENT]
+
+  # RT — rapor içeriği (RT_Content boşsa kayıt bir mesaj kaydıdır: RT_MsgNr + RT_MsgInsert)
+  report_text:
+    table: [RT]
+    required:
+      run_id: [RT_AH_IDNR]
+      report_type: [RT_TYPE]
+      line_no: [RT_LNR]
+      content: [RT_CONTENT]
+    optional:
+      msg_nr: [RT_MSGNR]
+      msg_insert: [RT_MSGINSERT]
+
+  # OH — nesne başlığı
+  object_headers:
+    table: [OH]
+    required:
+      object_id: [OH_IDNR]
+      client: [OH_CLIENT]
+      object_name: [OH_NAME]
+    optional:
+      object_type: [OH_OTYPE]
+      title: [OH_TITLE]
+      created_at: [OH_CRDATE]
+      created_user_id: [OH_CRUSERIDNR]
+      modified_at: [OH_MODDATE]
+      modified_user_id: [OH_MODUSERIDNR]
+      delete_flag: [OH_DELETEFLAG]
+      ert_sec: [OH_ERT]
+      archive1: [OH_ARCHIVE1]
+      archive2: [OH_ARCHIVE2]
+
+  # HOST — agent tanımı (küçük referans; tam okuma istisnası)
+  hosts:
+    table: [HOST]
+    required:
+      oh_idnr: [HOST_OH_IDNR]
+    optional:
+      hardware: [HOST_HTYP_HW]
+      os: [HOST_HTYP_SW]
+      sw_version: [HOST_HTYP_SWVERS]
+      platform: [HOST_HOSTATTRTYPE]
+      ip: [HOST_TCPIPADDR]
+      port: [HOST_TCPIPPORT]
+      host_active: [HOST_ACTIVE]
+      version: [HOST_VERSION]
+      roles: [HOST_HOSTROLES]
+      hostname: [HOST_HOSTNAME]
+
+  # MQSRV — engine + agent yaşam sinyali
+  mqsrv:
+    table: [MQSRV]
+    required:
+      name: [MQSRV_NAME]
+      mqsrv_type: [MQSRV_TYPE]
+      ip: [MQSRV_TCPIPADDR]
+      port: [MQSRV_TCPIPPORT]
+    optional:
+      last_update: [MQSRV_LASTUPDATE]
+      start_time: [MQSRV_STARTTIME]
+      rest_endpoint: [MQSRV_RESTENDPOINT]
+      connection_count: [MQSRV_CONNCNT]
+      pwp_connected: [MQSRV_PWPCONNECTED]
+      system_name: [MQSRV_SYSTEM]
+
+  # OHG — agent grubu
+  agent_groups:
+    table: [OHG]
+    required:
+      oh_idnr: [OHG_OH_IDNR]
+      platform: [OHG_HOSTATTRTYPE]
+      mode: [OHG_MODE]
+
+  # OHGF — grup üyeliği / filtre
+  agent_group_filters:
+    table: [OHGF]
+    required:
+      oh_idnr: [OHGF_OH_IDNR]
+      line_no: [OHGF_LNR]
+      filter_type: [OHGF_TYPE]
+    optional:
+      agent_name: [OHGF_NAME]
+
+  # OFS — klasör bağlantıları
+  folders:
+    table: [OFS]
+    required:
+      object_id: [OFS_OH_IDNR_O]
+      folder_id: [OFS_OH_IDNR_F]
+      link: [OFS_LINK]
+
+  # OT — nesne script'i (OT_Type: 0 process, 1 pre-process, 2 post-process, 3 inherit post-process)
+  object_scripts:
+    table: [OT]
+    required:
+      object_id: [OT_OH_IDNR]
+      script_type: [OT_TYPE]
+      line_no: [OT_LNR]
+      content: [OT_CONTENT]
+
+  # JPP — workflow görevleri (JPP_Object = görevin nesne adı)
+  object_usage:
+    table: [JPP]
+    required:
+      parent_id: [JPP_OH_IDNR]
+      line_no: [JPP_LNR]
+    optional:
+      child_name: [JPP_OBJECT]
+      child_type: [JPP_OTYPE]
+
+# Sorgu iskeletleri. {f:alan} → eşlenen sütun, {t} → şema.tablo, {sel} → SELECT listesi,
+# {clients}/{ids} → bind listesi, {live} → OH_DeleteFlag = 0 koşulu (kolon varsa).
+# Her sorgu çalışmadan önce SELECT-only guard'dan geçer.
+queries:
+  # Biten çalışmalar — YALNIZ AH_Idnr (PK) aralığı; zaman süzmesi uygulama katmanında.
+  ended_executions: >
+    SELECT {sel} FROM {t}
+    WHERE {f:client} IN ({clients})
+      AND {f:run_id} >= :id_min AND {f:run_id} < :id_max
+    ORDER BY {f:run_id}
+  # Mutabakat / doğrulama — yalnız PK aralığı sayımı
+  count_ended_by_id_range: >
+    SELECT COUNT(*) FROM {t}
+    WHERE {f:client} IN ({clients})
+      AND {f:run_id} >= :id_min AND {f:run_id} < :id_max
+  # Tek client için en yüksek RunID (PK DESC + FETCH 1 — tablo taraması değil)
+  latest_run_id: >
+    SELECT {f:run_id} FROM {t}
+    WHERE {f:client} = :client
+    ORDER BY {f:run_id} DESC
+  # Reorg tespiti — tüm AH üzerinde PK MIN (client filtresi YOK → INDEX FULL SCAN MIN/MAX)
+  min_run_id: >
+    SELECT MIN({f:run_id}) FROM {t}
+  execution_by_id: >
+    SELECT {sel} FROM {t} WHERE {f:client} = :client AND {f:run_id} = :run_id
+  # Alt görevler: ParentAct + AH_Idnr PK aralığı (alt = üstten sonra aktive)
+  children: >
+    SELECT {sel} FROM {t}
+    WHERE {f:client} = :client AND {f:parent_run_id} = :run_id
+      AND {f:run_id} >= :id_min AND {f:run_id} < :id_max
+    ORDER BY {f:run_id}
+  # Restart'lar: RefNr + AH_Idnr PK aralığı
+  restarts: >
+    SELECT {sel} FROM {t}
+    WHERE {f:client} = :client
+      AND {f:run_id} >= :id_min AND {f:run_id} < :id_max
+      AND ({f:restart_ref_run_id} = :run_id OR {f:run_id} = :ref_id OR {f:restart_ref_run_id} = :ref_id)
+    ORDER BY {f:run_id}
+  active_executions: >
+    SELECT {sel} FROM {t} WHERE {f:client} IN ({clients})
+    ORDER BY {f:run_id} DESC
+  report_types_rh: >
+    SELECT DISTINCT {f:report_type} FROM {t} WHERE {f:run_id} = :run_id
+  report_types_rt: >
+    SELECT DISTINCT {f:report_type} FROM {t} WHERE {f:run_id} = :run_id
+  report_count: >
+    SELECT COUNT(*), MAX({f:line_no}) FROM {t} WHERE {f:run_id} = :run_id AND {f:report_type} = :rtype
+  # Küçük raporlar — mutlaka FETCH FIRST ile sınırlanır (render limit)
+  report_all: >
+    SELECT {sel} FROM {t}
+    WHERE {f:run_id} = :run_id AND {f:report_type} = :rtype ORDER BY {f:line_no}
+  # Baştan N + sondan M: RT_AH_Idnr + RT_Type + RT_Lnr (PK yolu)
+  report_range: >
+    SELECT {sel} FROM {t}
+    WHERE {f:run_id} = :run_id AND {f:report_type} = :rtype
+      AND ({f:line_no} <= :head_to OR {f:line_no} > :tail_from)
+    ORDER BY {f:line_no}
+  object_header_by_name: >
+    SELECT {sel} FROM {t}
+    WHERE {f:client} = :client AND {f:object_name} = :name {live}
+  # OH senkron — OH_Idnr PK aralığı (zaman filtresi yok)
+  object_headers_by_id_range: >
+    SELECT {sel} FROM {t}
+    WHERE {f:client} IN ({clients}) {live}
+      AND {f:object_id} >= :id_min AND {f:object_id} < :id_max
+    ORDER BY {f:object_id}
+  object_names_by_ids: >
+    SELECT {sel} FROM {t}
+    WHERE {f:object_id} IN ({ids})
+  # USER senkron — OH_Idnr PK aralığı; {live} YOK (silinmiş kullanıcılar da gelir)
+  object_headers_users_by_id_range: >
+    SELECT {sel} FROM {t}
+    WHERE {f:client} IN ({clients})
+      AND {f:object_type} = 'USER'
+      AND {f:object_id} >= :id_min AND {f:object_id} < :id_max
+    ORDER BY {f:object_id}
+  user_object_id_bounds: >
+    SELECT MIN({f:object_id}), MAX({f:object_id}) FROM {t}
+    WHERE {f:client} IN ({clients}) AND {f:object_type} = 'USER'
+  folder_links_by_objects: >
+    SELECT {f:object_id}, {f:folder_id} FROM {t}
+    WHERE {f:link} = 0 AND {f:object_id} IN ({ids})
+  object_script_lines: >
+    SELECT {f:script_type}, {f:line_no}, {f:content} FROM {t}
+    WHERE {f:object_id} = :object_id
+    ORDER BY {f:script_type}, {f:line_no}
+  # JPP — yalnız ebeveyn OH_Idnr (PK) ile; isim (JPP_Object) canlı arama yok
+  usage_children: >
+    SELECT {f:line_no}, {f:child_name}, {f:child_type} FROM {t}
+    WHERE {f:parent_id} = :parent_id
+    ORDER BY {f:line_no}
+  usage_by_parent_id_range: >
+    SELECT {f:parent_id}, {f:line_no}, {f:child_name}, {f:child_type} FROM {t}
+    WHERE {f:parent_id} >= :id_min AND {f:parent_id} < :id_max
+    ORDER BY {f:parent_id}, {f:line_no}
+  # Küçük referans tablolar — tam okuma (small_tables istisnası; satır eşiği uygulama katmanında)
+  # İsimler OH PK (object_names_by_ids) ile çözülür — JOIN yok.
+  table_row_count: >
+    SELECT COUNT(*) FROM {t}
+  hosts_all: >
+    SELECT {sel} FROM {t}
+  mqsrv_all: >
+    SELECT {sel} FROM {t}
+  ohg_all: >
+    SELECT {sel} FROM {t}
+  ohgf_all: >
+    SELECT {sel} FROM {t}
+    WHERE {f:filter_type} = 'H'

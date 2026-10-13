@@ -18,7 +18,7 @@ def test_guide_root_has_tr_en():
 def test_catalog_packs_order():
     ids = [p["id"] for p in list_packs("tr")]
     assert ids == [
-        "full", "linux", "virtualization", "windows", "openshift", "ai-architecture",
+        "full", "linux", "virtualization", "windows", "openshift", "automation", "ai-architecture",
     ]
 
 
