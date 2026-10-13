@@ -50,6 +50,7 @@ export default function BackupIntegrationPage() {
   const del = (i: any) => { if (window.confirm(t('bki_del_confirm'))) run(async () => { await call(`/instances/${i.id}`, 'DELETE'); reload() }) }
   const edit = (i: any) => setF({ ...EMPTY, ...i, password: '' })
   const revs: any[] = q.data?.revisions || []
+  const llmRemote: boolean = !!q.data?.llm_remote
   const isDemo = f?.kind === 'veeam_demo'
   const inp = 'input-field text-sm w-full'
   return (
@@ -57,6 +58,7 @@ export default function BackupIntegrationPage() {
       <PageHeader title={t('bki_title')} subtitle={t('bki_sub')} actions={<><Link to="/integrations" className="text-xs text-slate-400 hover:text-white">← {t('int_title')}</Link>
         <PrimaryButton accent={NEON.blue} onClick={() => { setMsg(null); setF({ ...EMPTY }) }}>{t('bki_add')}</PrimaryButton></>} />
       <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-2 text-xs text-blue-200">{t('bki_role_note')}</div>
+      {llmRemote && <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200" data-testid="bki-llm-warn">{t('bki_llm_remote_warn')}</div>}
       {msg && !f && <div className={`text-sm ${msg.ok ? 'text-emerald-300' : 'text-red-300'}`}>{msg.text}</div>}
       {(q.data?.instances || []).map((i: any) => (
         <Panel key={i.id}>
@@ -109,7 +111,10 @@ export default function BackupIntegrationPage() {
                 <label className="text-xs text-slate-400 flex flex-col gap-1">{t('bki_revision')}
                   <select className={inp} value={f.api_revision} onChange={e => setF({ ...f, api_revision: e.target.value })}>
                     {revs.map(r => <option key={r.revision} value={r.revision}>{r.revision} — VBR {r.build} ({r.status})</option>)}
-                  </select></label>
+                  </select>
+                  {f.api_revision !== (q.data?.doc_verified_revision || '1.3-rev1') && (
+                    <span className="text-[11px] text-amber-400" data-testid="bki-rev-warn">{t('bki_rev_unverified', { rev: q.data?.doc_verified_revision || '1.3-rev1' })}</span>
+                  )}</label>
                 <label className="text-xs text-slate-400 flex flex-col gap-1">{t('bki_ca')}
                   <input className={inp} placeholder="/etc/ssl/certs/vbr-ca.pem" value={f.ca_bundle_path || ''} onChange={e => setF({ ...f, ca_bundle_path: e.target.value })} /></label>
                 <label className="text-xs text-slate-300 flex items-center gap-2">

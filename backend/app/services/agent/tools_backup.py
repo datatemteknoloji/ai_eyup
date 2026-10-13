@@ -44,6 +44,9 @@ def _label(out: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+from app.services.backup.egress import LLM_EGRESS_FIELDS  # noqa: E402,F401  (B9: kapsamın tek kaynağı)
+
+
 def _slim(r: Dict[str, Any]) -> Dict[str, Any]:
     return {k: r.get(k) for k in ("name", "cluster", "state", "match_confidence", "last_restore_point_at",
                                   "rpo_age_min", "target_rpo_min", "rpo_state", "stale")}

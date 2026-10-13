@@ -356,3 +356,44 @@ def test_snapshot_guard_blocks_only_vm_with_running_job_session(db, monkeypatch)
     if other is not None and other.matched_vm_id:
         r2 = check_snapshot_remove(db, snapshots=snaps, vm_name=other.name, matched_vm_id=other.matched_vm_id)
         assert r2["ok"] is True
+
+
+# ── B2 / B9 (kapanış) ────────────────────────────────────────────────────────
+
+def test_revisions_expose_unverified_warning_flag(db):
+    """B2: tüm revizyonlar seçilebilir; yalnız dokümanın okunduğu revizyonun alanları 'doğrulandı'."""
+    from app.api.backup_integrations import list_instances
+    from app.services.backup.veeam_api_ref import DOC_VERIFIED_REVISION, REVISIONS
+    out = list_instances(db=db, _u=None)
+    assert {r["revision"] for r in out["revisions"]} == set(REVISIONS)          # 12.x dahil seçilebilir
+    verified = [r["revision"] for r in out["revisions"] if r["fields_verified"]]
+    assert verified == [DOC_VERIFIED_REVISION]
+    assert out["doc_verified_revision"] == DOC_VERIFIED_REVISION
+
+
+def test_llm_egress_flag_and_scope(db, monkeypatch):
+    """B9: harici LLM açıkken uyarı bayrağı; gönderilen alan kapsamı sabit ve kimlik/endpoint içermez."""
+    from app.api import backup_integrations as api
+    from app.services.backup.egress import LLM_EGRESS_FIELDS
+    monkeypatch.setattr(api, "remote_llm_enabled", lambda: True)
+    assert api.list_instances(db=db, _u=None)["llm_remote"] is True
+    monkeypatch.setattr(api, "remote_llm_enabled", lambda: False)
+    assert api.list_instances(db=db, _u=None)["llm_remote"] is False
+    low = " ".join(LLM_EGRESS_FIELDS).lower()
+    for banned in ("password", "credential", "endpoint", "token", "message", "session"):
+        assert banned not in low
+
+
+def test_llm_egress_tool_output_only_declared_fields(db, monkeypatch):
+    """B9: araç çıktısı beyan edilen kapsam dışına alan sızdırmaz (kimlik, endpoint, depo yolu, oturum mesajı yok)."""
+    import json as _json
+    from app.services.agent.tools import TOOLS
+    from app.services.backup import sync as bsync
+    vms = _demo_vms(5)
+    monkeypatch.setattr(bsync, "_vms", lambda _db: vms)
+    row = _make_instance(db)
+    bsync.sync_instance(db, row, force=True, provider=VeeamDemoProvider(row, vms=vms))
+    for name, args in (("virt_backup_status", {"vm_name": "demo-vm-00"}), ("virt_rpo_compliance", {"filter": "unprotected"})):
+        blob = _json.dumps(TOOLS[name].direct_handler(db, args, {}), default=str).lower()
+        for banned in ("password", "credential", "access_token", "refresh_token", "endpoint", "path", "message"):
+            assert banned not in blob, (name, banned)

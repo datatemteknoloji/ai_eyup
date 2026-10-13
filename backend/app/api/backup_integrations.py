@@ -18,7 +18,9 @@ from app.core.encryption import decrypt_secret, encrypt_secret
 from app.models.integration_instance import IntegrationInstance
 from app.models.user import User
 from app.services.backup import registry as breg
-from app.services.backup.veeam_api_ref import DEFAULT_PORT, DEFAULT_REVISION, REVISIONS
+from app.core.config import remote_llm_enabled
+from app.services.backup.egress import LLM_EGRESS_FIELDS
+from app.services.backup.veeam_api_ref import DEFAULT_PORT, DEFAULT_REVISION, DOC_VERIFIED_REVISION, REVISIONS
 from app.services.backup.demo_gate import DISABLED_MSG_TR, demo_enabled
 from app.services.backup.veeam_provider import KIND_DEMO, KIND_REAL
 
@@ -122,7 +124,13 @@ def list_instances(db: Session = Depends(get_db), _u: User = Depends(_admin)):
             "kinds": [{"kind": KIND_REAL, "label": "Veeam Backup & Replication (REST API)"}]
                      + ([{"kind": KIND_DEMO, "label": "DEMO / fixture (gerçek Veeam değil)"}] if demo_enabled() else []),
             "demo_enabled": demo_enabled(),
-            "revisions": [{"revision": k, "status": v[0], "build": v[1]} for k, v in REVISIONS.items()],
+            "revisions": [{"revision": k, "status": v[0], "build": v[1],
+                           # B2: yalnız dokümanın okunduğu revizyonun alanları kodlandı; diğerleri seçilebilir ama DOĞRULANMADI
+                           "fields_verified": k == DOC_VERIFIED_REVISION} for k, v in REVISIONS.items()],
+            "doc_verified_revision": DOC_VERIFIED_REVISION,
+            # B9: sohbet araçları VM/iş/depo ADLARINI + durum/RPO özetini LLM'e iletir; uzak (harici) LLM açıksa arayüz uyarır.
+            "llm_remote": remote_llm_enabled(),
+            "llm_egress_fields": list(LLM_EGRESS_FIELDS),
             "note": "Önerilen VBR rolü: Veeam Backup Viewer (salt okunur). serverInfo yalnız Backup Administrator "
                     "rolüne açıktır; Viewer ile VBR sürümü görüntülenemez."}
 
