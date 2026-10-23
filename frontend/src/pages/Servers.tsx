@@ -19,6 +19,7 @@ import { shortenOsLabel, fullOsLabel, serverTypeLabel } from '../lib/osLabel'
 import { useAuth } from '../auth/AuthContext'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import type { TranslationKey } from '../i18n/messages'
+import HwServerCard from '../components/hardware/HwServerCard'
 
 // ─── Shared Confirm Modal ──────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
@@ -783,6 +784,9 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   </div>
                 ))}
               </div>
+
+              {/* Donanım (Dell OME / HPE OneView) — entegrasyon/eşleşme/yetki yoksa render edilmez */}
+              {(server.server_type || '').toUpperCase() !== 'VIRTUAL' && <HwServerCard kind="server" id={server.id} />}
 
               {/* Son Güncelleme Bilgisi */}
               {updateHistory && (updateHistory.history.length > 0 || updateHistory.pending_reboot) && (

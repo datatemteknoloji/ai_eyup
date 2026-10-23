@@ -9,7 +9,7 @@ import {
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
   BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
   KeyRound, X, Check, AlertTriangle, Crown, Boxes, Moon, Sun, Languages, Star,
-  Gauge, Recycle, ShieldCheck, GitCompare, Workflow, ListChecks, PlayCircle,
+  Gauge, Recycle, ShieldCheck, GitCompare, Workflow, ListChecks, PlayCircle, Cpu,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useTheme } from '../theme/ThemeProvider'
@@ -171,7 +171,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { theme, toggleTheme } = useTheme()
   const { t, locale, setLocale } = useLocale()
   const { appName, logoUrl, version } = useBranding()
-  const { hasBackup } = useCapabilities()
+  const { hasBackup, hasHw } = useCapabilities()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -423,8 +423,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { type: 'link', path: '/integrations/centrify', name: 'Centrify / Delinea', icon: <Shield size={15} /> },
         { type: 'link', path: '/integrations/automic', name: 'UC4 Automic', icon: <Workflow size={15} /> },
         { type: 'link', path: '/integrations/backup', name: 'Veeam', icon: <HardDrive size={15} /> },
+        { type: 'link', path: '/integrations/hardware', name: t('nav_hw_integration'), icon: <Cpu size={15} />, adminOnly: true },
       ],
     },
+    // Donanım (Dell OME / HPE OneView): yalnız entegrasyon varken ve `hardware` modülü atanmışken (varsayılan Admin)
+    ...(hasHw ? [{ type: 'link' as const, path: '/hardware', name: t('nav_hardware'), icon: <Cpu size={18} />, moduleId: 'hardware' }] : []),
     { type: 'link', path: '/applications', name: t('nav_applications'), icon: <Package size={18} />, moduleId: 'applications' },
     { type: 'link', path: '/knowledge-base', name: t('nav_knowledge'), icon: <Brain size={18} />, moduleId: 'knowledge' },
     { type: 'link', path: '/custom-reports', name: t('nav_custom_reports'), icon: <BarChart3 size={18} />, moduleId: 'custom_reports' },

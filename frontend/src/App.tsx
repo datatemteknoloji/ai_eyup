@@ -27,6 +27,8 @@ const VirtReclaim = lazy(() => import('./pages/VirtReclaim'))
 const VirtHealthChecks = lazy(() => import('./pages/VirtHealthChecks'))
 const VirtBackup = lazy(() => import('./pages/VirtBackup'))
 const BackupIntegrationPage = lazy(() => import('./pages/BackupIntegrationPage'))
+const HardwareIntegrationPage = lazy(() => import('./pages/HardwareIntegrationPage'))
+const HardwarePage = lazy(() => import('./pages/HardwarePage'))
 const VirtChanges = lazy(() => import('./pages/VirtChanges'))
 const OcpCapacityPage = lazy(() => import('./pages/OcpInsightsPages').then(m => ({ default: m.OcpCapacityPage })))
 const OcpReclaimPage = lazy(() => import('./pages/OcpInsightsPages').then(m => ({ default: m.OcpReclaimPage })))
@@ -433,6 +435,8 @@ function App() {
                       <Route path="/integrations/exadata" element={<RequireAnyModule moduleIds={['integrations', 'exadata']}><ErrorBoundary><ExadataDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/openshift" element={<RequireAnyModule moduleIds={['integrations', 'openshift']}><ErrorBoundary><OpenShiftDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/backup" element={<RequireModule moduleId="integrations"><ErrorBoundary><BackupIntegrationPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/integrations/hardware" element={<RequireAdmin><RequireModule moduleId="integrations"><ErrorBoundary><HardwareIntegrationPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
+                      <Route path="/hardware" element={<RequireModule moduleId="hardware"><ErrorBoundary><HardwarePage /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/centrify" element={<RequireAnyModule moduleIds={['integrations', 'level1']}><ErrorBoundary><CentrifySettingsPage /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/automic" element={<RequireAnyModule moduleIds={['integrations', 'automation']}><ErrorBoundary><AutomicIntegrationPage /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/automation" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationOverview /></ErrorBoundary></RequireModule>} />

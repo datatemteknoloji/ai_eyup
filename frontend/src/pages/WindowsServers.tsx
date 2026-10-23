@@ -9,6 +9,7 @@ import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobM
 import { OsIcon } from '../components/OsIcon'
 import { fullOsLabel, shortenOsLabel, serverTypeLabel } from '../lib/osLabel'
 import { useT } from '../i18n/LocaleProvider'
+import HwServerCard from '../components/hardware/HwServerCard'
 
 const WIN_API = `${API_BASE_URL}/windows`
 
@@ -472,6 +473,11 @@ const ServerDetail: React.FC<{
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4">
+
+          {/* Donanım (Dell OME / HPE OneView) — entegrasyon/eşleşme/yetki yoksa render edilmez */}
+          {tab === 'info' && (server.server_type || '').toUpperCase() !== 'VIRTUAL' && (
+            <div className="mb-4"><HwServerCard kind="server" id={server.id} /></div>
+          )}
 
           {/* Info Tab */}
           {tab === 'info' && server.winrm_configured && (

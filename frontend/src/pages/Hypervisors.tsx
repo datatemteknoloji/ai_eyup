@@ -14,6 +14,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis
 import { isVmOnline, isPoweredOn as isPowerStateOn } from '../utils/powerState'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import { virtHostIpHint, virtHostTitle } from '../lib/virtHostLabel'
+import HwServerCard from '../components/hardware/HwServerCard'
 
 // DESIGN.md: "Mor (purple, violet) kullanılmaz — blue-600 tek aksan rengidir."
 // `info` DESIGN.md'deki --info token'ıyla aynı (#38bdf8) — RAM/VM-sayısı gibi
@@ -102,7 +103,7 @@ interface EsxHost {
   mem_total_mb: number; mem_used_mb: number; ds_total_gb: number; ds_used_gb: number
   ds_usage_pct: number; vms_running: number; vms_total: number
   connection_state?: string; power_state?: string; maintenance_mode?: boolean
-  inventory?: { vendor?: string; model?: string; cpu_model?: string }
+  inventory?: { id?: number; vendor?: string; model?: string; cpu_model?: string }
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
@@ -848,6 +849,8 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
 
       {expanded && (
         <div className="px-5 py-4 border-t border-white/[0.06] bg-slate-900/30 space-y-4">
+          {/* Donanım (Dell OME / HPE OneView) — entegrasyon/eşleşme/yetki yoksa render edilmez */}
+          {host.inventory?.id ? <HwServerCard kind="esxi" id={host.inventory.id} /> : null}
           {/* Resource Bars */}
           {[
             { label: 'CPU', used: host.cpu_usage_mhz, total: host.cpu_total_mhz, unit: 'MHz', pct: host.cpu_usage_pct, color: NEON.cyan },

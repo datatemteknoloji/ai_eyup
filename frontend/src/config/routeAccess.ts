@@ -71,6 +71,9 @@ export const ROUTE_ACCESS: Array<[string, RouteReq]> = [
   ['/integrations/openshift', M('integrations', 'openshift')],
   ['/integrations/centrify', M('integrations', 'level1')],
   ['/integrations/backup', M('integrations')],
+  // Donanım yönetimi entegrasyonu: yapılandırma yalnız Entegrasyonlar + admin; veri sayfası `hardware` modülü (varsayılan yalnız Admin)
+  ['/integrations/hardware', { modules: ['integrations'], moduleAndAdmin: true }],
+  ['/hardware', M('hardware')],
   // ── Level 1 ──
   ['/level1', M('level1')], ['/level1/ops/*', M('level1')], ['/level1/console/:id', M('level1')],
   ['/level1/jobs/*', M('level1')], ['/level1/centrify', M('level1')],

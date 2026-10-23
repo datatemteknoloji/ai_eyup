@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Database, Cloud, Server, Layers, FileUp, RefreshCw,
-  AlertTriangle, CheckCircle2, Merge, ChevronRight, Boxes, Shield, Workflow,
+  AlertTriangle, CheckCircle2, Merge, ChevronRight, Boxes, Shield, Workflow, Cpu,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useT } from '../i18n/LocaleProvider'
@@ -16,6 +16,7 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
   centrify: <Shield size={22} />,
   automic: <Workflow size={22} />,
   backup: <Database size={22} />,
+  hardware: <Cpu size={22} />,
 }
 
 export default function IntegrationsHub() {
@@ -51,6 +52,18 @@ export default function IntegrationsHub() {
   })
   const bkCount = (bkData?.instances ?? []).filter((i: any) => i.enabled).length
 
+  // Donanım yönetimi kartı yalnız admin için (yapılandırma admin'e açık); liste 403 verirse kart gösterilmez
+  const { data: hwData } = useQuery({
+    queryKey: ['integrations-hardware-count'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/integrations/hardware/instances`)
+      if (!r.ok) return null
+      return r.json()
+    },
+    retry: false,
+  })
+  const hwCount = (hwData?.instances ?? []).filter((i: any) => i.enabled).length
+
   const dedupMut = useMutation({
     mutationFn: async (dryRun: boolean) => {
       const r = await fetch(`${API_BASE_URL}/integrations/deduplicate?dry_run=${dryRun}`, { method: 'POST' })
@@ -64,7 +77,8 @@ export default function IntegrationsHub() {
   })
 
   const inv = data?.inventory
-  const sources = [...(data?.sources ?? []), { id: 'backup', name: t('bki_title'), description: t('bki_sub'), path: '/integrations/backup', count: bkCount }]
+  const sources = [...(data?.sources ?? []), { id: 'backup', name: t('bki_title'), description: t('bki_sub'), path: '/integrations/backup', count: bkCount },
+    ...(hwData ? [{ id: 'hardware', name: t('hwi_title'), description: t('hwi_sub'), path: '/integrations/hardware', count: hwCount }] : [])]
   const dupGroups = dupData?.groups ?? []
 
   return (
