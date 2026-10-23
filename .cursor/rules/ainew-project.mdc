@@ -33,7 +33,7 @@ Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvan
 
 ## Modüller (RBAC)
 
-`executive`, `linux`, `windows`, `virtualization`, `exadata`, `openshift`, `ai_automation`, `integrations`, `level1`, `applications`, `knowledge`, `custom_reports`, `monitoring`. Admin tümüne erişir.
+`executive`, `linux`, `windows`, `virtualization`, `exadata`, `openshift`, `ai_automation`, `integrations`, `level1`, `applications`, `knowledge`, `custom_reports`, `monitoring`, `hardware` (opsiyonel Dell OME / HPE OneView verisi; varsayılan yalnız Admin). Admin tümüne erişir.
 
 ## Kurallar
 
