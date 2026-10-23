@@ -4337,6 +4337,9 @@ TOOLS.update(VIRT_INSIGHTS_TOOLS)
 from app.services.agent.tools_backup import BACKUP_TOOLS  # noqa: E402
 TOOLS.update(BACKUP_TOOLS)  # requires_capability={"backup"}: Veeam/provider yoksa LLM'e görünmez
 
+from app.services.agent.tools_hw import HW_TOOLS  # noqa: E402
+TOOLS.update(HW_TOOLS)  # requires_capability={"hw"} + domain "hw": entegrasyon yoksa LLM'e görünmez
+
 from app.services.agent.tools_automic import AUTOMIC_TOOLS  # noqa: E402
 TOOLS.update(AUTOMIC_TOOLS)
 
@@ -4510,6 +4513,9 @@ def _tool_capabilities_met(t: "Tool") -> bool:
     except Exception:  # noqa: BLE001
         return False
     if all(c in have for c in need):
+        return True
+    # Donanım DEMO: capability `hw_demo` yalnız bayrak açık + gerçek sağlayıcı yokken üretilir (etiketli çıktı).
+    if need == frozenset({"hw"}) and "hw_demo" in have:
         return True
     # F.0: DEMO modunda (bayrak açık, gerçek sağlayıcı yok) yalnız izinli yedek araçları açılır.
     from app.services.backup.demo_gate import DEMO_VISIBLE_TOOLS, demo_tools_active

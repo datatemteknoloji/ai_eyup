@@ -92,6 +92,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_esx_metric_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_virt_insights()))
         self.tasks.append(asyncio.create_task(self._periodic_backup_sync()))
+        self.tasks.append(asyncio.create_task(self._periodic_hw_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_maintenance()))
         self.tasks.append(asyncio.create_task(self._periodic_snapshot_cleanup()))
@@ -415,6 +416,26 @@ class BackgroundTaskManager:
                 break
             except Exception as e:
                 logger.error(f"Backup sync task unexpected error: {e}")
+                await asyncio.sleep(300)
+
+    async def _periodic_hw_sync(self):
+        """Opsiyonel donanım sağlayıcı senkronu (Dell OME / HPE OneView). Etkin entegrasyon yoksa HİÇBİR iş kuyruğa
+        girmez (donanım entegrasyonsuz ortam bugünkü gibi davranır); tick yalnız tek hafif DB sorgusudur."""
+        logger.info("Hardware sync scheduler started (yalnız enabled instance varken iş üretir)")
+        await asyncio.sleep(150)
+
+        while self.running:
+            try:
+                from app.services.hw.registry_util import has_enabled_hw_instance
+                if await asyncio.to_thread(has_enabled_hw_instance):
+                    from app.services.fleet_jobs import run_hw_sync
+                    await _enqueue_or_run("fleet.hw_sync", run_hw_sync, label="hw_sync")
+                await asyncio.sleep(300)
+            except asyncio.CancelledError:
+                logger.info("Hardware sync task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Hardware sync task unexpected error: {e}")
                 await asyncio.sleep(300)
 
     async def _periodic_rag_reindex(self):

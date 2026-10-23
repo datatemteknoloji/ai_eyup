@@ -92,6 +92,7 @@ _VC = ("vCenter (SOAP/REST) kolektörü, son bulgu çalıştırması", "vCenter 
 _OLVM = ("OLVM/oVirt Manager REST API, son bulgu çalıştırması", "OLVM/oVirt Manager REST API, last findings run")
 _KUBE = ("Kubernetes / OpenShift API, son bulgu çalıştırması", "Kubernetes / OpenShift API, last findings run")
 _DB_METRIC = ("ainew veritabanı (senkronla toplanan metrikler)", "ainew database (metrics collected by sync)")
+_HWS = ("Donanım sağlayıcısı (Dell OME / HPE OneView) REST API'si (salt-okur) → hw_* tabloları, son senkron", "Hardware provider (Dell OME / HPE OneView) REST API (read-only) → hw_* tables, last sync")
 _BK = ("Yedek sağlayıcı REST API'si (salt-okur) → bk_* tabloları, son senkron", "Backup provider REST API (read-only) → bk_* tables, last sync")
 
 _METHODS: List[Method] = [
@@ -420,6 +421,39 @@ _METHODS: List[Method] = [
        ("Senkron başarısı ve yaşı (senkron aralığının 2 katı) ile API sürümü desteklenen listeyle karşılaştırılır.", "Sync success and age (2× the sync interval) and the API revision are compared with the supported list."),
        ("Sağlayıcı kayıtları ve senkron durumu (ainew DB).", "Provider records and sync state (ainew DB)."),
        ("Senkron başarısızsa bulgular bayat işaretlenir ve skora etki etmez.", "If sync failed findings are marked stale and do not affect scores.")),
+    # ── Fiziksel donanım (Dell OME / HPE OneView) ─────────────────────────────
+    _m("hw.server.*", CLASS_KURAL, "hardware",
+       ("Sağlayıcının bildirdiği sunucu durumu/bağlantısı sabit kurallarla (Kritik / bağlantısız / eşleşmedi) değerlendirilir.", "The server state/connection reported by the provider is evaluated with fixed rules (Critical / disconnected / unmatched)."),
+       _HWS,
+       ("Sağlık değeri sağlayıcının hesabıdır; ainew yeniden hesaplamaz. Sağlayıcı alanı vermiyorsa 'ölçülemedi'.", "The health value is the provider's own; ainew does not recompute it. If the provider does not expose a field it is 'not measurable'.")),
+    _m("hw.alert.*", CLASS_KURAL, "hardware",
+       ("Aynı sunucu ve aynı alarm tipi için son 24 saatteki alarm sayısı eşikle (3) karşılaştırılır.", "The alert count for the same server and alert type in the last 24h is compared with a threshold (3)."),
+       _HWS,
+       ("Yalnız Uyarı/Kritik alarmlar saklanır; OME alarmları olay kaydıdır, OneView alarmları aktif listeden okunur.", "Only Warning/Critical alerts are stored; OME alerts are event records, OneView alerts are read from the active list.")),
+    _m("hw.warranty.*", CLASS_KURAL, "hardware",
+       ("Sunucunun en geç garanti bitiş tarihi bugünle karşılaştırılır; yalnız ainew'de 'production' katmanındaki eşleşmiş sunucular için.", "The server's latest warranty end date is compared with today; only for matched servers in the 'production' tier."),
+       _HWS,
+       ("Garanti verisi yalnız Dell OME'den gelir (OME'nin Dell'den aldığı kayıt); HPE API'sinde garanti uç noktası yoktur.", "Warranty data comes from Dell OME only; the HPE API has no warranty endpoint.")),
+    _m("hw.provider.*", CLASS_KURAL, "hardware",
+       ("Senkron başarısı ve yaşı (alarm aralığının 2 katı) değerlendirilir; kimlik hatasında senkron durur.", "Sync success and age (2× the alarm interval) are evaluated; sync stops on an authentication error."),
+       ("Sağlayıcı kayıtları ve senkron durumu (ainew DB).", "Provider records and sync state (ainew DB)."),
+       ("Senkron başarısızsa bulgular bayat işaretlenir ve skora etki etmez.", "If sync failed findings are marked stale and do not affect scores.")),
+    _m("hw.inventory", CLASS_VERI, "hardware",
+       ("Model, seri/service tag, BMC adresi/sürümü, şasi/yuva, sağlık ve güç durumu sağlayıcıdan okunur.", "Model, serial/service tag, BMC address/version, enclosure/bay, health and power state are read from the provider."),
+       _HWS,
+       ("Sağlayıcı sunmayan alan boş kalır; uydurulmaz. BMC adresi yalnız donanım yetkisi olanlara gösterilir.", "Fields the provider does not expose stay empty; they are never invented. The BMC address is shown only to users with hardware access.")),
+    _m("hw.match", CLASS_ESLESTIRME, "hardware",
+       ("Donanım kaydı, ainew sunucusu/ESXi host'uyla seri/UUID (kesin) veya hostname (düşük güven) ile eşleştirilir.", "A hardware record is matched with an ainew host / ESXi host by serial/UUID (exact) or hostname (low confidence)."),
+       ("Donanım sağlayıcısı kayıtları + ainew envanteri (ainew DB).", "Hardware provider records + ainew inventory (ainew DB)."),
+       ("Hostname eşleşmesi 'düşük güven' işaretlidir; belirsiz/çakışan kayıtlar eşlenmez.", "Hostname matches are flagged 'low confidence'; ambiguous/conflicting records are not matched.")),
+    _m("hw.alarms", CLASS_VERI, "hardware",
+       ("Alarmlar sağlayıcıdan okunur; aynı alarm tipi sunucudan bağımsız gruplanır.", "Alerts are read from the provider; the same alert type is grouped across servers."),
+       _HWS,
+       ("Gruplama mesajdaki sayı/IP/GUID değerlerini normalleştirir.", "Grouping normalizes numbers/IPs/GUIDs in the message.")),
+    _m("tool:hw_*", CLASS_VERI, "tool",
+       ("Donanım sunucu durumu ve alarm özeti hw_* tablolarından okunur.", "Hardware server status and alert summary are read from hw_* tables."),
+       ("hw_* tabloları (donanım sağlayıcı senkronu).", "hw_* tables (hardware provider sync)."),
+       ("Yalnız `hw` capability ve donanım yetkisi varken kullanılabilir; sağlayıcıda olmayan alan 'ölçülemedi'.", "Available only with the `hw` capability and hardware access; fields the provider lacks are 'not measurable'.")),
     # ── Operasyon / izleme / rapor ────────────────────────────────────────────
     _m("ops.health_score", CLASS_HESAP, "ops",
        ("Skor = 100 − (host + yönetici kritik/uyarı yayılımı) − varlık eksikliği; A–F aralığına çevrilir.", "Score = 100 − (host + manager critical/warning spread) − missing presence; mapped to A–F."),

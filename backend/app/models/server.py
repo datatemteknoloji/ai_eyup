@@ -56,6 +56,11 @@ class Server(Base):
     vm_mem_active_mb  = Column(Integer,     nullable=True)
     vm_stats_as_of    = Column(DateTime(timezone=True), nullable=True)
 
+    # Donanım kimliği (Faz 0.5) — fiziksel sunucu eşleştirmesi için; BMC IP/seri /servers API'sine KONMAZ
+    hw_serial = Column(String(64), nullable=True, index=True)
+    hw_uuid = Column(String(64), nullable=True, index=True)
+    hw_collected_at = Column(DateTime(timezone=True), nullable=True)
+
     # Node Exporter durum cache (background task 5dk'da bir gunceller)
     node_exporter_installed = Column(Boolean, default=False)
     node_exporter_running = Column(Boolean, default=False)

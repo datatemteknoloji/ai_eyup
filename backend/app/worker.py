@@ -44,6 +44,7 @@ _FLEET_TASKS = {
     "fleet.esx_metric_sync": "run_esx_metric_sync",
     "fleet.virt_insights": "run_virt_insights",
     "fleet.backup_sync": "run_backup_sync",
+    "fleet.hw_sync": "run_hw_sync",
     "fleet.ocp_monitoring_sync": "run_ocp_monitoring_sync",
     "fleet.node_exporter_sync": "run_node_exporter_sync",
     "fleet.windows_exporter_sync": "run_windows_exporter_sync",

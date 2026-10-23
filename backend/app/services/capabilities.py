@@ -4,7 +4,7 @@ UI menü/sekme, findings ``requires_capability``, fleet scheduler ve sohbet tool
 filtresi bu servisten beslenir.
 
 Karar (Dilim B): ``integration_instances`` yalnız *yeni* entegrasyonlar içindir
-(category örn. backup, ileride bmc). Centrify / Automic / hypervisor kartları
+(category: backup, hardware). Centrify / Automic / hypervisor kartları
 bu tabloya taşınmaz.
 """
 from __future__ import annotations
@@ -47,9 +47,23 @@ def get_capabilities(*, force_refresh: bool = False) -> FrozenSet[str]:
 def capabilities_payload() -> Dict[str, Any]:
     caps = sorted(get_capabilities())
     from app.services.backup.demo_gate import BANNER_TR, DEMO_CAPABILITY
+    from app.services.hw.demo_gate import BANNER_TR as HW_BANNER_TR, DEMO_CAPABILITY as HW_DEMO_CAPABILITY
     demo = DEMO_CAPABILITY in caps
+    hw_demo = HW_DEMO_CAPABILITY in caps
     return {"ok": True, "capabilities": caps, "has_backup": "backup" in caps,
-            "demo_active": demo, "demo_banner": BANNER_TR if demo else None}
+            "demo_active": demo, "demo_banner": BANNER_TR if demo else None,
+            "has_hw": "hw" in caps, "hw_demo_active": hw_demo,
+            "hw_demo_banner": HW_BANNER_TR if hw_demo else None}
+
+
+def _demo_gates() -> Dict[str, Any]:
+    """kategori → (is_demo_kind, demo_enabled, demo_capability). Kategori başına bağımsız (karışmaz)."""
+    from app.services.backup import demo_gate as bk
+    from app.services.hw import demo_gate as hw
+    return {
+        "backup": (bk.is_demo_kind, bk.demo_enabled, bk.DEMO_CAPABILITY),
+        "hardware": (hw.is_demo_kind, hw.demo_enabled, hw.DEMO_CAPABILITY),
+    }
 
 
 def _collect() -> Set[str]:
@@ -57,7 +71,7 @@ def _collect() -> Set[str]:
     try:
         from app.core.database import SessionLocal
         from app.models.integration_instance import IntegrationInstance
-        from app.services.backup.registry import capabilities_for_instance
+        from app.services.integrations.registry import capabilities_for_instance
 
         db = SessionLocal()
         try:
@@ -66,21 +80,29 @@ def _collect() -> Set[str]:
                 .filter(IntegrationInstance.enabled.is_(True))
                 .all()
             )
-            from app.services.backup.demo_gate import (
-                DEMO_CAPABILITY, demo_enabled, is_demo_kind,
-            )
-            has_real = any(not is_demo_kind(r.kind) for r in rows)
+            gates = _demo_gates()
+
+            def _gate(cat: str):
+                return gates.get(cat) or (lambda k: str(k or "").endswith("_demo"), lambda: False, f"{cat}_demo")
+
+            # DÜZELTME: "gerçek sağlayıcı var mı" KATEGORİ bazlıdır; Veeam gerçek instance'ı HW demosunu
+            # (ve tersi) bastırmaz.
+            has_real: Dict[str, bool] = {}
+            for r in rows:
+                is_demo = _gate(r.category)[0]
+                if not is_demo(r.kind):
+                    has_real[r.category] = True
             for row in rows:
-                if is_demo_kind(row.kind):
-                    # F.0: DEMO yalnız açık bayrakla ve gerçek sağlayıcı yokken görünür; "backup"
-                    # yeteneğini AÇMAZ (araç/bulgu/koruma kuralları demo'dan etkilenmez).
-                    if demo_enabled() and not has_real and (
+                is_demo, demo_on, demo_cap = _gate(row.category)
+                if is_demo(row.kind):
+                    # F.0: DEMO yalnız açık bayrakla ve (aynı kategoride) gerçek sağlayıcı yokken görünür;
+                    # gerçek yeteneği ("backup"/"hw") AÇMAZ.
+                    if demo_on() and not has_real.get(row.category) and (
                             (row.last_status or "") == "ok" or row.last_sync_at is not None):
-                        out.add(DEMO_CAPABILITY)
+                        out.add(demo_cap)
                     continue
                 # Hiç başarılı senkron yoksa (yanlış parola vb.) capability açılmaz;
-                # daha önce başarılı olmuş instance geçici hatada kaybolmaz — veri bayat
-                # işaretlenir (bk.provider.* bulguları görünür kalır).
+                # daha önce başarılı olmuş instance geçici hatada kaybolmaz — veri bayat işaretlenir.
                 if (row.last_status or "") != "ok" and row.last_sync_at is None:
                     continue
                 try:
@@ -90,6 +112,6 @@ def _collect() -> Set[str]:
         finally:
             db.close()
     except Exception as e:  # noqa: BLE001
-        # Tablo henüz yok / ilk boot — boş küme (Veeam'siz davranış).
+        # Tablo henüz yok / ilk boot — boş küme (entegrasyonsuz davranış).
         logger.debug("capabilities collect skipped: %s", e)
     return out

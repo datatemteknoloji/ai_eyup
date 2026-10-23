@@ -132,6 +132,9 @@ RULES: List[Rule] = [
     _m("/ucmdb", "integrations"),
     _m("/integrations", "integrations"),
 
+    # ── Donanım (opsiyonel; Dell OME / HPE OneView verisi — BMC IP/seri bu modülle korunur) ──
+    _m("/hw", "hardware"),
+
     # ── Ayrı atama gerektiren modüller ──
     _m("/knowledge", "knowledge"),
     _m("/applications", "applications"),

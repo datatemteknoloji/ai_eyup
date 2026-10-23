@@ -48,6 +48,9 @@ from app.models.backup import (
     BkJob, BkSession, BkRepository, BkProtectedObject, BkRestorePoint,
     BkRpoPolicy, BkRestoreTest, BkProxy,
 )
+from app.models.hw import (
+    HwManager, HwServer, HwEnclosure, HwFirmware, HwAlert, HwLogEntry, HwWarranty, HwHostLink,
+)
 
 __all__ = [
     "Server", "Hypervisor", "ChatSession", "ChatMessage", "ChatTurn", "ChatQACache",
@@ -80,4 +83,5 @@ __all__ = [
     "IntegrationInstance", "CapacityPolicy",
     "BkJob", "BkSession", "BkRepository", "BkProtectedObject", "BkRestorePoint",
     "BkRpoPolicy", "BkRestoreTest", "BkProxy",
+    "HwManager", "HwServer", "HwEnclosure", "HwFirmware", "HwAlert", "HwLogEntry", "HwWarranty", "HwHostLink",
 ]

@@ -4584,11 +4584,20 @@ class VCenterClient:
                     "servers":     _as_list(dns_struct.get("address")),
                 }
 
+                try:
+                    from app.services.hw.identity import vsphere_identity
+                    _hwid = vsphere_identity(hw_struct if isinstance(hw_struct, dict) else None)
+                except Exception:  # noqa: BLE001
+                    _hwid = {}
                 out[host_ref] = {
                     "host_name":  host_name,
                     "vendor":     hw_struct.get("vendor"),
                     "model":      hw_struct.get("model"),
                     "uuid":       hw_struct.get("uuid"),
+                    # Faz 0.5 — donanım kimliği (config.ipmi/BMC IP bilerek OKUNMAZ: parola alanı taşır)
+                    "serial_number":    _hwid.get("serial"),
+                    "enclosure_serial": _hwid.get("enclosure_serial"),
+                    "asset_tag":        _hwid.get("asset_tag"),
                     "product_version": product_struct.get("version"),
                     "product_full_name": product_struct.get("fullName") or product_struct.get("name"),
                     "pnics":      pnics,

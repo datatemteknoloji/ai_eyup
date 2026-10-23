@@ -125,6 +125,20 @@ try:
 except Exception as e:
     logger.error(f"Could not load backup_integrations router: {e}", exc_info=True)
 
+# Opsiyonel donanım sağlayıcı yapılandırması (Dell OME / HPE OneView; modül: integrations, yalnız admin)
+try:
+    from app.api import hw_integrations
+    api_router.include_router(hw_integrations.router, prefix="/integrations/hardware", tags=["hardware"])
+except Exception as e:
+    logger.error(f"Could not load hw_integrations router: {e}", exc_info=True)
+
+# Donanım verisi (modül: hardware; entegrasyon yoksa boş döner)
+try:
+    from app.api import hw as hw_api
+    api_router.include_router(hw_api.router, prefix="/hw", tags=["hardware"])
+except Exception as e:
+    logger.error(f"Could not load hw router: {e}", exc_info=True)
+
 # Yedek & DR görünümü (yalnız backup capability varken anlamlı)
 try:
     from app.api import backup_insights

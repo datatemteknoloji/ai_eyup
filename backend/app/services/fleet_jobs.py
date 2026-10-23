@@ -52,6 +52,7 @@ def run_auto_onboarding() -> Dict[str, Any]:
                 collect_os_release_info,
                 collect_windows_update_status,
                 collect_linux_security_audit,
+                collect_hw_identity,
             )
             from app.services.app_discovery import discover_applications_all_servers
             from app.services import qa_cache
@@ -63,6 +64,7 @@ def run_auto_onboarding() -> Dict[str, Any]:
             out["we"] = install_exporter_all(None, db)
             out["win_upd"] = collect_windows_update_status(db)
             out["sec"] = collect_linux_security_audit(db)
+            out["hw_identity"] = collect_hw_identity(db)   # yalnız etkin donanım entegrasyonu varken
             out["apps"] = discover_applications_all_servers(db)
             qa_cache.invalidate_all()
             return out
@@ -193,6 +195,27 @@ def run_backup_sync(force: bool = False) -> Dict[str, Any]:
             return {"runs": runs, "findings": res}
     except Exception as exc:
         logger.exception("backup_sync hata: %s", exc)
+        return {"error": str(exc)}
+    finally:
+        db.close()
+
+
+def run_hw_sync() -> Dict[str, Any]:
+    """Opsiyonel donanım sağlayıcı senkronu (Dell OME / HPE OneView) — yalnız etkin entegrasyon varken planlanır.
+
+    Alt aralıklar (alarm/envanter/garanti) `hw.sync.parts_due` ile entegrasyon bazında ayrılır; kimlik reddedilen
+    entegrasyonlar `auth_guard` ile atlanır (hesap kilitlenmesin)."""
+    from app.services.fleet_mutex import fleet_lock
+
+    db = _db()
+    try:
+        with fleet_lock("hw_sync", ttl_sec=3600) as ok:
+            if not ok:
+                return {"skipped": True}
+            from app.services.hw.sync import run_all_due
+            return {"runs": run_all_due(db)}
+    except Exception as exc:
+        logger.exception("hw_sync hata: %s", exc)
         return {"error": str(exc)}
     finally:
         db.close()

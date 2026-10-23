@@ -1,35 +1,13 @@
 """BackupProvider arayüzü — sağlayıcıdan bağımsız.
 
-Veeam adaptörü Dilim D'de eklenir. Bu modülde HTTP çağrısı yoktur.
+Ortak tipler ``services.integrations.types`` içindedir (donanım sağlayıcıları da kullanır); burada
+geriye dönük uyumluluk için yeniden dışa aktarılır. Bu modülde HTTP çağrısı yoktur.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, Optional, Protocol, Set, runtime_checkable
+from typing import Protocol, Set, runtime_checkable
 
-
-@dataclass
-class ConnTestResult:
-    ok: bool
-    api_version: Optional[str] = None
-    message: str = ""
-    details: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class ProviderHealth:
-    ok: bool
-    stale: bool = False
-    data_age_sec: Optional[float] = None
-    message: str = ""
-
-
-@dataclass
-class SyncCursor:
-    """Artımlı senkron imleci (sağlayıcıya özel JSON string taşır)."""
-    token: str = ""
-    updated_at: Optional[datetime] = None
+from app.services.integrations.types import ConnTestResult, ProviderHealth, SyncCursor  # noqa: F401
 
 
 @runtime_checkable

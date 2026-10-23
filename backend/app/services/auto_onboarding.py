@@ -421,3 +421,98 @@ def collect_linux_security_audit(db: Session) -> Dict:
         logger.info("Auto-onboarding: %s Linux sunucunun güvenlik denetimi güncellendi", updated)
 
     return {"checked": len(servers), "updated": updated}
+
+
+_HW_IDENTITY_RECHECK = timedelta(days=7)
+
+
+def collect_hw_identity(db: Session) -> Dict:
+    """Faz 0.5: FİZİKSEL sunucuların seri/UUID kimliğini (donanım sağlayıcı eşleştirmesi için) toplar.
+
+    OPSİYONEL: yalnız etkin bir donanım entegrasyonu varken çalışır (entegrasyon yoksa hiçbir istek atılmaz).
+    Linux: sysfs/`sudo -n dmidecode` (root yoksa boş kalır → eşleştirme hostname'e düşer, `low`).
+    Windows: Win32_BIOS + Win32_ComputerSystemProduct (WinRM). VM'ler atlanır (sanal seri anlamsız).
+    """
+    from app.services.hw.identity import (
+        LINUX_IDENTITY_CMD, WINDOWS_IDENTITY_PS, parse_linux_identity, parse_windows_identity,
+    )
+    from app.services.hw.registry_util import has_enabled_hw_instance
+    if not has_enabled_hw_instance():
+        return {"skipped": "no_hw_integration"}
+
+    def _due(srv: Server) -> bool:
+        last = srv.hw_collected_at
+        if not last:
+            return True
+        now = datetime.now(timezone.utc) if last.tzinfo else datetime.utcnow()
+        return (now - last) >= _HW_IDENTITY_RECHECK
+
+    candidates = (
+        db.query(Server)
+        .filter(Server.ai_ready == True)  # noqa: E712
+        .all()
+    )
+    servers = [s for s in candidates if (s.server_type or "").upper() == "PHYSICAL" and _due(s)]
+    if not servers:
+        return {"checked": 0, "updated": 0}
+
+    gcred: Optional[Dict] = None
+    try:
+        from app.api.windows import _get_global_winrm
+        gcred = _get_global_winrm(db)
+    except Exception:
+        gcred = None
+
+    def _one(srv: Server) -> Optional[Dict]:
+        # Thread içinde çalışır — SQLAlchemy session'a dokunulmaz.
+        if is_windows_server(srv):
+            from app.services.windows.winrm_client import WinRMClient
+            client = WinRMClient.from_server(srv)
+            if not client and gcred and (srv.ip_address or srv.hostname):
+                client = WinRMClient(host=srv.ip_address or srv.hostname, username=gcred["username"],
+                                     password=gcred["password"], port=gcred.get("port", 5985),
+                                     use_https=gcred.get("use_https", False))
+            if not client:
+                return None
+            try:
+                r = client.run_ps(WINDOWS_IDENTITY_PS)
+                return parse_windows_identity(r.get("stdout", "")) if r.get("success") else None
+            except Exception as e:  # noqa: BLE001
+                logger.debug("HW kimliği (Windows) %s: %s", srv.name, e)
+                return None
+        cfg = srv.connection_config or {}
+        if not cfg.get("username") or not srv.ip_address:
+            return None
+        ssh = SSHManager(host=srv.ip_address, username=cfg.get("username"), password=cfg.get("password"),
+                         private_key=cfg.get("private_key"), port=cfg.get("port", 22))
+        try:
+            if not ssh.connect():
+                return None
+            _, out, _ = ssh.execute_command(LINUX_IDENTITY_CMD)
+            return parse_linux_identity(out or "")
+        except Exception as e:  # noqa: BLE001
+            logger.debug("HW kimliği (Linux) %s: %s", srv.name, e)
+            return None
+        finally:
+            ssh.close()
+
+    results: Dict[int, Optional[Dict]] = {}
+    with ThreadPoolExecutor(max_workers=bulk_ssh_workers(), thread_name_prefix="auto-hwid") as pool:
+        futures = {pool.submit(_one, s): s for s in servers}
+        for fut in as_completed(futures):
+            results[futures[fut].id] = fut.result()
+
+    updated = 0
+    now = datetime.utcnow()
+    for srv in servers:
+        info = results.get(srv.id)
+        srv.hw_collected_at = now          # başarısız denemeyi de işaretle (sürekli tekrar denemeyi önler)
+        if info:
+            if info.get("serial"):
+                srv.hw_serial = info["serial"]
+            if info.get("uuid"):
+                srv.hw_uuid = info["uuid"]
+            if info.get("serial") or info.get("uuid"):
+                updated += 1
+    db.commit()
+    return {"checked": len(servers), "updated": updated}

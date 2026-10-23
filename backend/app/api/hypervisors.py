@@ -262,6 +262,7 @@ def _latest_hosts_for_hypervisor(db: Session, hypervisor_id: int) -> list[dict]:
         if not inv:
             return None
         return {
+            "id": inv.id,
             "vendor": inv.vendor,
             "model": inv.model,
             "uuid": inv.uuid,
@@ -920,6 +921,7 @@ async def get_host_metrics(
             if not inv:
                 return None
             return {
+                "id":             inv.id,
                 "vendor":         inv.vendor,
                 "model":          inv.model,
                 "uuid":           inv.uuid,

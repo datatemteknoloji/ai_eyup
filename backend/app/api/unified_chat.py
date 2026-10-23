@@ -128,6 +128,16 @@ def _chat_allowed_modules(user, db: Session):
     return {k for k, mid in _CHAT_MODULE_MAP.items() if user_has_module(user, mid, db)}
 
 
+def _hw_user_allowed(user, db: Session) -> bool:
+    """`hardware` modülü (varsayılan yalnız Admin). Sohbet araçları bu bayrak olmadan donanım verisi dönmez."""
+    if user is None:
+        return False
+    from app.core.auth import user_has_module
+    if user.role in ("admin", "superadmin"):
+        return True
+    return bool(user_has_module(user, "hardware", db))
+
+
 def _route_denied_modules(route, allowed) -> list:
     """Rotanın istediği ama kullanıcıda olmayan platformlar."""
     if allowed is None:
@@ -1237,10 +1247,22 @@ async def unified_chat_stream(
                         except Exception:
                             pass
 
+                        # Donanım (OME/OneView): domain "hw" yalnız donanım niyeti varsa eklenir; veri yalnız
+                        # `hardware` modülü olan kullanıcıya döner (araç `ctx["hw_allowed"]` kontrol eder).
+                        _hw_ctx = None
+                        try:
+                            from app.services.agent.tools_hw import hw_intent
+                            _hw_ctx = {"hw_allowed": _hw_user_allowed(_auth_user, db)}
+                            if tool_domains is not None and hw_intent(message):
+                                tool_domains = frozenset(set(tool_domains) | {"hw"})
+                        except Exception:
+                            _hw_ctx = None
+
                         gen = run_read_only_tool_loop(
                             db, model, agentic_user_message, context_str, tool_server_summary,
                             max_steps=max_tool_steps,
                             domains=tool_domains,
+                            extra_ctx=_hw_ctx,
                             platform="unified",
                             stop_after_tools=_stop_after if _planning else None,
                             planning_mode=_planning,

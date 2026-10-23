@@ -25,7 +25,7 @@ def test_check_ids_are_namespaced_and_consistent():
         assert d.id == cid
         assert d.category in cats, cid
         assert d.severity in {"critical", "high", "medium", "low", "info"}, cid
-        assert d.platforms and set(d.platforms) <= {"vmware", "olvm", "ocp_virt", "ocp", "backup"}, cid
+        assert d.platforms and set(d.platforms) <= {"vmware", "olvm", "ocp_virt", "ocp", "backup", "hw"}, cid
         assert d.title_tr and d.title_en, cid
         assert category_of(cid) == d.category
 

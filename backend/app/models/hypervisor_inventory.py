@@ -28,6 +28,10 @@ class HypervisorHostInventory(Base):
     model     = Column(String(128))    # örn. PowerEdge R740
     uuid      = Column(String(64))
     cpu_model = Column(String(128))
+    # Donanım kimliği (Faz 0.5): hardware.systemInfo.otherIdentifyingInfo (ServiceTag / EnclosureSerialNumberTag / AssetTag)
+    serial_number = Column(String(64))
+    enclosure_serial = Column(String(64))
+    asset_tag = Column(String(64))
     # ESXi ürün sürümü (config.product) — asistan "version" alanı
     product_version = Column(String(64))
     product_full_name = Column(String(255))

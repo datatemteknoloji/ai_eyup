@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-PLATFORMS = ("vmware", "olvm", "ocp_virt", "ocp", "backup")
+PLATFORMS = ("vmware", "olvm", "ocp_virt", "ocp", "backup", "hw")
 CATEGORIES = (
     "capacity", "reclaim", "health", "hardware", "drift",
     "vuln", "known_issue", "upgrade", "compliance", "backup",
@@ -95,6 +95,8 @@ _K = ("ocp_virt",)
 _OCP = ("ocp",)
 _BK = ("backup",)
 _REQ_BK = ("backup",)
+_HW = ("hw",)
+_REQ_HW = ("hw",)
 
 _DEFS: List[CheckDef] = [
     # ── Kapasite (tüm sanallaştırma platformları) ────────────────────────────
@@ -455,6 +457,48 @@ _DEFS: List[CheckDef] = [
              "Yapılandırılan REST revizyonu Veeam dokümanında 'deprecated'. VBR yükseltildiğinde 1.3-rev1 veya üstünü seçin.",
              "The configured REST revision is deprecated in Veeam docs. Move to 1.3-rev1+ after upgrading VBR.",
              requires_capability=_REQ_BK),
+    # ── Fiziksel donanım (Dell OME / HPE OneView; yalnız `hw` capability varken üretilir) ─────────────
+    CheckDef("hw.server.health_critical", "hardware", _HW, "server", "high",
+             "Fiziksel sunucu sağlığı Kritik", "Physical server health is Critical",
+             "Donanım sağlayıcısı (OME/OneView) sunucuyu Kritik bildiriyor. Sağlayıcı konsolunda alarm ve bileşen "
+             "durumunu inceleyin; BMC adresi ve ayrıntılar Donanım ekranında (yetkiliyse) görünür.",
+             "The hardware provider reports the server as Critical. Review alerts and components in the provider console.",
+             refs=(ISO_REDUNDANCY,), requires_capability=_REQ_HW),
+    CheckDef("hw.alert.recurring", "hardware", _HW, "server", "medium",
+             "Aynı donanım alarmı tekrar ediyor", "The same hardware alert keeps recurring",
+             "Aynı sunucuda aynı alarm tipi son 24 saatte 3 veya daha fazla kez geldi. Kök nedeni (bileşen, kablo, firmware) "
+             "araştırın; tekrarlayan alarm genellikle yaklaşan arızanın işaretidir.",
+             "The same alert type fired 3+ times on one server in 24h. Investigate the root cause (component, cable, firmware).",
+             refs=(ISO_REDUNDANCY,), requires_capability=_REQ_HW),
+    CheckDef("hw.warranty.expired_prod", "hardware", _HW, "server", "medium",
+             "Üretim sunucusunun garantisi bitmiş", "Production server warranty has expired",
+             "Donanım sağlayıcısının garanti kaydına göre en geç bitiş tarihi geçmiş ve sunucu ainew'de 'production' katmanında. "
+             "Garantiyi yenileyin veya riski kabul edin.",
+             "The latest warranty end date has passed for a server in the 'production' tier. Renew or accept the risk.",
+             requires_capability=_REQ_HW),
+    CheckDef("hw.server.unreachable", "hardware", _HW, "server", "medium",
+             "Sunucu donanım yönetiminde bağlantısız", "Server is disconnected in hardware management",
+             "Sağlayıcı sunucunun yönetim bağlantısının (iDRAC/iLO) kesik olduğunu bildiriyor. Yönetim ağı, BMC erişimi ve kimlik "
+             "bilgilerini kontrol edin. Yalnız bağlantı durumu bildiren sağlayıcılarda (OME) üretilir.",
+             "The provider reports the management connection (iDRAC/iLO) as disconnected. Only for providers that report it (OME).",
+             requires_capability=_REQ_HW),
+    CheckDef("hw.server.unmatched", "hardware", _HW, "provider", "info",
+             "Donanım kayıtları ainew sunucularıyla eşleşmedi", "Hardware records not matched to ainew hosts",
+             "Bu donanım kayıtlarının seri/UUID/hostname karşılığı ainew'de bulunamadı. Fiziksel sunucu kimliği toplanmamış "
+             "(root/dmidecode yetkisi) veya sunucu ainew'e eklenmemiş olabilir. Bilgi amaçlıdır.",
+             "No ainew host with the same serial/UUID/hostname was found. Informational.",
+             requires_capability=_REQ_HW),
+    CheckDef("hw.provider.sync_failed", "hardware", _HW, "provider", "high",
+             "Donanım sağlayıcısı senkronu başarısız", "Hardware provider sync failed",
+             "Son senkron hata verdi; donanım bulguları son başarılı veriye dayanır (bayat). Kimlik doğrulama hatasında "
+             "hesabın kilitlenmemesi için senkron otomatik durur — bilgileri düzeltip 'Bağlantıyı test et' ile sürdürün.",
+             "Last sync failed; findings rely on the last successful data (stale). On auth errors sync stops automatically.",
+             requires_capability=_REQ_HW),
+    CheckDef("hw.provider.stale", "hardware", _HW, "provider", "medium",
+             "Donanım verisi bayat", "Hardware data is stale",
+             "Son başarılı senkron, alarm aralığının 2 katından eski. Donanım sonuçları güvenilir değildir.",
+             "Last successful sync is older than 2x the alarm interval; hardware results are unreliable.",
+             requires_capability=_REQ_HW),
 ]
 
 CHECKS: Dict[str, CheckDef] = {d.id: d for d in _DEFS}
