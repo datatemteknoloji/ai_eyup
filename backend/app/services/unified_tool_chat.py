@@ -615,6 +615,42 @@ def run_read_only_tool_loop(
             # Türkçe akıcı bir cevaba dönüştürsün (tekil VM için tablo zaten net;
             # LLM'in tekrar araç çağırmasına gerek yok, mesaj bunu zaten belirtiyor).
 
+    # Donanım (Dell OME / HPE OneView) zorunlu ön-çağrı (Adım 12): küçük/yerel modeller aracı çağırmadan «veri yok» dedi
+    # (canlı denemede 5/10). Donanım rotasında deterministik plan (`hw_prefetch_plan`) araçları model çağırmadan koşar;
+    # sonuç model için tool mesajı olarak eklenir (iz/rozet/kanıt normal araç gibi). hw_allowed yoksa araç yetki mesajı döner.
+    if domains and "hw" in domains:
+        try:
+            from app.services.hw.intent import hw_intent, hw_prefetch_plan
+            _hw_plan = hw_prefetch_plan(user_message or "") if hw_intent(user_message or "") else []
+        except Exception as e:
+            logger.debug("hw prefetch planı atlandı: %s", e)
+            _hw_plan = []
+        for _hw_name, _hw_args in _hw_plan:
+            _hw_tool = tool_mod.get_tool(_hw_name)
+            if not _hw_tool or not (_hw_tool.domains & domains):
+                continue
+            yield {"type": "tool_call", "tool": _hw_name, "args": _hw_args,
+                   "label": _hw_tool.direct_label or _hw_name}
+            _hw_result = _hw_tool.execute(db, _hw_args, exec_ctx)
+            used_tools = True
+            if isinstance(_hw_result, dict) and _hw_result.get("ok"):
+                successful_tool_runs += 1
+            if _hw_name not in tools_used:
+                tools_used.append(_hw_name)
+            _hw_text = _tool_result_to_text(_hw_result)
+            tool_texts.append(f"[{_hw_tool.direct_label or _hw_name}]\n{_hw_text[:_MAX_TOOL_TEXT_CHARS]}")
+            structured_results.append({"tool": _hw_name, "args": _hw_args, "result": _hw_result})
+            messages.append({
+                "role": "assistant", "content": "",
+                "tool_calls": [{"id": f"call_prefetch_{_hw_name}", "type": "function",
+                                "function": {"name": _hw_name, "arguments": json.dumps(_hw_args, ensure_ascii=False)}}],
+            })
+            messages.append({"role": "tool", "tool_call_id": f"call_prefetch_{_hw_name}", "name": _hw_name,
+                             "content": _hw_text[:12000]})
+            yield {"type": "tool_result", "tool": _hw_name}
+            logger.info("[UnifiedToolChat] hw prefetch tool=%s args=%s ok=%s", _hw_name, _hw_args,
+                        (_hw_result or {}).get("ok") if isinstance(_hw_result, dict) else None)
+
     # Zorunlu prefetch: model çağırmadan SoT çek → deterministik tablo
     if inv_kind and prefetch_spec:
         try:

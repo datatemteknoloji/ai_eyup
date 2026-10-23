@@ -120,8 +120,11 @@ def load_hw_items(db: Session) -> List[HwItem]:
     from app.models.hw import HwServer
     from app.services.hw.demo_gate import demo_enabled
     from app.models.integration_instance import IntegrationInstance
-    # DEMO kayıtları gerçek eşleştirmeye KARIŞMAZ (gerçek sağlayıcı varsa zaten demo etkisiz)
-    demo_ids = [i for (i,) in db.query(IntegrationInstance.id).filter(IntegrationInstance.kind == "hw_demo").all()]
+    # DEMO kayıtları gerçek eşleştirmeye KARIŞMAZ: yalnız demo modu etkinken (gerçek sağlayıcı yok + bayrak açık)
+    # demo hedefleriyle (`zz-hwdemo-*`, `DEMO…` seri) eşleşir; aksi halde hariç tutulur.
+    from app.services.hw.demo_gate import hw_mode
+    demo_ids = [] if hw_mode(db) == "demo" else \
+        [i for (i,) in db.query(IntegrationInstance.id).filter(IntegrationInstance.kind == "hw_demo").all()]
     q = db.query(HwServer)
     if demo_ids:
         q = q.filter(~HwServer.instance_id.in_(demo_ids))

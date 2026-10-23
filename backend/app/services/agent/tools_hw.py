@@ -9,6 +9,7 @@ form faktörü, kasa/yuva, garanti özeti ve alarm sayıları döner.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
@@ -26,15 +27,9 @@ LLM_EGRESS_FIELDS = ("name", "vendor", "model", "form_factor", "enclosure", "hea
                      "warranty_end", "warranty_expired", "active_alerts")
 
 
-_HW_WORDS = ("idrac", "ilo", "oneview", "one view", "openmanage", "ome ", "donanım", "donanim", "blade", "enclosure",
-             "kasa", "service tag", "servis tag", "seri numar", "garanti", "warranty", "bmc", "firmware", "fiziksel sunucu",
-             "hardware", "ovgd", "appliance")
-
-
-def hw_intent(message: str) -> bool:
-    """Mesaj donanım yönetimi niyeti taşıyor mu (araç kümesine `hw` domain'i eklemek için; basit anahtar kelime)."""
-    m = (message or "").lower() + " "
-    return any(w in m for w in _HW_WORDS)
+from app.services.hw.intent import (  # noqa: E402,F401
+    hw_active, hw_intent, hw_vendor_signal, other_platform_signal,
+)
 
 
 def _mode(db: Session) -> str:
@@ -91,6 +86,7 @@ def _status_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> D
 
         ids = _ids(db, mode)
         q = db.query(HwServer).filter(HwServer.instance_id.in_(ids or [-1]))
+        total_all = q.count()                       # süzgeçten bağımsız toplam (cevapta "kaç sunucu var" için)
         name = (args.get("name") or "").strip()
         if name:
             like = f"%{name}%"
@@ -98,12 +94,33 @@ def _status_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> D
         health = (args.get("health") or "").strip().lower()
         if health in ("ok", "warning", "critical", "unknown"):
             q = q.filter(HwServer.health == health)
+        vendor = (args.get("vendor") or "").strip().lower()
+        if vendor in ("dell", "hpe"):
+            q = q.filter(HwServer.vendor == vendor)
+        encl = (args.get("enclosure") or "").strip()
+        if encl:
+            q = q.filter(HwServer.enclosure_name.ilike(f"%{encl}%"))
+        wf = (args.get("warranty") or "").strip().lower()
+        if wf in ("expired", "expiring_90"):
+            now0 = datetime.now(timezone.utc)
+            latest: Dict[tuple, Any] = {}
+            for w in db.query(HwWarranty).filter(HwWarranty.instance_id.in_(ids or [-1])).all():
+                e = _aware(w.end_date)
+                k = (w.instance_id, w.server_ref)
+                if e is not None and (k not in latest or e > latest[k]):
+                    latest[k] = e
+            lim = now0 + timedelta(days=90)
+            hit = {k[1] for k, e in latest.items() if (e < now0 if wf == "expired" else now0 <= e <= lim)}
+            q = q.filter(HwServer.provider_ref.in_(list(hit) or ["-"]))
         try:
             limit = max(1, min(int(args.get("limit") or 30), 100))
         except (TypeError, ValueError):
             limit = 30
         total = q.count()
-        rows = q.order_by(HwServer.name).limit(limit).all()
+        from sqlalchemy import case
+        sev = case((HwServer.health == "critical", 0), (HwServer.health == "warning", 1),
+                   (HwServer.health == "unknown", 2), else_=3)
+        rows = q.order_by(sev, HwServer.name).limit(limit).all()
         hids = [r.id for r in rows]
         links = {l.hw_server_id: l for l in db.query(HwHostLink).filter(HwHostLink.hw_server_id.in_(hids or [-1])).all()}
         snames = {s.id: s.name for s in db.query(Server).filter(
@@ -139,11 +156,22 @@ def _status_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> D
                 "warranty_expired": (e < now) if e else None,
                 "active_alerts": act.get(r.provider_ref, 0),
             })
+        by_health_f: Dict[str, int] = {}
+        for h, n in q.order_by(None).with_entities(HwServer.health, func.count(HwServer.id)).group_by(HwServer.health).all():
+            by_health_f[h] = n
         by_health: Dict[str, int] = {}
         for h, n in db.query(HwServer.health, func.count(HwServer.id)).filter(
                 HwServer.instance_id.in_(ids or [-1])).group_by(HwServer.health).all():
             by_health[h] = n
-        return _label({"ok": True, "total": total, "returned": len(out_rows), "by_health_all": by_health,
+        _tr = {"critical": "kritik", "warning": "uyarı", "unknown": "bilinmeyen", "ok": "sağlıklı"}
+        _filt = {k: v for k, v in (args or {}).items() if k != "limit" and v}
+        _ozet = (f"{total} sunucu eşleşti" + (f" (süzgeç: {', '.join(f'{k}={v}' for k, v in _filt.items())})" if _filt else "")
+                 + "; dağılım: " + (", ".join(f"{_tr.get(h, h)} {n}" for h, n in sorted(by_health_f.items(), key=lambda x: -x[1])) or "yok")
+                 + f". Tüm kayıt: {total_all}.")
+        return _label({"ok": True, "ozet": _ozet, "total": total, "total_all_servers": total_all, "returned": len(out_rows),
+                       "truncated": total > len(out_rows), "by_health": by_health_f, "by_health_all": by_health,
+                       "as_of": datetime.now(timezone.utc).date().isoformat(),
+                       "filters_applied": {k: v for k, v in (args or {}).items() if k != "limit" and v},
                        "servers": out_rows,
                        "note": "Sağlık değeri sağlayıcının bildirdiği durumdur; ölçülemeyen alanlar boştur (tahmin etme)."},
                       mode)
@@ -193,12 +221,18 @@ HW_TOOLS: Dict[str, Tool] = {
         description=(
             "FİZİKSEL SUNUCU DONANIM DURUMU (READ-ONLY, DB, deterministik; Dell OME / HPE OneView). Model, form faktörü, "
             "kasa/yuva, sağlık, güç, garanti bitişi, aktif alarm sayısı ve eşleşen sunucu adı. 'donanım sağlığı', "
-            "'hangi blade kritik', 'garantisi biten sunucular', 'iDRAC/iLO uyarısı olan' sorularında kullan. "
+            "'hangi blade kritik', 'garantisi biten sunucular' (warranty=expired), 'iDRAC/iLO uyarısı olan' sorularında kullan. "
+            "Sonuç sağlık önceliğine göre (kritik→uyarı→ok) sıralıdır; 'ozet' hazır sayı cümlesidir (sayıyı oradan al, satır sayma); 'total' ve 'by_health' SÜZGEÇLİDİR (sorulan kapsamın sayısı budur), 'total_all_servers' ve 'by_health_all' süzgeçsiz tüm kayıtlardır; "
+            "'truncated' true ise listeyi tam sayma, toplamı 'total'dan oku. 'as_of' bugünün tarihidir (garanti karşılaştırması bu tarihe göre; kendi tahmini tarihini kullanma). "
             "BMC IP / seri numarası verilmez. Sağlayıcı yoksa araç görünmez — donanım durumunu tahmin etme."
         ),
         parameters={"type": "object", "properties": {
             "name": {"type": "string", "description": "Sunucu adı (içerir)"},
             "health": {"type": "string", "enum": ["ok", "warning", "critical", "unknown"]},
+            "vendor": {"type": "string", "enum": ["dell", "hpe"], "description": "Üretici süzgeci"},
+            "enclosure": {"type": "string", "description": "Kasa adı (içerir), ör. DEMO-Encl1"},
+            "warranty": {"type": "string", "enum": ["expired", "expiring_90"],
+                         "description": "expired = garantisi bitmiş; expiring_90 = 90 gün içinde bitecek"},
             "limit": {"type": "integer"},
         }, "required": []},
         risk_level=RiskLevel.READ_ONLY, build_command=lambda a: "",

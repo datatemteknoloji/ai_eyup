@@ -97,7 +97,7 @@ def _from_module_plan(message: str, plan) -> UnifiedRoute:
     )
 
 
-def route_unified(
+def _route_unified_core(
     message: str,
     *,
     is_followup: bool = False,
@@ -200,3 +200,54 @@ def route_unified(
         plan.reason, plan.need_prometheus,
     )
     return route
+
+
+_HW_PERSONA = (
+    "\n\nYÖNETİCİ → DONANIM (Dell OME / HPE OneView): yalnız `hw_server_status` / `hw_alerts_summary` araçlarıyla cevapla; "
+    "sayıları (total, total_all_servers, by_health_all, active_alerts) aynen aktar, tahmin etme. Garanti sorusunda "
+    "`warranty` süzgecini kullan; 'truncated' true ise listeyi tam sayıp 'N tane' deme, 'total' değerini söyle. "
+    "İlgili araç sonucu bu turda zaten verildi (araç mesajı); önce ona bak. Sonuç listesi boşsa ('total': 0) «bu adla/süzgeçle "
+    "donanım kaydı yok» de — «sorgulanmadı» DEME. BMC/iDRAC/iLO IP adresi, firmware sürümü, seri/service tag ve kimlik bilgisi "
+    "sohbette paylaşılmaz ve araçta yoktur: istenirse «bu bilgi sohbette paylaşılmaz; yetkili kullanıcılar Donanım sayfasında "
+    "görür» de. Alan ve araç adlarını (warranty_expired, by_health, hw_server_status vb.) yazma; Türkçe anlat. Sayıyı SÜZGEÇLİ alandan (`total`/`by_health`) al, tüm-kayıt alanlarını (`*_all*`) yalnız genel toplam sorulursa kullan. "
+    "Liste verirken TOPLAM sayıyı (total / total_all_servers) açıkça yaz (ör. «6 sunucu kritik»); liste kısaltıldıysa belirt. "
+    "Araç `demo:true` dönerse cevapta açıkça 'DEMO veri' yaz. Araç hata dönerse donanım verisi uydurma.\n"
+)
+
+
+def route_unified(
+    message: str,
+    *,
+    is_followup: bool = False,
+    has_episode: bool = False,
+    clarification_pending: bool = False,
+    skip_ctx: bool = False,
+    hw_allowed: bool = True,
+) -> UnifiedRoute:
+    """Çekirdek rota + (yetenek açıkken) donanım sinyali. `hw_allowed=False` (kullanıcıda `hardware` modülü yok) →
+    çekirdek rota AYNEN (ör. «fiziksel sunucu» yazan Linux kullanıcısı Linux envanterine gider).
+
+    Donanım sinyali (`tools_hw.hw_intent`) yalnız `hw`/`hw_demo` yeteneği açıkken rotayı değiştirir; yetenek yoksa çekirdek
+    rota AYNEN döner (donanım entegrasyonsuz ortam bugünkü gibi davranır). Başka platform sinyali yoksa tool alanı yalnız
+    `hw`; varsa mevcut alanlara `hw` eklenir. Planlama rotalarına dokunulmaz."""
+    r = _route_unified_core(message, is_followup=is_followup, has_episode=has_episode,
+                            clarification_pending=clarification_pending, skip_ctx=skip_ctx)
+    try:
+        if r.mode in ("planning_clarify", "planning_agentic"):
+            return r
+        from app.services.hw.intent import hw_active, hw_intent, other_platform_signal
+        if not hw_allowed or not hw_intent(message) or not hw_active():
+            return r
+        import dataclasses
+        if other_platform_signal(message):
+            return dataclasses.replace(
+                r, mode="live" if r.mode == "knowledge" else r.mode,
+                domains=frozenset(set(r.domains) | {"hw"}), need_live=True, complexity="normal",
+                reason=f"hw_signal+{r.reason}", persona_addendum=(r.persona_addendum or "") + _HW_PERSONA)
+        return dataclasses.replace(
+            r, mode="live", domains=frozenset({"hw"}), need_rag=False, need_live=True, complexity="normal",
+            confidence=max(r.confidence, 0.8), reason="hw_signal", wants_linux=False, wants_windows=False,
+            wants_openshift=False, linux_specific=False, windows_specific=False, module_mode="single",
+            modules=("hw",), join_keys=(), need_prometheus=False, persona_addendum=_HW_PERSONA)
+    except Exception:  # noqa: BLE001 — donanım katmanı hatası çekirdek rotayı bozmaz
+        return r

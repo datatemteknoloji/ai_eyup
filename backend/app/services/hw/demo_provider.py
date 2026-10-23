@@ -30,6 +30,10 @@ class HwDemoProvider:
     def collect(self, parts: Iterable[str], *, since_alert: Optional[datetime] = None) -> HwSnapshot:
         parts = set(parts) & set(ALL_PARTS)
         now = datetime.now(timezone.utc)
+        from app.services.integrations.registry import parse_meta
+        if parse_meta(self.row).get("demo_scale") == "large":
+            from app.services.hw.demo_fixture import build_large
+            return build_large(parts, now)
         snap = HwSnapshot()
         snap.managers = [ManagerRec(key="demo-ome", kind="ome", name="DEMO OME", status="ok", server_count=3,
                                     version="4.7.0", support_level="verified"),

@@ -109,6 +109,7 @@ _CHAT_MODULE_MAP = {
     "linux": "linux", "exadata": "exadata", "windows": "windows",
     "virt": "virtualization", "openshift": "openshift",
     "automic": "automation",
+    "hw": "hardware",     # Adım 12: donanım rotası (modules=("hw",)) ve önbellek RBAC imzası
 }
 
 
@@ -615,6 +616,7 @@ async def unified_chat_stream(
                 _has_episode = has_session_episode(session_id=session_id, platform="unified")
                 _route = route_unified(
                     message,
+                    hw_allowed=_hw_user_allowed(_auth_user, db),
                     is_followup=_is_followup,
                     has_episode=_has_episode,
                     clarification_pending=_clarify_pending,
@@ -690,6 +692,7 @@ async def unified_chat_stream(
                 )
                 if (
                     (is_inventory_status_query(message) or is_fleet_inventory_query(message))
+                    and "hw" not in (_route.domains or ())          # donanım sinyali → Linux envanter hızlı yolu çalışmaz
                     and (_chat_allowed is None or _chat_allowed & {"linux", "windows", "exadata"})
                 ):
                     from app.services.infra_summary import build_infra_overview_text
@@ -855,6 +858,7 @@ async def unified_chat_stream(
                 )
                 _route_linux = "linux" in (_route.modules or ()) or "exadata" in (_route.modules or ())
                 _route_windows = "windows" in (_route.modules or ())
+                _route_hw = "hw" in (_route.domains or ())
                 _inv_kind = None
                 _live_resource = False
                 try:
@@ -891,10 +895,20 @@ async def unified_chat_stream(
                         or _route_virt
                         or _route_linux
                         or _route_windows
+                        or _route_hw
                         or bool(_inv_kind)
                         or _live_resource
                     ),
                 )
+                # Donanım veri sorusu («demo-dell-07 durumu nedir?») «X nedir?» kalıbıyla bilgi-yoluna düşmesin (Adım 12)
+                if _route_hw and _agentic_ok and _live_path.reason == "knowledge_only":
+                    try:
+                        from app.services.hw.intent import hw_data_question
+                        if hw_data_question(message):
+                            from app.services.chat_path_policy import LivePathDecision as _LPD
+                            _live_path = _LPD(run_fixed_collect=False, run_agentic=True, is_deep=False, reason="hw_data")
+                    except Exception:
+                        pass
                 # Router knowledge → path ile hizala
                 if _route.mode == "knowledge" and _live_path.reason != "knowledge_only":
                     from app.services.chat_path_policy import LivePathDecision
