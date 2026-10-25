@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 from app.models.infra_finding import InfraFinding
-from app.services.exec_risks import rank_findings
+from app.services.exec_risks import _plain, rank_findings
 
 
 def _add(db, **kw):
@@ -59,3 +59,7 @@ def test_demo_and_synthetic_and_inactive_are_out(isolated_db):
     _add(isolated_db, entity_ref="ok", title="Gerçek bulgu", source_id=2)
     rows = rank_findings(isolated_db, now=datetime(2026, 10, 25, tzinfo=timezone.utc), synthetic_source_ids={9})
     assert [r["sentence"] for r in rows] == ["Gerçek bulgu"]
+
+
+def test_datastore_is_called_storage():
+    assert _plain("Datastore doluluğu yüksek") == "depolama alanı doluluğu yüksek"

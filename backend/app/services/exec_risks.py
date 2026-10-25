@@ -35,7 +35,7 @@ def _plain(text: Optional[str]) -> Optional[str]:
     raw = (text or "").strip()
     if not raw or _IP.search(raw) or _LOG.search(raw):
         return None
-    return raw
+    return re.sub(r"(?i)datastores?", "depolama alanı", raw)
 
 
 def _age_days(first_seen: Optional[datetime], now: datetime) -> int:

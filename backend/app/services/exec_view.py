@@ -479,8 +479,9 @@ def _calendar(capacity: List[Dict[str, Any]]) -> Dict[str, Any]:
             "late": int(str(late).replace("+", "") or row["early"]),
             "missing": False,
         })
+        when = "eşikte" if str(row.get("early")) == "0" else f"{row['early']}–{late} ay"
         items.append({
-            "when": f"{row['early']}–{late} ay",
+            "when": when,
             "area": row["name"],
             "event": "Bellek eşiği",
             "impact": "Kapasite",
