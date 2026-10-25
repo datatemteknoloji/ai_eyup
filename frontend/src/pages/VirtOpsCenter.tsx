@@ -339,7 +339,7 @@ export default function VirtOpsCenter() {
         platform="virt"
         loading={isLoading}
         loadingLabel={t('virt_loading')}
-        health={data?.health ? { score: data.health.score, label: data.health.label } : null}
+        health={data?.health && data.health.score != null ? { score: data.health.score, label: data.health.label } : null}
         healthSubtitle={t('virt_health_sub')}
         kpi={{
           critical: data?.critical_count ?? 0,

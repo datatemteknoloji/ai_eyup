@@ -16,6 +16,7 @@ from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor
 from app.models.hypervisor_metric import HypervisorHostMetric
 from app.models.server import Server
+from app.services.chat_quality import power_state as _ps_canon
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ def _sev_from_pct(pct: Optional[float], crit: float, warn: float) -> Optional[st
 
 def _health_score(critical: int, warning: int, host_count: int, manager_count: int) -> Dict[str, Any]:
     if manager_count == 0 and host_count == 0:
-        return {"score": 100, "grade": "A", "label": "Veri Yok", "color": "slate"}
+        return {"score": None, "grade": None, "label": "Ölçülemedi", "color": "slate", "measurable": False}
 
     # Ceza iki bileşenli: yaygınlık (etkilenen varlık oranı) + varlık cezası.
     # Yalnız oran kullanıldığında tek host'lu ortamda bir kritik bulgu 92 puan
@@ -62,7 +63,7 @@ def _health_score(critical: int, warning: int, host_count: int, manager_count: i
         grade, label, color = "D", "Sorunlu", "orange"
     else:
         grade, label, color = "F", "Kritik", "red"
-    return {"score": score, "grade": grade, "label": label, "color": color}
+    return {"score": score, "grade": grade, "label": label, "color": color, "measurable": True}
 
 
 def _latest_host_metrics(db: Session, hypervisor_id: int) -> List[HypervisorHostMetric]:
@@ -296,8 +297,7 @@ def build_virt_command_center(db: Session) -> Dict[str, Any]:
             continue
         vm_by_hv[hid]["total"] += 1
         st = (vm.status or "").upper()
-        ps = (vm.vm_power_state or "").lower()
-        if st == "ONLINE" or "on" in ps:
+        if st == "ONLINE" or _ps_canon.is_on(vm.vm_power_state):
             vm_by_hv[hid]["running"] += 1
         else:
             vm_by_hv[hid]["offline"] += 1

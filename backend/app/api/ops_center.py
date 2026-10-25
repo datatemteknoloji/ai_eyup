@@ -100,13 +100,25 @@ def _active_events(db: Session, since: datetime, platform: Optional[str] = None,
 
 # ── Sağlık Skoru ─────────────────────────────────────────────────────────────
 
-def _calc_health_score(events: List[SystemEvent], server_count: int) -> Dict[str, Any]:
+def _unmeasured_health() -> Dict[str, Any]:
+    """Popülasyon boş veya izleme yok. Olayı olmayan izlenen filo bu yolu kullanmaz."""
+    return {
+        "score": None, "grade": None, "label": "Ölçülemedi", "color": "slate",
+        "measurable": False, "penalty": None, "severity_breakdown": {},
+        "event_count": 0, "server_count": 0,
+    }
+
+
+def _calc_health_score(
+    events: List[SystemEvent], server_count: int, *, monitored: bool | None = None,
+) -> Dict[str, Any]:
     """
     0-100 sağlık skoru. 100 = mükemmel, 0 = felaket.
-    Formül: max(0, 100 - penalty), penalty = weighted alarm sum / server_count
+    Formül: max(0, 100 - penalty), penalty = weighted alarm sum / server_count.
+    Sunucu/cluster yoksa veya izleme hiç yoksa skor üretilmez (A değil).
     """
-    if server_count == 0:
-        return {"score": 100, "grade": "A", "label": "Veri Yok"}
+    if server_count <= 0 or monitored is False:
+        return _unmeasured_health()
 
     penalty = sum(SEV_SCORE.get(e.severity, 1) for e in events)
     # Normalize by server count — büyük altyapıda tek sorun skoru çok düşürmesin
@@ -130,11 +142,22 @@ def _calc_health_score(events: List[SystemEvent], server_count: int) -> Dict[str
 
     return {
         "score": score, "grade": grade, "label": label, "color": color,
+        "measurable": True,
         "penalty": round(normalized, 1),
         "severity_breakdown": dict(by_sev),
         "event_count": len(events),
         "server_count": server_count,
     }
+
+
+def _weighted_health(parts: List[tuple]) -> Dict[str, Any]:
+    """Ölçülemeyen platform ortalamaya girmez. Hepsi ölçülemeze genel skor da yok."""
+    usable = [(int(score), int(weight)) for score, weight in parts if score is not None and weight > 0]
+    if not usable:
+        return {"health_score": None, "grade": None, "label": "Ölçülemedi", "measurable": False}
+    total_w = sum(w for _, w in usable)
+    score = round(sum(s * w for s, w in usable) / total_w)
+    return {"health_score": score, "measurable": True, **_grade_for_score(score)}
 
 
 # ── Sunucu bazlı gruplama ─────────────────────────────────────────────────────
@@ -620,6 +643,8 @@ async def health_score(db: Session = Depends(get_db)):
 # ── Yönetici Ekranı (Executive Dashboard) ────────────────────────────────────
 
 def _grade_for_score(score: int) -> Dict[str, str]:
+    if score is None:
+        return {"grade": None, "label": "Ölçülemedi"}
     if score >= 90:
         return {"grade": "A", "label": "Sağlıklı"}
     if score >= 75:
@@ -655,9 +680,6 @@ async def executive_summary(db: Session = Depends(get_db)):
     virt_events = _active_events(db, since, platform="virt")
     ocp_events = _active_events(db, since, platform="openshift")
 
-    linux_health = _calc_health_score(unique_events(linux_events), len(linux_ids))
-    windows_health = _calc_health_score(unique_events(windows_events), len(windows_ids))
-
     linux_ai_ready = (
         db.query(Server).filter(Server.id.in_(linux_ids), Server.ai_ready == True).count()  # noqa: E712
         if linux_ids else 0
@@ -674,14 +696,24 @@ async def executive_summary(db: Session = Depends(get_db)):
         db.query(Server).filter(Server.id.in_(windows_ids), Server.windows_exporter_running == True).count()  # noqa: E712
         if windows_ids else 0
     )
+    # Popülasyon var ama ne exporter ne olay varsa izleme yoktur; A verilmez.
+    linux_health = _calc_health_score(
+        unique_events(linux_events), len(linux_ids),
+        monitored=node_exporter_running > 0 or bool(linux_events),
+    )
+    windows_health = _calc_health_score(
+        unique_events(windows_events), len(windows_ids),
+        monitored=windows_exporter_running > 0 or bool(windows_events),
+    )
 
     try:
         virt_summary = virt_ops_summary(db)
     except Exception:
         logger.exception("Yönetici özeti: virt_ops_summary alınamadı")
         virt_summary = {
-            "critical": 0, "warning": 0, "health_score": 100, "action_needed": False,
+            "critical": 0, "warning": 0, "health_score": None, "action_needed": False,
             "items": [], "by_family": {}, "families_present": [],
+            "health": {"score": None, "measurable": False, "label": "Ölçülemedi"},
         }
 
     hypervisor_count = db.query(Hypervisor).count()
@@ -692,7 +724,7 @@ async def executive_summary(db: Session = Depends(get_db)):
     ocp_clusters = db.query(OpenShiftCluster).all()
     ocp_cluster_count = len(ocp_clusters)
     ocp_unhealthy = sum(1 for c in ocp_clusters if (c.status or "").upper() == "ERROR")
-    ocp_health = _calc_health_score(unique_events(ocp_events), max(ocp_cluster_count, 1))
+    ocp_health = _calc_health_score(unique_events(ocp_events), ocp_cluster_count)
 
     smap = _server_map(db)
     linux_groups = group_events(linux_events, smap)
@@ -838,16 +870,18 @@ async def executive_summary(db: Session = Depends(get_db)):
     total_critical = len(critical_items)
     total_warning = len(warning_items)
 
-    virt_score = int(virt_summary.get("health_score") or 100)
-    weights = [
-        (linux_health["score"], max(len(linux_ids), 1)),
-        (windows_health["score"], max(len(windows_ids), 1)),
-        (virt_score, max(hypervisor_count, 1)),
-    ]
-    if ocp_cluster_count:
-        weights.append((ocp_health["score"], max(ocp_cluster_count, 1)))
-    total_weight = sum(w for _, w in weights)
-    overall_score = round(sum(s * w for s, w in weights) / total_weight) if total_weight else 100
+    virt_health = virt_summary.get("health") or {}
+    virt_measurable = virt_health.get("measurable", virt_summary.get("health_score") is not None)
+    parts = []
+    if linux_health.get("measurable") and linux_ids:
+        parts.append((linux_health["score"], len(linux_ids)))
+    if windows_health.get("measurable") and windows_ids:
+        parts.append((windows_health["score"], len(windows_ids)))
+    if virt_measurable and hypervisor_count and virt_summary.get("health_score") is not None:
+        parts.append((virt_summary["health_score"], hypervisor_count))
+    if ocp_health.get("measurable") and ocp_cluster_count:
+        parts.append((ocp_health["score"], ocp_cluster_count))
+    overall = _weighted_health(parts)
 
     by_family = virt_summary.get("by_family") or {}
     families_present = virt_summary.get("families_present") or []
@@ -894,8 +928,7 @@ async def executive_summary(db: Session = Depends(get_db)):
     return {
         "generated_at": datetime.utcnow().isoformat(),
         "overall": {
-            "health_score": overall_score,
-            **_grade_for_score(overall_score),
+            **overall,
             "critical_total": total_critical,
             "warning_total": total_warning,
             "open_incidents": open_incidents,
@@ -909,6 +942,7 @@ async def executive_summary(db: Session = Depends(get_db)):
                 "critical": linux_crit,
                 "warning": linux_warn,
                 "health_score": linux_health["score"],
+                "measurable": linux_health.get("measurable", False),
                 **_grade_for_score(linux_health["score"]),
             },
             "windows": {
@@ -918,6 +952,7 @@ async def executive_summary(db: Session = Depends(get_db)):
                 "critical": windows_crit,
                 "warning": windows_warn,
                 "health_score": windows_health["score"],
+                "measurable": windows_health.get("measurable", False),
                 **_grade_for_score(windows_health["score"]),
             },
             "virtualization": {
@@ -926,17 +961,19 @@ async def executive_summary(db: Session = Depends(get_db)):
                 "vm_running_count": vm_running_count,
                 "critical": virt_crit,
                 "warning": virt_warn,
-                "health_score": virt_score,
+                "health_score": virt_summary.get("health_score"),
+                "measurable": bool(virt_measurable),
                 "includes": virt_include_labels,
-                **_grade_for_score(virt_score),
+                **_grade_for_score(virt_summary.get("health_score")),
             },
             "openshift": {
                 "cluster_count": ocp_cluster_count,
                 "unhealthy_clusters": ocp_unhealthy,
                 "critical": ocp_crit,
                 "warning": ocp_warn,
-                "health_score": ocp_health["score"] if ocp_cluster_count else 100,
-                **_grade_for_score(ocp_health["score"] if ocp_cluster_count else 100),
+                "health_score": ocp_health["score"],
+                "measurable": ocp_health.get("measurable", False),
+                **_grade_for_score(ocp_health["score"]),
             },
         },
         "comparison": comparison,

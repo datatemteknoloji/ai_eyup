@@ -24,8 +24,8 @@ import { useAuth } from '../auth/AuthContext'
 interface PlatformStat {
   critical: number
   warning: number
-  health_score: number
-  grade: string
+  health_score: number | null
+  grade: string | null
   label: string
   server_count?: number
   ai_ready_count?: number
@@ -65,7 +65,7 @@ interface ComparisonRow {
 interface ExecSummary {
   generated_at: string
   overall: {
-    health_score: number; grade: string; label: string
+    health_score: number | null; grade: string | null; label: string; measurable?: boolean
     critical_total: number; warning_total: number
     open_incidents: number; total_servers: number
   }
@@ -165,14 +165,15 @@ function useCountUp(target: number, duration = 900) {
 
 // ── Görsel bileşenler ────────────────────────────────────────────────────────
 
-function ScoreRing({ score, size = 150, strokeWidth = 12 }: { score: number; size?: number; strokeWidth?: number }) {
-  const animated = useCountUp(score, 1100)
+function ScoreRing({ score, size = 150, strokeWidth = 12 }: { score: number | null; size?: number; strokeWidth?: number }) {
+  const animated = useCountUp(score ?? 0, 1100)
   const r = 42; const cx = 50; const cy = 50
   const circumference = 2 * Math.PI * r
   const pct = Math.max(0, Math.min(100, animated)) / 100
   const offset = circumference * (1 - pct)
-  const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 55 ? 'C' : score >= 35 ? 'D' : 'F'
-  const color = GRADE_HEX[grade]
+  const unmeasured = score == null
+  const grade = unmeasured ? 'C' : score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 55 ? 'C' : score >= 35 ? 'D' : 'F'
+  const color = unmeasured ? '#64748b' : GRADE_HEX[grade]
   const gradId = `ring-grad-${size}`
   return (
     <div className="relative" style={{ width: size, height: size }}>
@@ -191,20 +192,21 @@ function ScoreRing({ score, size = 150, strokeWidth = 12 }: { score: number; siz
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-4xl font-extrabold text-white tabular-nums">{animated}</span>
-        <span className="text-[10px] text-slate-500 -mt-1">/ 100</span>
+        <span className="text-4xl font-extrabold text-white tabular-nums">{unmeasured ? '—' : animated}</span>
+        <span className="text-[10px] text-slate-500 -mt-1">{unmeasured ? '' : '/ 100'}</span>
       </div>
     </div>
   )
 }
 
-function MiniRing({ score, size = 46 }: { score: number; size?: number }) {
+function MiniRing({ score, size = 46 }: { score: number | null; size?: number }) {
   const r = 40; const cx = 50; const cy = 50
   const circumference = 2 * Math.PI * r
-  const pct = Math.max(0, Math.min(100, score)) / 100
+  const unmeasured = score == null
+  const pct = unmeasured ? 0 : Math.max(0, Math.min(100, score)) / 100
   const offset = circumference * (1 - pct)
-  const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 55 ? 'C' : score >= 35 ? 'D' : 'F'
-  const color = GRADE_HEX[grade]
+  const grade = unmeasured ? 'C' : score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 55 ? 'C' : score >= 35 ? 'D' : 'F'
+  const color = unmeasured ? '#64748b' : GRADE_HEX[grade]
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox="0 0 100 100">
@@ -216,7 +218,7 @@ function MiniRing({ score, size = 46 }: { score: number; size?: number }) {
         />
       </svg>
       <div className="absolute inset-0 flex items-center justify-center">
-        <span className="text-[13px] font-bold text-white">{score}</span>
+        <span className="text-[13px] font-bold text-white">{unmeasured ? '—' : score}</span>
       </div>
     </div>
   )
@@ -494,8 +496,8 @@ export default function ExecutiveDashboard() {
         <div className="relative bg-slate-800/60 border border-slate-700/50 rounded-xl p-6 flex flex-col items-center justify-center gap-2 min-w-[240px] overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent pointer-events-none" />
           <ScoreRing score={overall.health_score} />
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg border ${GRADE_COLOR[overall.grade] || GRADE_COLOR.C}`}>
-            {overall.grade} · {overall.label}
+          <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg border ${overall.grade ? (GRADE_COLOR[overall.grade] || GRADE_COLOR.C) : 'text-slate-300 bg-slate-700/40 border-slate-600'}`}>
+            {overall.grade ? `${overall.grade} · ${overall.label}` : overall.label}
           </span>
           <span className="text-[11px] text-slate-500">{t('exec_health_score')}</span>
         </div>

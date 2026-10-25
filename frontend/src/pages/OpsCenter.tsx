@@ -1019,7 +1019,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
       <OpsShell
         platform={platform}
         loading={isLoading}
-        health={data?.health ? { score: data.health.score, label: data.health.label } : null}
+        health={data?.health && data.health.score != null ? { score: data.health.score, label: data.health.label } : null}
         kpi={{
           critical: kpiCritical,
           warning: kpiWarning,

@@ -32,6 +32,9 @@ def test_many_criticals_score_lower_than_single_critical():
     assert many["score"] < one["score"]
 
 
-def test_empty_inventory_reports_no_data():
+def test_empty_inventory_is_not_measurable():
     h = _health_score(critical=0, warning=0, host_count=0, manager_count=0)
-    assert h["label"] == "Veri Yok"
+    assert h["measurable"] is False
+    assert h["score"] is None
+    assert h["grade"] is None
+    assert h["label"] == "Ölçülemedi"
