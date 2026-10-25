@@ -27,7 +27,8 @@ def test_prompt_period_drops_the_clock():
 def test_prompt_has_numbers_and_labels_not_vm_rows():
     payload = prompt_payload(FACTS)
     assert payload["sections"][0]["numbers"]["events"]["display"] == ["12", "12 adet"]
-    assert payload["sections"][0]["labels"]["risk_1"] == "esx03"
+    assert payload["sections"][0]["labels"]["risk_1"] == "esx…"
+    assert not any(ch.isdigit() for ch in payload["sections"][0]["labels"]["risk_1"])
     assert "rows" not in payload["sections"][0]
     assert "should-not-be-sent" not in str(payload)
 

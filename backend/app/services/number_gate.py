@@ -90,6 +90,23 @@ def period_labels(facts: Mapping[str, Any]) -> Dict[str, str]:
     return out
 
 
+def _thousands_canonical(token: str) -> Optional[str]:
+    """533.816 ve 533,816 aynı tam sayıdır. 72,4 ondalıktır, buraya girmez."""
+    match = re.fullmatch(r"(\d{1,3}(?:[.,]\d{3})+)(?:\s+(\S+))?", token.strip())
+    if not match:
+        return None
+    bare = match.group(1).replace(".", "").replace(",", "")
+    unit = match.group(2)
+    return f"{bare} {unit}" if unit else bare
+
+
+def _display_match(token: str, allowed: set) -> bool:
+    if token in allowed:
+        return True
+    canon = _thousands_canonical(token)
+    return bool(canon and canon in allowed)
+
+
 def check_text(
     text: str,
     facts: Mapping[str, Any],
@@ -108,7 +125,7 @@ def check_text(
     if require_number and not found:
         return {"ok": False, "reason": "sayısız_metin", "found": found, "rejected": []}
     allowed = allowed_displays(facts, None if all_sections else section_id)
-    rejected = [token for token in found if token not in allowed]
+    rejected = [token for token in found if not _display_match(token, allowed)]
     if rejected:
         return {"ok": False, "reason": "display_disi", "found": found, "rejected": rejected}
     return {"ok": True, "reason": None, "found": found, "rejected": []}

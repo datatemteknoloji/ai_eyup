@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable, Dict, Mapping
 
 from app.services.number_gate import check_text
@@ -16,6 +17,17 @@ _INSTRUCTION = (
     "labels içindeki adları kullanabilirsin; onlardaki rakamlar sayı değildir. "
     "period alanını sayı gibi yazma."
 )
+
+
+def _labels_without_digits(labels: Mapping[str, Any]) -> Dict[str, Any]:
+    """Etiket prompt'ta kalır; rakamları silinir ki IP ve sürüm sayı sanılmasın."""
+    out: Dict[str, Any] = {}
+    for key, value in labels.items():
+        if isinstance(value, str):
+            out[str(key)] = re.sub(r"\d+", "…", value)
+        else:
+            out[str(key)] = value
+    return out
 
 
 def _day(value: Any) -> str:
@@ -37,7 +49,7 @@ def prompt_payload(facts: Mapping[str, Any]) -> Dict[str, Any]:
             "title": section.get("title"),
             "status": section.get("status"),
             "numbers": section.get("numbers") or {},
-            "labels": section.get("labels") or {},
+            "labels": _labels_without_digits(section.get("labels") or {}),
             "confidence": section.get("confidence"),
             "notes": section.get("notes") or [],
         })

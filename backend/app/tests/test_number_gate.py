@@ -64,6 +64,12 @@ def test_period_timestamp_is_masked_and_bare_zero_is_not():
     assert check_text("Tam 00 olay.", facts, section_id="a1")["ok"] is False
 
 
+def test_thousands_separator_matches_the_integer_display():
+    facts = {"sections": [{"id": "a1", "numbers": {"events": {"display": ["533816", "533816 adet"]}}, "labels": {}}]}
+    assert check_text("Dönemde 533.816 olay ve 533,816 adet.", facts, section_id="a1")["ok"] is True
+    assert check_text("Doluluk 72.4.", FACTS, section_id="a1")["ok"] is False
+
+
 def test_sibling_display_passes_only_for_the_whole_report():
     text = "Özette 12 adet, kapasitede 14 gün."
     assert check_text(text, FACTS, section_id="a1")["ok"] is False
