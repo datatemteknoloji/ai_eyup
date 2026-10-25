@@ -1,173 +1,165 @@
 /**
- * Yönetici Raporu — tüm ortamlar (Linux, Windows, Sanallaştırma, OpenShift, Exadata)
- * için tek sayfalık özet; Markdown indirme ve yazdır / PDF.
+ * Yönetici Raporları — beş hazır rapor, veri hazırlığı ve yöntem rozeti.
+ * Sayılar backend gerçeklerinden gelir. AI metni bu sayfada üretilmez;
+ * kapıdan geçmemiş metin yoktur, kartta kural cümlesi durur.
  */
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Download, FileText, Printer, RefreshCw } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Download, Printer, RefreshCw } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
-import { useT } from '../i18n/LocaleProvider'
+import { AiBlock, MethodBadge } from '../components/insights/MethodBadge'
 
-type Env = {
-  key: string
-  label: string
-  inventory: string
-  monitoring: string
-  critical: number
-  warning: number
-  health_score: number | null
-  grade: string
-  present: boolean
+type Num = { value: number | string; unit?: string; display?: string[] }
+type Section = {
+  id: string
+  title: string
+  method_id: string
+  status: 'ok' | 'unmeasured' | 'not_applicable'
+  numbers: Record<string, Num>
+  labels: Record<string, string>
+  notes: string[]
+  rows: Array<Record<string, unknown>>
 }
-type Alert = { severity?: string; platform?: string; server_name?: string; title?: string }
-type Incident = { id: number; severity?: string; platform?: string; title?: string; server_name?: string }
-type Report = {
-  generated_at: string
-  overall: { health_score?: number; grade?: string; label?: string; critical_total?: number; warning_total?: number; open_incidents?: number; total_servers?: number }
-  environments: Env[]
-  top_alerts: Alert[]
-  open_incidents: Incident[]
-  recommendations: string[]
-  markdown: string
+type Readiness = { section_id: string; status: string; reason: string; days_available?: number | null; days_required?: number | null }
+type Facts = {
+  report_type: string
+  period: { start: string; end: string }
+  sections: Section[]
+  data_readiness: Readiness[]
 }
 
-const sevCls = (s?: string) =>
-  s === 'critical' || s === 'emergency' ? 'text-red-400' : s === 'warning' ? 'text-amber-300' : 'text-slate-400'
+const TITLES: Record<string, string> = {
+  a1: 'Aylık yönetici özeti',
+  b1: 'Kapasite tükenme',
+  b2: 'Yatırım ihtiyacı',
+  a2: 'Atıl kaynak',
+  a6: 'Olay ve operasyon',
+}
+
+const STATUS: Record<string, string> = {
+  ok: 'Ölçüldü',
+  unmeasured: 'Ölçülemedi',
+  not_applicable: 'Uygulanmaz',
+}
+
+function monthRange(month: string): { start: string; end: string } {
+  const [y, m] = month.split('-').map(Number)
+  const start = new Date(Date.UTC(y, m - 1, 1))
+  const end = new Date(Date.UTC(y, m, 1))
+  return { start: start.toISOString(), end: end.toISOString() }
+}
+
+function ruleLine(section: Section): string {
+  if (section.status !== 'ok') return section.notes[0] || 'Veri yok.'
+  const bits = Object.values(section.numbers).map((n) => n.display?.[0]).filter(Boolean)
+  return bits.length ? `${section.title}: ${bits.join(', ')}.` : section.notes[0] || section.title
+}
 
 export default function ExecutiveReports() {
-  const t = useT()
-  const q = useQuery<Report>({
-    queryKey: ['executive-report'],
+  const now = new Date()
+  const [month, setMonth] = useState(`${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`)
+  const range = useMemo(() => monthRange(month), [month])
+  const q = useQuery<{ reports: Facts[] }>({
+    queryKey: ['executive-facts', range.start, range.end],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/ops/executive-report`)
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      return r.json()
+      const url = `${API_BASE_URL}/ops/executive-facts?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`
+      const res = await fetch(url)
+      if (!res.ok) throw new Error('Raporlar alınamadı')
+      return res.json()
     },
-    staleTime: 60_000,
   })
-  const d = q.data
 
-  const download = () => {
-    if (!d) return
-    const blob = new Blob([d.markdown], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
+  const reports = q.data?.reports || []
+  const gaps = reports.flatMap((r) => (r.data_readiness || []).filter((d) => d.status !== 'ok').map((d) => ({ ...d, report: r.report_type })))
+
+  function downloadCsv() {
+    const lines = ['rapor,bolum,anahtar,deger,birim']
+    for (const report of reports) {
+      for (const section of report.sections) {
+        for (const [key, num] of Object.entries(section.numbers || {})) {
+          lines.push([report.report_type, section.id, key, String(num.value), num.unit || ''].join(','))
+        }
+      }
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
-    a.href = url
-    a.download = `yonetici-raporu-${new Date().toISOString().slice(0, 10)}.md`
+    a.href = URL.createObjectURL(blob)
+    a.download = `yonetici-raporlari-${month}.csv`
     a.click()
-    URL.revokeObjectURL(url)
   }
 
   return (
-    <div className="space-y-5 animate-fade-in pb-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="p-4 md:p-6 space-y-4 text-slate-200">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-white inline-flex items-center gap-2">
-            <FileText size={18} /> {t('exec_rpt_title')}
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">{t('exec_rpt_sub')}</p>
+          <h1 className="text-xl font-semibold text-white">Yönetici Raporları</h1>
+          <p className="text-sm text-slate-400">Platform notları ayrıdır. Genel not, en kötü platformu aşmaz.</p>
         </div>
-        <div className="flex items-center gap-2 print:hidden">
-          <button type="button" onClick={() => q.refetch()} disabled={q.isFetching}
-            className="px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-xs text-slate-200 inline-flex items-center gap-1.5 disabled:opacity-50">
-            <RefreshCw size={13} className={q.isFetching ? 'animate-spin' : ''} /> {t('exec_rpt_generate')}
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm"
+            aria-label="Dönem"
+          />
+          <button type="button" onClick={() => q.refetch()} className="px-3 py-1.5 rounded-lg border border-slate-700 text-sm inline-flex items-center gap-1">
+            <RefreshCw size={14} className={q.isFetching ? 'animate-spin' : ''} /> Yenile
           </button>
-          <button type="button" onClick={download} disabled={!d}
-            className="px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-xs text-slate-200 inline-flex items-center gap-1.5 disabled:opacity-50">
-            <Download size={13} /> Markdown
+          <button type="button" onClick={downloadCsv} className="px-3 py-1.5 rounded-lg border border-slate-700 text-sm inline-flex items-center gap-1">
+            <Download size={14} /> CSV
           </button>
-          <button type="button" onClick={() => window.print()} disabled={!d}
-            className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs text-white inline-flex items-center gap-1.5 disabled:opacity-50">
-            <Printer size={13} /> {t('exec_rpt_print')}
+          <button type="button" onClick={() => window.print()} className="px-3 py-1.5 rounded-lg border border-slate-700 text-sm inline-flex items-center gap-1">
+            <Printer size={14} /> PDF
           </button>
         </div>
       </div>
 
-      {q.isLoading && <div className="text-sm text-slate-500">{t('exec_rpt_loading')}</div>}
-      {q.isError && <div className="text-sm text-red-400">{t('exec_rpt_error')}</div>}
+      <section className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4">
+        <h2 className="text-sm font-semibold text-white mb-2">Veri hazırlığı</h2>
+        {q.isLoading && <p className="text-sm text-slate-400">Yükleniyor…</p>}
+        {q.isError && <p className="text-sm text-red-300">Raporlar alınamadı.</p>}
+        {!q.isLoading && gaps.length === 0 && <p className="text-sm text-slate-400">Eksik bölüm yok.</p>}
+        <ul className="space-y-1 text-sm">
+          {gaps.map((g) => (
+            <li key={`${g.report}-${g.section_id}`} className="text-slate-300">
+              <span className="text-slate-500">{TITLES[g.report] || g.report} — </span>
+              {g.reason}
+              {g.days_available != null && g.days_required != null ? ` (${g.days_available}/${g.days_required} gün)` : ''}
+            </li>
+          ))}
+        </ul>
+      </section>
 
-      {d && (
-        <>
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            {[
-              [t('exec_rpt_score'), `${d.overall.health_score ?? '—'} (${d.overall.grade ?? '—'})`],
-              [t('exec_rpt_critical'), d.overall.critical_total ?? 0],
-              [t('exec_rpt_warning'), d.overall.warning_total ?? 0],
-              [t('exec_rpt_open_inc'), d.overall.open_incidents ?? 0],
-              [t('exec_rpt_servers'), d.overall.total_servers ?? 0],
-            ].map(([k, v]) => (
-              <div key={String(k)} className="cyber-card p-4">
-                <div className="text-[11px] text-slate-500">{k}</div>
-                <div className="text-xl font-semibold text-white mt-1 tabular-nums">{v}</div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {reports.map((report) => (
+          <article key={report.report_type} className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4 space-y-3">
+            <div className="flex items-start justify-between gap-2">
+              <h2 className="font-semibold text-white">{TITLES[report.report_type] || report.report_type}</h2>
+              <Link to="/infra-reports" className="text-xs text-sky-300 hover:underline">Altyapı raporları</Link>
+            </div>
+            {report.sections.map((section) => (
+              <div key={section.id} className="space-y-2 border-t border-slate-800 pt-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-slate-200">{section.title}</span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full border border-slate-600 text-slate-300">{STATUS[section.status] || section.status}</span>
+                  <MethodBadge id={section.method_id} />
+                </div>
+                <div className="flex flex-wrap gap-3 text-sm">
+                  {Object.entries(section.numbers || {}).map(([key, num]) => (
+                    <span key={key} className="tabular-nums text-white">{num.display?.[0] ?? num.value}<span className="text-slate-500 text-xs ml-1">{key}</span></span>
+                  ))}
+                </div>
+                {Object.keys(section.labels || {}).length > 0 && (
+                  <p className="text-xs text-slate-400">{Object.values(section.labels).join(' · ')}</p>
+                )}
+                <AiBlock method={section.method_id}>{ruleLine(section)}</AiBlock>
               </div>
             ))}
-          </div>
-
-          <div className="cyber-card p-5 overflow-x-auto">
-            <h2 className="text-sm font-medium text-white mb-3">{t('exec_rpt_envs')}</h2>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-left text-slate-500">
-                  <th className="py-1.5 pr-3">{t('exec_rpt_env')}</th>
-                  <th className="pr-3">{t('exec_rpt_inventory')}</th>
-                  <th className="pr-3">{t('exec_rpt_monitoring')}</th>
-                  <th className="pr-3 text-right">{t('exec_rpt_critical')}</th>
-                  <th className="pr-3 text-right">{t('exec_rpt_warning')}</th>
-                  <th className="text-right">{t('exec_rpt_score')}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/[0.05]">
-                {d.environments.map((e) => (
-                  <tr key={e.key} className={e.present || e.critical || e.warning ? 'text-slate-200' : 'text-slate-600'}>
-                    <td className="py-2 pr-3 font-medium">{e.label}</td>
-                    <td className="pr-3">{e.present ? e.inventory : '—'}</td>
-                    <td className="pr-3">{e.present ? e.monitoring : '—'}</td>
-                    <td className="pr-3 text-right tabular-nums text-red-300">{e.critical}</td>
-                    <td className="pr-3 text-right tabular-nums text-amber-300">{e.warning}</td>
-                    <td className="text-right tabular-nums">{e.health_score ?? '—'} {e.health_score != null ? `(${e.grade})` : ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <div className="cyber-card p-5">
-              <h2 className="text-sm font-medium text-white mb-3">{t('exec_rpt_alerts')}</h2>
-              {d.top_alerts.length === 0 ? <div className="text-xs text-slate-500">—</div> : (
-                <ul className="space-y-1.5 text-xs">
-                  {d.top_alerts.map((a, i) => (
-                    <li key={i} className="text-slate-300">
-                      <span className={`font-semibold uppercase ${sevCls(a.severity)}`}>{a.severity}</span>{' '}
-                      <span className="text-slate-500">{a.platform} · {a.server_name || '—'}</span> — {a.title}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div className="cyber-card p-5">
-              <h2 className="text-sm font-medium text-white mb-3">{t('exec_rpt_incidents')}</h2>
-              {d.open_incidents.length === 0 ? <div className="text-xs text-slate-500">—</div> : (
-                <ul className="space-y-1.5 text-xs">
-                  {d.open_incidents.map((i) => (
-                    <li key={i.id} className="text-slate-300">
-                      <span className={`font-semibold uppercase ${sevCls(i.severity)}`}>#{i.id}</span>{' '}
-                      <span className="text-slate-500">{i.platform}</span> — {i.title}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          <div className="cyber-card p-5">
-            <h2 className="text-sm font-medium text-white mb-3">{t('exec_rpt_recs')}</h2>
-            <ol className="list-decimal pl-5 space-y-1 text-xs text-slate-300">
-              {d.recommendations.map((r, i) => <li key={i}>{r}</li>)}
-            </ol>
-            <p className="text-[10px] text-slate-600 mt-3">{t('exec_rpt_generated', { at: d.generated_at })}</p>
-          </div>
-        </>
-      )}
+          </article>
+        ))}
+      </div>
     </div>
   )
 }

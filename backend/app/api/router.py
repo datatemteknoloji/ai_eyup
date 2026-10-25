@@ -272,6 +272,12 @@ try:
 except Exception as e:
     logger.error(f"Could not load ops_center router: {e}", exc_info=True)
 
+try:
+    from app.api import executive_facts
+    api_router.include_router(executive_facts.router, prefix="/ops", tags=["ops"])
+except Exception as e:
+    logger.error(f"Could not load executive_facts router: {e}", exc_info=True)
+
 # Windows Management (WinRM, event logs, updates, exporter)
 try:
     from app.api import windows
