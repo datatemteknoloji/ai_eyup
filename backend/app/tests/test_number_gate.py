@@ -54,6 +54,16 @@ def test_allowed_duration_passes():
     assert check_text("Örnek 14 gün.", FACTS, section_id="b1")["ok"] is True
 
 
+def test_compact_and_split_period_are_labels():
+    facts = {
+        "period": {"start": "2026-10-01", "end": "2026-11-01"},
+        "sections": FACTS["sections"],
+    }
+    text = "Dönem 20261001, 01/10/2026, 01.10.2026. Yıl 2026. Bulgu 12 adet."
+    assert check_text(text, facts, section_id="a1", require_number=True)["ok"] is True
+    assert check_text("Ay 10 gün 01.", facts, section_id="a1")["ok"] is False
+
+
 def test_period_timestamp_is_masked_and_bare_zero_is_not():
     facts = {
         "period": {"start": "2026-10-01T00:00:00+00:00", "end": "2026-11-01T00:00:00+00:00"},

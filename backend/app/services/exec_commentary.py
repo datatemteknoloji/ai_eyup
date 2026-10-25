@@ -40,7 +40,7 @@ def _day(value: Any) -> str:
 def prompt_payload(facts: Mapping[str, Any]) -> Dict[str, Any]:
     """VM listesi ve ham satır gitmez. Sayılar, agregatlar ve etiketler gider.
 
-    Dönem gün olarak gider. Saat (00:00:00) prompt'ta durmaz; model onu sayı sanmasın.
+    Dönem tarihi prompt'a girmez. Model yılı ve günü sayı diye kopyalamasın.
     """
     sections = []
     for section in facts.get("sections") or []:
@@ -57,7 +57,7 @@ def prompt_payload(facts: Mapping[str, Any]) -> Dict[str, Any]:
     start, end = _day(period.get("start")), _day(period.get("end"))
     return {
         "report_type": facts.get("report_type"),
-        "period": {"start": start, "end": end} if start or end else {},
+        "period": {"label": "bu dönem"} if start or end else {},
         "data_readiness": facts.get("data_readiness") or [],
         "sections": sections,
     }

@@ -1,4 +1,6 @@
 """Kapıdan geçmeyen AI metni yayımlanmaz."""
+import json
+
 from app.services.exec_commentary import prompt_payload, publish_commentary
 
 FACTS = {
@@ -20,7 +22,8 @@ def test_prompt_period_drops_the_clock():
     facts = dict(FACTS)
     facts["period"] = {"start": "2026-10-01T00:00:00+00:00", "end": "2026-11-01T00:00:00+00:00"}
     payload = prompt_payload(facts)
-    assert payload["period"] == {"start": "2026-10-01", "end": "2026-11-01"}
+    assert payload["period"] == {"label": "bu dönem"}
+    assert "2026" not in json.dumps(payload["period"])
     assert "00:00:00" not in str(payload)
 
 

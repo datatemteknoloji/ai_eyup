@@ -85,8 +85,13 @@ def period_labels(facts: Mapping[str, Any]) -> Dict[str, str]:
             continue
         out[f"period_{key}"] = raw
         day = raw[:10]
-        if len(day) == 10 and day[4] == "-" and day != raw:
+        if len(day) == 10 and day[4] == "-" and day[7] == "-":
+            yyyy, mm, dd = day[:4], day[5:7], day[8:10]
             out[f"period_{key}_day"] = day
+            out[f"period_{key}_compact"] = day.replace("-", "")
+            out[f"period_{key}_slash"] = f"{dd}/{mm}/{yyyy}"
+            out[f"period_{key}_dot"] = f"{dd}.{mm}.{yyyy}"
+            out[f"period_{key}_year"] = yyyy
     return out
 
 
