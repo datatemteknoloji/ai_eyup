@@ -185,3 +185,23 @@ Genel not artık sunucu ağırlıklı ortalama değil; ölçülen platformların
 ## Günlük özet diski (400 gün, bugünkü kardinalite)
 
 Ham politikalar aynı. Ölçülen günlük özet: metric 872 KB / 32 gün, host 352 KB / 72 gün, datastore 176 KB / 51 gün, ocp node 384 KB / 31 gün, olay sayımı 144 KB / 74 gün. 400 güne uzatma yaklaşık 20 MB. Ham OpenShift tick serisi 30 günde kaldı.
+
+## Yayın kapısı (25 Ekim 2026)
+
+«oVirt» adı OpenShift cluster id 2'dir: API `https://192.168.1.241:6443`, sürüm v1.34.6, node `master-0.ocp.datatem.local`. Aynı adres hypervisor 6 üzerinde OpenShift Virtualization'dır. OLVM hypervisor 7'dir. OpenShift notu yalnız `openshift_collector` / `platform=openshift` olaylarındandır. `openshift_virt_event` ve `ovirt_event` sanallaştırmadadır; filtre bunları OpenShift notuna almaz. Sentetik küme dışarıda. Eski formülle de yeni formülle de not 0/F: 24 saatte tekilleştirilmiş 33 kritik ve 102 uyarı, payda 3 node.
+
+| Platform | Eski | Yeni | Payda |
+|---|---|---|---|
+| Linux | 100 A | 100 A | 1077 sunucu |
+| Windows | ölçülemedi | ölçülemedi | izleme yok |
+| Sanallaştırma | 71 C | 95 A | 41 host |
+| OpenShift | 0 F | 0 F | 3 node |
+| Genel | 0 F | 0 F | en kötü platform |
+
+Formül: 24 saatte aynı varlık + aynı olay türü bir kez; ceza = (30×kritik + 12×uyarı) / popülasyon, tavan 100; skor = 100 − ceza. Bilgi cezaya girmez. Kayıt `ops.health_score`, (i) formül alanını basar.
+
+A6: bu dönemde 415 kapanışın tamamı «Otomatik kapatıldı…» / `auto_*`. Manuel veya kural kapanış yok; p50/p95 yazılmadı. p95 üstü kuyruk hesaplanmadı. Kapanış türü ayırt ediliyor.
+
+Rapor kartı: OpenShift 1 küme, 3 node. Sentetik küme sayılmaz. Sayfa açılışı kilitli satırı okur (ölçülen GET 26 ms). «Şimdi yenile» arka plan işidir.
+
+Canlı model `llama3.2:3b`, beş üretim. İlk ret / ikinci ret / şablon: A1 3/5, 2, 2; B1 5/5, 2, 2; B2 2/5, 1, 1; A2 4/5, 4, 4; A6 2/5, 0, 0. Ret nedeni display dışı token: dönem ISO'su ve `00`, IP/sürüm parçaları, nokta ondalık `403.4` (kayıt `403,4`), yanlış birim `15 sn`, kardeş bölümün sayısı.
