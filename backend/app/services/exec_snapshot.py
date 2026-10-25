@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -148,6 +148,24 @@ def _row_for_month(db: Session, month: Optional[str]) -> Optional[Infrastructure
     return None
 
 
+def available_months(db: Session) -> List[str]:
+    found: List[str] = []
+    rows = (
+        db.query(InfrastructureReport)
+        .filter(
+            InfrastructureReport.report_type.in_([BUNDLE, "executive_monthly"]),
+            InfrastructureReport.status == "locked",
+        )
+        .order_by(InfrastructureReport.generated_at.desc())
+        .all()
+    )
+    for row in rows:
+        label = str(((row.data or {}).get("period") or {}).get("start") or "")[:7]
+        if len(label) == 7 and label not in found:
+            found.append(label)
+    return found
+
+
 def bundle_payload(db: Session, month: Optional[str] = None) -> Dict[str, Any]:
     row = _row_for_month(db, month)
     running = refresh_running(db)
@@ -158,6 +176,7 @@ def bundle_payload(db: Session, month: Optional[str] = None) -> Dict[str, Any]:
             "status": "empty",
             "refreshing": running,
             "period": None,
+            "months": available_months(db),
             "demo_cards": demo_cards(db),
         }
     data = row.data or {}
@@ -168,6 +187,7 @@ def bundle_payload(db: Session, month: Optional[str] = None) -> Dict[str, Any]:
         "status": "ready",
         "refreshing": running,
         "period": data.get("period"),
+        "months": available_months(db),
         "report_id": row.id,
         "summary": row.summary,
         "summary_source": data.get("summary_source"),
