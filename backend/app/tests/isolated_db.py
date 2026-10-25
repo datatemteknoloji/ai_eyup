@@ -33,6 +33,11 @@ ROOT_TABLES = (
     # Donanım sağlayıcı çerçevesi (OME / OneView)
     "hw_managers", "hw_servers", "hw_enclosures", "hw_firmware", "hw_alerts", "hw_log_entries", "hw_warranty",
     "hw_host_links",
+    # Donanım → olay → incident; ESXi etki alanı (iş servisi)
+    "system_events", "business_service_map", "user_modules", "exadata_nodes",
+    # OpenShift hiyerarşisi
+    "openshift_clusters", "openshift_nodes", "openshift_projects", "openshift_workloads",
+    "infrastructure_reports", "cost_config",
 )
 
 _STATE: dict = {}

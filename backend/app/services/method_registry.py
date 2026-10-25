@@ -238,6 +238,12 @@ _METHODS: List[Method] = [
        ("Geri Kazanım motoru çıktısı (ainew DB).", "Reclaim engine output (ainew DB)."),
        ("Kazanç potansiyeldir; uygulanmadıkça kapasite değişmez.", "Gains are potential; capacity does not change until applied.")),
     # ── Sağlık / uyum / donanım / sapma ─────────────────────────────────────
+    _m("inv.sync.stale", CLASS_KURAL, "health",
+       ("Son başarılı envanter senkronunun yaşı eşikle karşılaştırılır; eşik = en az 6 saat veya senkron aralığının 3 katı.",
+        "The age of the last successful inventory sync is compared with a threshold: at least 6 hours or 3× the sync interval."),
+       ("ainew veritabanı (hypervisor son senkron zamanı ve senkron işi kaydı).", "ainew database (hypervisor last-sync time and sync job record)."),
+       ("Senkron başarısızlığının nedenini ölçmez; son hata kanıtta gösterilir. Hiç senkron yoksa 'ölçülemedi' döner.",
+        "Does not diagnose why the sync failed; the last error is shown in the evidence. With no sync yet the result is 'not measurable'.")),
     _m("vmw.*", CLASS_KURAL, "health",
        ("vCenter ayarı best-practice kuralıyla karşılaştırılır.", "A vCenter setting is compared with a best-practice rule."),
        _VC,
@@ -663,6 +669,18 @@ _METHODS: List[Method] = [
     _m("tool:linux_virt_io_correlate", CLASS_ESLESTIRME, "tool",
        ("Linux sunucu I/O metrikleri, bulunduğu VM'in datastore/host metrikleriyle eşleştirilir.", "Linux server I/O metrics are matched with the VM's datastore/host metrics."),
        ("ainew DB.", "ainew DB."), ("Zamansal ve kimlik eşleşmesidir, nedensellik kanıtı değildir.", "Time and identity matching, not proof of causation.")),
+    _m("exec.monthly.summary", CLASS_HESAP, "executive",
+       ("Dönemdeki bulgu ve olay sayıları, şiddet dağılımı ve kurala göre ilk beş risk hesaplanır.", "Finding and event counts, severity mix and the top five risks are calculated for the period."),
+       ("system_events ve kilitli aylık anlık görüntüler (ainew DB). Sentetik kayıtlar dışarıda.", "system_events and locked monthly snapshots (ainew DB). Synthetic rows are excluded."),
+       ("Ay-ay fark yalnız iki kilitli aylık anlık görüntü varsa hesaplanır. İlk ayda fark üretilmez.", "Month-over-month is calculated only when two locked monthly snapshots exist. The first month has no delta.")),
+    _m("exec.ops.duration", CLASS_HESAP, "executive",
+       ("Olay adedi ve çözüm süresi p50/p95 hesaplanır. Ortalama yazılmaz.", "Event count and resolution p50/p95 are calculated. The mean is not published."),
+       ("system_events ve incidents (ainew DB).", "system_events and incidents (ainew DB)."),
+       ("Aynı saniyede kapanan yığın p50/p95 dışındadır ve adedi ayrı gösterilir.", "A batch closed in the same second is excluded from p50/p95 and its count is shown separately.")),
+    _m("exec.capacity.unmeasured", CLASS_VERI, "executive",
+       ("Bu fazda ölçülmeyen kapasite kalemi nedeniyle birlikte gösterilir.", "A capacity item that is not measured in this phase is shown with its reason."),
+       ("Günlük özet veya gerekli metrik listesi.", "Daily summary or the required-metrics list."),
+       ("OpenShift node ve Linux dosya sistemi bu fazda tahmin edilmez.", "OpenShift node and Linux filesystem are not forecast in this phase.")),
 ]
 
 _EXACT: Dict[str, Method] = {m.id: m for m in _METHODS if not m.id.endswith("*")}
