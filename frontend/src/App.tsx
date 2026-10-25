@@ -1,6 +1,5 @@
 import React, { Suspense } from 'react'
 import { lazyWithRetry as lazy } from './lib/lazyWithRetry'
-import { useCapabilities } from './hooks/useCapabilities'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './auth/AuthContext'
@@ -51,7 +50,6 @@ const ExecutiveReports = lazy(() => import('./pages/ExecutiveReports'))
 const ExadataDashboard = lazy(() => import('./pages/ExadataDashboard'))
 const OpenShiftDashboard = lazy(() => import('./pages/OpenShiftDashboard'))
 const OpenShiftExplorer = lazy(() => import('./pages/OpenShiftExplorer'))
-const OpenShiftHome = lazy(() => import('./pages/OpenShiftHome'))
 const OpenShiftMonitoring = lazy(() => import('./pages/OpenShiftMonitoring'))
 const OpenShiftAccessPage = lazy(() => import('./pages/OpenShiftAccessPage'))
 const OpenShiftVmsPage = lazy(() => import('./pages/OpenShiftVmsPage'))
@@ -285,14 +283,6 @@ const RequireModule: React.FC<{ moduleId: string; children: React.ReactNode }> =
   return <>{children}</>
 }
 
-/** Donanım entegrasyonu (gerçek veya etiketli DEMO) yoksa `/hardware` doğrudan açılsa bile ana sayfaya yönlendirir. */
-const RequireHwCapability: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { hasHw, isLoading } = useCapabilities()
-  if (isLoading) return null
-  if (!hasHw) return <Navigate to="/" replace />
-  return <>{children}</>
-}
-
 const RequireAnyModule: React.FC<{ moduleIds: string[]; children: React.ReactNode }> = ({ moduleIds, children }) => {
   const { hasModule } = useAuth()
   if (!moduleIds.some(id => hasModule(id))) return <Navigate to="/" replace />
@@ -407,7 +397,6 @@ function App() {
                       <Route path="/exadata/baseline" element={<Navigate to="/exadata/analysis?tab=baseline" replace />} />
 
                       <Route path="/openshift" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftExplorer /></ErrorBoundary></RequireModule>} />
-                      <Route path="/openshift/dashboard" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftHome /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/vms" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftVmsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/monitoring" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftMonitoring /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/access" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftAccessPage /></ErrorBoundary></RequireModule>} />
@@ -446,7 +435,7 @@ function App() {
                       <Route path="/integrations/openshift" element={<RequireAnyModule moduleIds={['integrations', 'openshift']}><ErrorBoundary><OpenShiftDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/backup" element={<RequireModule moduleId="integrations"><ErrorBoundary><BackupIntegrationPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/hardware" element={<RequireAdmin><RequireModule moduleId="integrations"><ErrorBoundary><HardwareIntegrationPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
-                      <Route path="/hardware" element={<RequireModule moduleId="hardware"><RequireHwCapability><ErrorBoundary><HardwarePage /></ErrorBoundary></RequireHwCapability></RequireModule>} />
+                      <Route path="/hardware" element={<RequireModule moduleId="hardware"><ErrorBoundary><HardwarePage /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/centrify" element={<RequireAnyModule moduleIds={['integrations', 'level1']}><ErrorBoundary><CentrifySettingsPage /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/automic" element={<RequireAnyModule moduleIds={['integrations', 'automation']}><ErrorBoundary><AutomicIntegrationPage /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/automation" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationOverview /></ErrorBoundary></RequireModule>} />

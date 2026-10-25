@@ -337,7 +337,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       type: 'group', key: 'openshift', name: t('nav_openshift'), icon: <Boxes size={18} />, moduleId: 'openshift',
       children: [
-        { type: 'link', path: '/openshift/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={15} /> },
         {
           type: 'link', path: '/openshift/ops', name: t('nav_command_center'), icon: <Zap size={15} />,
           badge: () => {
