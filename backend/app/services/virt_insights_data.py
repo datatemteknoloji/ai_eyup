@@ -144,8 +144,18 @@ def daily_cluster_series(db: Session, hypervisor_id: int, cluster_name: Optional
     """Günlük cluster Memory/CPU doluluk serisi (eski → yeni)."""
     if not host_names:
         return {"mem_pct": [], "cpu_pct": []}
-    rows = db.execute(text("""
-        WITH d AS (
+    from app.services.daily_history import reads_daily_summary
+    if reads_daily_summary("hypervisor_host_metrics", days):
+        source_sql = """
+          SELECT bucket AS day, host_name,
+                 avg_mem_used_mb AS mu, avg_mem_total_mb AS mt,
+                 avg_cpu_weighted AS cu, avg_cpu_cores AS ct
+            FROM hypervisor_host_metrics_daily
+           WHERE hypervisor_id = :hv AND host_name = ANY(:hosts)
+             AND bucket > now() - make_interval(days => :days)
+        """
+    else:
+        source_sql = """
           SELECT date_trunc('day', timestamp) AS day, host_name,
                  avg(mem_used_mb) AS mu, avg(mem_total_mb) AS mt,
                  avg(cpu_usage_pct * COALESCE(cpu_cores, 0)) AS cu, avg(COALESCE(cpu_cores, 0)) AS ct
@@ -154,6 +164,10 @@ def daily_cluster_series(db: Session, hypervisor_id: int, cluster_name: Optional
              AND timestamp > now() - make_interval(days => :days)
              AND COALESCE(maintenance_mode, 0) = 0
            GROUP BY 1, 2
+        """
+    rows = db.execute(text(f"""
+        WITH d AS (
+          {source_sql}
         )
         SELECT day, sum(mu) AS mu, sum(mt) AS mt, sum(cu) AS cu, sum(ct) AS ct
           FROM d GROUP BY day ORDER BY day
@@ -184,12 +198,22 @@ def latest_datastores(db: Session, hypervisor_ids: Iterable[int]) -> List[Dict[s
 
 
 def daily_datastore_series(db: Session, hypervisor_id: int, name: str, days: int = 90) -> List[Optional[float]]:
-    rows = db.execute(text("""
+    from app.services.daily_history import reads_daily_summary
+    if reads_daily_summary("virt_datastore_metrics", days):
+        sql = """
+        SELECT bucket AS day, avg_usage_pct AS u
+          FROM virt_datastore_metrics_daily
+         WHERE hypervisor_id = :hv AND name = :n AND bucket > now() - make_interval(days => :d)
+         ORDER BY 1
+        """
+    else:
+        sql = """
         SELECT date_trunc('day', timestamp) AS day, avg(usage_pct) AS u
           FROM virt_datastore_metrics
          WHERE hypervisor_id = :hv AND name = :n AND timestamp > now() - make_interval(days => :d)
          GROUP BY 1 ORDER BY 1
-    """), {"hv": int(hypervisor_id), "n": name, "d": int(days)}).mappings().all()
+        """
+    rows = db.execute(text(sql), {"hv": int(hypervisor_id), "n": name, "d": int(days)}).mappings().all()
     return [_f(r["u"]) for r in rows]
 
 

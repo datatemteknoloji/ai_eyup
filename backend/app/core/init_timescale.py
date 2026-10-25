@@ -224,6 +224,140 @@ def init_timescaledb():
                     ),
                 )
 
+            # ── Günlük özet, 400 gün (ham saklama süreleri değişmez) ──────────
+            # Mevsimsellik ham seriden uzun ister. Continuous aggregate ham
+            # pencereden uzun tutulur; ham tick silme politikasına dokunulmaz.
+            # p95 Timescale 2.28'de percentile_cont ile CA içinde hesaplanır.
+            _daily_views = (
+                (
+                    "metric_data_daily",
+                    """SELECT server_id, metric_name,
+                              time_bucket('1 day', timestamp) AS bucket,
+                              avg(value) AS avg_value,
+                              max(value) AS max_value,
+                              percentile_cont(0.95) WITHIN GROUP (ORDER BY value) AS p95_value,
+                              count(*) AS samples
+                       FROM metric_data
+                       GROUP BY server_id, metric_name, bucket""",
+                    "32 days",
+                ),
+                (
+                    "hypervisor_host_metrics_daily",
+                    """SELECT hypervisor_id, host_name,
+                              time_bucket('1 day', timestamp) AS bucket,
+                              avg(cpu_usage_pct) AS avg_cpu_pct,
+                              max(cpu_usage_pct) AS max_cpu_pct,
+                              percentile_cont(0.95) WITHIN GROUP (ORDER BY cpu_usage_pct) AS p95_cpu_pct,
+                              avg(mem_usage_pct) AS avg_mem_pct,
+                              max(mem_usage_pct) AS max_mem_pct,
+                              percentile_cont(0.95) WITHIN GROUP (ORDER BY mem_usage_pct) AS p95_mem_pct,
+                              avg(ds_usage_pct) AS avg_ds_pct,
+                              max(ds_usage_pct) AS max_ds_pct,
+                              percentile_cont(0.95) WITHIN GROUP (ORDER BY ds_usage_pct) AS p95_ds_pct,
+                              avg(mem_used_mb) AS avg_mem_used_mb,
+                              avg(mem_total_mb) AS avg_mem_total_mb,
+                              avg(cpu_usage_pct * COALESCE(cpu_cores, 0)) AS avg_cpu_weighted,
+                              avg(COALESCE(cpu_cores, 0)) AS avg_cpu_cores,
+                              count(*) AS samples
+                       FROM hypervisor_host_metrics
+                       GROUP BY hypervisor_id, host_name, bucket""",
+                    "90 days",
+                ),
+                (
+                    "virt_datastore_metrics_daily",
+                    """SELECT hypervisor_id, name,
+                              time_bucket('1 day', timestamp) AS bucket,
+                              avg(usage_pct) AS avg_usage_pct,
+                              max(usage_pct) AS max_usage_pct,
+                              percentile_cont(0.95) WITHIN GROUP (ORDER BY usage_pct) AS p95_usage_pct,
+                              avg(used_gb) AS avg_used_gb,
+                              max(used_gb) AS max_used_gb,
+                              percentile_cont(0.95) WITHIN GROUP (ORDER BY used_gb) AS p95_used_gb,
+                              count(*) AS samples
+                       FROM virt_datastore_metrics
+                       GROUP BY hypervisor_id, name, bucket""",
+                    "180 days",
+                ),
+                (
+                    "ocp_node_daily",
+                    """SELECT cluster_id, object_key,
+                              time_bucket('1 day', timestamp) AS bucket,
+                              avg(cpu_pct) AS avg_cpu_pct,
+                              max(cpu_pct) AS max_cpu_pct,
+                              percentile_cont(0.95) WITHIN GROUP (ORDER BY cpu_pct) AS p95_cpu_pct,
+                              avg(memory_pct) AS avg_memory_pct,
+                              max(memory_pct) AS max_memory_pct,
+                              percentile_cont(0.95) WITHIN GROUP (ORDER BY memory_pct) AS p95_memory_pct,
+                              count(*) AS samples
+                       FROM ocp_resource_metrics
+                       WHERE kind = 'node'
+                       GROUP BY cluster_id, object_key, bucket""",
+                    "30 days",
+                ),
+            )
+            for _view, _select, _start in _daily_views:
+                _run(
+                    conn,
+                    f"""CREATE MATERIALIZED VIEW IF NOT EXISTS {_view}
+                       WITH (timescaledb.continuous) AS
+                       {_select}
+                       WITH NO DATA;""",
+                    f"{_view} günlük continuous aggregate",
+                    ok_substrings=("already exists", "does not exist"),
+                )
+                _run(
+                    conn,
+                    f"""SELECT add_continuous_aggregate_policy('{_view}',
+                           start_offset => INTERVAL '{_start}',
+                           end_offset => INTERVAL '1 hour',
+                           schedule_interval => INTERVAL '1 hour',
+                           if_not_exists => TRUE);""",
+                    f"{_view} refresh policy",
+                    ok_substrings=("already exists", "does not exist", "not a continuous aggregate"),
+                )
+                _run(
+                    conn,
+                    f"""SELECT add_retention_policy('{_view}',
+                           INTERVAL '400 days',
+                           if_not_exists => TRUE);""",
+                    f"{_view} retention 400 days",
+                    ok_substrings=("already exists", "does not exist", "not a continuous aggregate"),
+                )
+
+            # system_events hypertable değil; continuous aggregate kurulamaz.
+            # Günlük sayım ayrı tabloda 400 gün durur. Ham satır ve incidents silinmez.
+            _run(
+                conn,
+                """CREATE TABLE IF NOT EXISTS system_event_daily (
+                       bucket date NOT NULL,
+                       event_type varchar(100) NOT NULL,
+                       severity varchar(20) NOT NULL,
+                       event_count integer NOT NULL,
+                       PRIMARY KEY (bucket, event_type, severity)
+                   );""",
+                "system_event_daily table",
+            )
+            _run(
+                conn,
+                """INSERT INTO system_event_daily (bucket, event_type, severity, event_count)
+                   SELECT (created_at AT TIME ZONE 'UTC')::date,
+                          event_type,
+                          COALESCE(severity, 'info'),
+                          count(*)::int
+                   FROM system_events
+                   WHERE created_at >= NOW() - INTERVAL '7 days'
+                   GROUP BY 1, 2, 3
+                   ON CONFLICT (bucket, event_type, severity)
+                   DO UPDATE SET event_count = EXCLUDED.event_count;""",
+                "system_event_daily ilk doldurma",
+            )
+            _run(
+                conn,
+                """DELETE FROM system_event_daily
+                   WHERE bucket < (NOW() AT TIME ZONE 'UTC')::date - 400;""",
+                "system_event_daily 400 gün sınırı",
+            )
+
             try:
                 from app.services.rag_store import ensure_schema
                 ensure_schema()

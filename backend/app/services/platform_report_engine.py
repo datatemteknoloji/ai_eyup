@@ -131,12 +131,19 @@ def daily_metric_series(
     if not server_ids or not metric_names:
         return {}
     from sqlalchemy import text as sa_text
+    from app.services.daily_history import reads_daily_summary
 
-    out: Dict[tuple, List[float]] = {}
-    try:
-        rows = db.execute(
-            sa_text(
+    if reads_daily_summary("metric_data", days):
+        sql = """
+                SELECT server_id, metric_name, bucket AS day, avg_value AS avg_val
+                FROM metric_data_daily
+                WHERE server_id = ANY(:ids)
+                  AND metric_name = ANY(:names)
+                  AND bucket >= NOW() - make_interval(days => :days)
+                ORDER BY day ASC
                 """
+    else:
+        sql = """
                 SELECT server_id, metric_name,
                        date_trunc('day', timestamp) AS day,
                        AVG(value) AS avg_val
@@ -147,7 +154,10 @@ def daily_metric_series(
                 GROUP BY server_id, metric_name, day
                 ORDER BY day ASC
                 """
-            ),
+    out: Dict[tuple, List[float]] = {}
+    try:
+        rows = db.execute(
+            sa_text(sql),
             {"ids": list(server_ids), "names": list(metric_names), "days": int(days)},
         ).all()
     except Exception as exc:  # metric_data yok / TimescaleDB kapalı
