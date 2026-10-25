@@ -105,9 +105,16 @@ function Popover({ anchor, onClose, children }: { anchor: HTMLElement | null; on
       if (ref.current && !ref.current.contains(e.target as Node) && !anchor?.contains(e.target as Node)) onClose()
     }
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('mousedown', h)
-    document.addEventListener('keydown', k)
-    return () => { document.removeEventListener('mousedown', h); document.removeEventListener('keydown', k) }
+    // Açan tıklamanın mousedown'u dinleyiciyi hemen kapatmasın.
+    const timer = window.setTimeout(() => {
+      document.addEventListener('mousedown', h)
+      document.addEventListener('keydown', k)
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('mousedown', h)
+      document.removeEventListener('keydown', k)
+    }
   }, [anchor, onClose])
   if (!pos) return null
   return createPortal(

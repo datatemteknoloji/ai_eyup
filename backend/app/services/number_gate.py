@@ -73,19 +73,41 @@ def section_labels(facts: Mapping[str, Any], section_id: Optional[str] = None) -
     return merged
 
 
+def period_labels(facts: Mapping[str, Any]) -> Dict[str, str]:
+    """Dönem dizgisi label'dır. Saat parçası (00) kopyalanırsa sayı sanılmasın."""
+    period = facts.get("period") or {}
+    if not isinstance(period, Mapping):
+        return {}
+    out: Dict[str, str] = {}
+    for key in ("start", "end"):
+        raw = str(period.get(key) or "").strip()
+        if not raw:
+            continue
+        out[f"period_{key}"] = raw
+        day = raw[:10]
+        if len(day) == 10 and day[4] == "-" and day != raw:
+            out[f"period_{key}_day"] = day
+    return out
+
+
 def check_text(
     text: str,
     facts: Mapping[str, Any],
     *,
     section_id: Optional[str] = None,
     require_number: bool = False,
+    all_sections: bool = False,
 ) -> Dict[str, Any]:
-    """Eşitlik kapısı. Geçmezse reason döner; metni yeniden yazmaz."""
-    labels = section_labels(facts, section_id)
+    """Eşitlik kapısı. Geçmezse reason döner; metni yeniden yazmaz.
+
+    all_sections: prompt bütün raporu taşıyorsa kardeş bölümün display'i de geçerlidir.
+    """
+    labels = section_labels(facts, None if all_sections else section_id)
+    labels.update(period_labels(facts))
     found = extract_numbers(text, labels)
     if require_number and not found:
         return {"ok": False, "reason": "sayısız_metin", "found": found, "rejected": []}
-    allowed = allowed_displays(facts, section_id)
+    allowed = allowed_displays(facts, None if all_sections else section_id)
     rejected = [token for token in found if token not in allowed]
     if rejected:
         return {"ok": False, "reason": "display_disi", "found": found, "rejected": rejected}

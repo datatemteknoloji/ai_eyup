@@ -52,3 +52,19 @@ def test_a1_numberless_text_rejected_other_section_passes():
 
 def test_allowed_duration_passes():
     assert check_text("Örnek 14 gün.", FACTS, section_id="b1")["ok"] is True
+
+
+def test_period_timestamp_is_masked_and_bare_zero_is_not():
+    facts = {
+        "period": {"start": "2026-10-01T00:00:00+00:00", "end": "2026-11-01T00:00:00+00:00"},
+        "sections": FACTS["sections"],
+    }
+    copied = "Dönem 2026-10-01T00:00:00+00:00 ile 2026-11-01 arasında 12 adet."
+    assert check_text(copied, facts, section_id="a1", require_number=True)["ok"] is True
+    assert check_text("Tam 00 olay.", facts, section_id="a1")["ok"] is False
+
+
+def test_sibling_display_passes_only_for_the_whole_report():
+    text = "Özette 12 adet, kapasitede 14 gün."
+    assert check_text(text, FACTS, section_id="a1")["ok"] is False
+    assert check_text(text, FACTS, section_id="a1", all_sections=True)["ok"] is True

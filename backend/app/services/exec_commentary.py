@@ -12,12 +12,24 @@ logger = logging.getLogger(__name__)
 _INSTRUCTION = (
     "Aşağıdaki JSON rapor gerçekleridir. Yeni sayı, tarih veya yüzde üretme. "
     "Sayı yazacaksan yalnız numbers içindeki display değerlerinden birebir kopyala. "
-    "labels içindeki adları kullanabilirsin; onlardaki rakamlar sayı değildir."
+    "Ondalık ayırıcıyı değiştirme. "
+    "labels içindeki adları kullanabilirsin; onlardaki rakamlar sayı değildir. "
+    "period alanını sayı gibi yazma."
 )
 
 
+def _day(value: Any) -> str:
+    raw = str(value or "").strip()
+    if len(raw) >= 10 and raw[4] == "-" and raw[7] == "-":
+        return raw[:10]
+    return raw
+
+
 def prompt_payload(facts: Mapping[str, Any]) -> Dict[str, Any]:
-    """VM listesi ve ham satır gitmez. Sayılar, agregatlar ve etiketler gider."""
+    """VM listesi ve ham satır gitmez. Sayılar, agregatlar ve etiketler gider.
+
+    Dönem gün olarak gider. Saat (00:00:00) prompt'ta durmaz; model onu sayı sanmasın.
+    """
     sections = []
     for section in facts.get("sections") or []:
         sections.append({
@@ -29,9 +41,11 @@ def prompt_payload(facts: Mapping[str, Any]) -> Dict[str, Any]:
             "confidence": section.get("confidence"),
             "notes": section.get("notes") or [],
         })
+    period = facts.get("period") or {}
+    start, end = _day(period.get("start")), _day(period.get("end"))
     return {
         "report_type": facts.get("report_type"),
-        "period": facts.get("period") or {},
+        "period": {"start": start, "end": end} if start or end else {},
         "data_readiness": facts.get("data_readiness") or [],
         "sections": sections,
     }
@@ -68,7 +82,9 @@ def publish_commentary(
 
     def _once(extra: str = "") -> Dict[str, Any]:
         text = generate(prompt if not extra else prompt + "\n" + extra) or ""
-        gate = check_text(text, facts, section_id=section_id, require_number=require_number)
+        gate = check_text(
+            text, facts, section_id=section_id, require_number=require_number, all_sections=True,
+        )
         return {"text": text, "gate": gate}
 
     first = _once()

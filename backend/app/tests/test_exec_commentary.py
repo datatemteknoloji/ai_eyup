@@ -16,6 +16,14 @@ FACTS = {
 }
 
 
+def test_prompt_period_drops_the_clock():
+    facts = dict(FACTS)
+    facts["period"] = {"start": "2026-10-01T00:00:00+00:00", "end": "2026-11-01T00:00:00+00:00"}
+    payload = prompt_payload(facts)
+    assert payload["period"] == {"start": "2026-10-01", "end": "2026-11-01"}
+    assert "00:00:00" not in str(payload)
+
+
 def test_prompt_has_numbers_and_labels_not_vm_rows():
     payload = prompt_payload(FACTS)
     assert payload["sections"][0]["numbers"]["events"]["display"] == ["12", "12 adet"]
