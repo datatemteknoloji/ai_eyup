@@ -11,6 +11,17 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.42] - 2026-10-26
+
+### Sohbet kalite programı (Adım 7–11; ayrıntı `docs/chat-quality/plan.md`)
+- **Adım 7 — veriye dayalılık doğrulayıcısı:** uydurma varlık/komut/iç terim sınıfları `chat_grounding_mode` (off/shadow/enforce) ile engellenir; yanlış öncül düzeltmeleri.
+- **Adım 8/8R — dürüstlük ve RAG:** modül filtreli RAG araması, alaka eşiği (`rag_min_relevance_*`), lexical süre sınırı (`rag_lexical_timeout_ms`), seed düzeltmesi; incidents saklama (hazır, kapalı).
+- **Adım 9 — cevap önbelleği:** yalnız kavramsal + tam eşleşme; anahtar `platform:ids_hash:rbac_sig`, TTL 24 sa (`chat_cache_*`); `/chat/feedback` kimlik ister, 👎 girdiyi düşürür; `done.from_cache`.
+- **Adım 10 — ilerleme olayları:** ilk token öncesi `progress` SSE olayları (aşama ≤ 60, kalp atışı ≤ 720, `chat_progress_*`); 4 sohbet sayfasında canlı durum metni. Veri/argüman/sonuç içermez.
+- **Adım 11 — event döngüsü koruması:** sohbet için ayrı 96 işçili `chat_io` havuzu (`core/chat_executor.py`); LLM/SQL/Redis/HTTP çağrıları döngüden çıkarıldı; `create_turn(loop=…)`; olay toplayıcılarında O(N·M) ORM taraması `services/event_dedupe.py` ile SQL'e taşındı (vCenter/oVirt/OpenShift-Virt/virt_log); tanı: `[LoopWatchdog]` (`LOOP_WATCHDOG=0` kapatır) ve `[SSELag]`. 3 paralel sohbette en uzun sessizlik 11,4 → 5,98 sn.
+- 32 yeni Gelişmiş ayar (`docs/deployment.md` tablosu); AI mimari belgeleri (TR/EN) ve `.cursor/rules` güncellendi.
+- İnsan testleri (İH6–İH10) kullanıcıdadır; ilgili adımlar «Kapandı» değildir.
+
 ### Sanallaştırma — v42 eksikleri
 - E2: What-if, toplu yerleşim, host-arızası (N+1) ve "VM nereye" tek yerleşim çekirdeğini (`capacity.placement.place_vms`) kullanır; aynı VM için aynı SIĞAR/SIĞMAZ kararı.
 - E3: vCenter "ayrılmış failover host" politikası: ayrılmış host'lar yerleşime kapalı, kapasiteleri rezerv; host listesi okunamazsa 1 host varsayımı etiketli. Slot politikasında (Host failures tolerated) boş slot yoksa VM sığmaz (`ha_slots`); 1 slot/VM varsayımı ve slot sayısının son okumadan geldiği notla gösterilir.
@@ -18,6 +29,37 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 - E7: Kapasite › Eşikler'de cluster/instance override'ları listelenir (PolicyOverrides).
 - E9: Sohbet PDF dışa aktarımına yöntem notları ve kanıt eklendi.
 - Önce/sonra ölçümü (v1.0.9.41 ↔ main, aynı DB): cluster sayıları, N+1 tablosu, runway ve "nereye sığar/en fazla N" kararlarında 0 fark; tek fark E6 `cpu_request` etiketi. Eşit boyutlu VM'lerde yerleşim sırası doğal sıraya döndürüldü. E3 kuralları (ayrılmış host, HA slot) bu ortamda HA politikalı vCenter olmadığı için yalnız testle doğrulandı. Rapor: `docs/release/kapasite-once-sonra-20261013.md`.
+
+### Sanallaştırma — hedef ortam analizi düzeltmeleri
+- **Envanter eşleştirme:** link-local/loopback/multicast IP'ler (169.254.x vb.) ve başka bir VM'e (`hypervisor_vm_id` dolu) bağlı kayıtlar IP/ad yedeğiyle devralınmaz; aynı IP'yi paylaşan VM'ler artık tek `servers` kaydında birleşmez (aynı hypervisor + aynı ad + aynı IP ise VM kimliği biçim değişimi — KubeVirt UID → `ns/ad` — hâlâ devralınır).
+- **Datastore kuralı (`vmw.datastore.accessible`):** önem ve kanıt bağlama göre ayrılır — hiçbir host'a bağlı olmayan (boş) datastore `low`, NFS ve tüm bağlı host'larda erişilemiyor `medium`, diğerleri `critical`. Kanıta mount/host sayısı, tür, kapasite, boş yüzde ve senaryo eklendi.
+- **Uplink kuralı:** uplink'siz standart switch (dış bağlantısız/izole) yedeksizlik bulgusu değil, kanıtta `isolated_switches`; detay `ad (N uplink)`.
+- **VM listesi ve Monitoring araması** sunucu tarafında (`q`, `hypervisor_id`, debounce 400 ms) çalışır; sayfalama dışındaki VM'ler de bulunur.
+- **Depolama göstergesi:** host metriklerindeki paylaşımlı datastore çift sayımı kaldırıldı; `/hypervisors/host-metrics` benzersiz datastore'lardan `datastore_summary` döner.
+- **Kapasite sayfası performansı:** `/virt-insights/capacity` ve host-arızası matrisi kısa ömürlü (120 sn) Redis/bellek önbelleğinde; eşik/override değişince ve envanter/karar katmanı turu bitince geçersiz kılınır.
+- **Baseline kaldırma:** `DELETE /virt-insights/baseline` (operatör; kapsam zorunlu) + Değişiklikler sekmesinde "Baseline'ı kaldır" (snapshot geçmişi korunur); değişiklik satırları `has_baseline` döner.
+- **N+1 raporu etiketleri/birimleri:** durum kodları okunur etiketlere (Yeterli/Sınırda/Yetersiz…), sütun başlıkları birim ve tooltip ile.
+- **Uyum skoru şeffaflığı:** skor = Başarılı/(Başarılı+Başarısız); hücrede başarılı/ölçülen sayısı ve tooltip.
+- **Centrify:** sütun migrasyonu her sütunu ayrı işlemde çalıştırır; kısmi başarısızlıkta "tamamlandı" yerine uyarı, DB erişilemezse "atlandı" loglanır.
+
+### Sanallaştırma — ölçek (1000 sahte VM) testinden çıkan düzeltmeler
+- **Anomali taraması:** `detect_all_anomalies` naive `utcnow()` ile tz-aware `metrics.timestamp` karşılaştırıyordu (`TypeError`); her turda hata dönüyordu, artık tz-aware.
+- **Senaryo hesapları (`move`, `simulate`, `host-failure`, `bulk-placement`, `reclaim-sim`, iç içe senaryo):** `build_capacity(with_reclaim=False)` ile reclaim toplamı/aksiyonlar hesaplanmaz (bu uçlar kullanmıyor); `move` yalnız kaynak cluster'ı hesaplar. 1000 VM'de: bulk 3,4 → 0,3 sn, move 4,0 → 0,6 sn, reclaim-sim 1,1 → 0,3 sn, host-failure 1,0 → 0,3 sn.
+- **Envanter sync kayıt fazı:** `learned_facts` tek SELECT ile toplu okunur (eskiden fact başına), VM başına commit yerine 10 VM'de bir + tur sonunda commit (fact yazımı SAVEPOINT içinde), bulunan kayıt tekrar sorgulanmaz. 1000 VM: 33 sn → 16 sn.
+- **Paralel hypervisor sync:** `sync_all_hypervisors` birden fazla hypervisor'u (en çok 4) kendi DB oturumunda paralel çalıştırır; ulaşılamayan biri (10 sn zaman aşımı) turu geciktirmez.
+- **`learned_facts` yazımı:** değişmeyen fact'in son-onay damgası en çok saatte bir güncellenir (`FACT_CONFIRM_MIN_INTERVAL`); değer/kaynak değişirse hemen yazılır. Sync kayıt fazı 16 sn → 7 sn (kararlı durumda ~4,6 ms/VM; başlangıç 33 sn). `times_confirmed` artık "sync sayısı" değil "onaylanan saat dilimi sayısı"dır.
+- **Datastore fact'leri (sohbet isteği yolunda):** `store_live_datastore_facts` fact başına SELECT/UPDATE yerine parça başına tek sorgu + aynı sıklık sınırı; 1000 VM'de datastore soru sonrası gecikme 6,8–8,6 sn → ~0,2 sn.
+- **Kapasite önbelleği:** TTL 600 sn; ESX/OLVM/OCP host metrik turu, envanter ve karar katmanı turu sonunda önbellek düşürülüp varsayılan `/capacity` yanıtı hemen yeniden hesaplanır (`invalidate_and_prewarm`); ilk kullanıcı isteği önbellekten gelir (0,07 sn). `reclaim_rollup_by_cluster` `vm_allocations`'ı tek kez yükler (soğuk hesap 1,74 → 0,87 sn).
+- **`/virt-insights/vms`:** önce sıralanıp sonra kesilir (eskiden envanter sırasındaki ilk N kayıt alınıyordu); `total` döner.
+- **`/hypervisors/host-metrics`:** envanter yedeğinden gelen `datastore_summary.count` doldurulur (OLVM).
+
+### Sanallaştırma / AIOps — takip düzeltmeleri
+- **OLVM `list_vms` 500:** engine `follow=host,cluster,nics,guest_operating_system` isteğine HTTP 500 dönüyordu; yedek yalnız 400/404'te çalışıyordu → VM sync 11 gün boyunca başarısızdı. Artık herhangi bir `OVirtError`'da tam follow → `follow=nics` → düz liste zinciri denenir; eksik alanlar VM başına detay çağrısıyla tamamlanır. Hepsi başarısız olursa hata fırlatılır (sessiz boş liste yok, prune çalışmaz).
+- **Sync bayatlığı görünür:** periyodik tur sonucu (`sync_all_hypervisors`) artık `meta_data.sync_job` + `hypervisors.status` alanına yazılır (hata → `ERROR`, `last_error_at`; başarı → `ONLINE`, `last_success_at`); elle başlatılmış çalışan tarama ezilmez. Yeni bulgu `inv.sync.stale` (VMware/OLVM/OCP Virt, `platform` varlığı): son başarılı sync eşikten eskiyse FAIL (eşik = max(6 sa, 3 × `inventory_sync_interval_minutes`); ≥72 sa → yüksek). Sahte envanter (`fake_seed`) sync/toplama/OCP metrik/event turlarında atlanır.
+- **Incident gürültüsü:** OpenShift `Pod/<ad>-<rastgele>` olayları aynı kök neden için tek incident'a gruplanır (`normalize_k8s_object`; StatefulSet `-0` korunur). `auto_*` kaynaklı, sahiplenilmemiş, `open` incident'lar 24 saattir güncellenmediyse `resolved` olur (silme yok; `resolution` yazılır). Otomatik RCA yalnız son 24 saatte açılmış incident'lara çalışır.
+- **EN arayüz:** datastore bulgusunun senaryoya özel önerisi (unmount / NFS erişilemiyor) İngilizce karşılığıyla gösterilir.
+- **VM kartı:** vCPU/RAM 0 veya boşken "0 vCPU • 0 GB" yerine yalnız değeri olan alan (yoksa "—") gösterilir.
+- **Test aracı:** `scripts/fake_virt_seed.py seed-ocp 500` / `cleanup-ocp` / `cleanup-all` — karışık OS'lu (Windows, Ubuntu, RHEL, CentOS, Rocky, Alma, Oracle, Debian, SLES, Fedora, guest-agent'sız) sahte OpenShift Virt envanteri. Hem Sanallaştırma (`ZZ-FAKE-OpenShift` hypervisor) hem OpenShift modülü (`ZZ-FAKE-OCP` cluster: node, proje, workload, `ocp_resource_metrics`) tarafında görünür; cluster overview ve KubeVirt VM listesi DB'den üretilir (`services/openshift/fake_cluster.py`). Sahte kayıtlar (`meta_data.fake_seed`) gerçek sync/event/monitoring/bulgu/ESX turlarında atlanır; metrikleri `services/fake_refresh.py` her ESX metrik turunda tazeler (pencereler dolup envanter "veri yok" olmaz). Bilinen sınır: OCP Insights (bulgu/kapasite/reclaim), topology, YAML, konsol ve güç/klon işlemleri sahte cluster'da çalışmaz (canlı API gerekir).
 
 ### Güvenlik ve paketleme
 - Centrify DEMO veri uçları (`POST/DELETE /centrify-mgmt/demo/seed`) varsayılan KAPALI (`CENTRIFY_DEMO_ENABLED=true` yalnız geliştirme/demo) ve yalnız `admin` rolüne açık (RBAC kuralı + uç bağımlılığı). Önceden operatör rolü yeterliydi ve `DELETE` Centrify tablolarını boşaltıyordu.
