@@ -247,8 +247,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       type: 'group', key: 'executive', name: t('nav_executive'), icon: <Crown size={18} />,
       moduleIds: ['executive', 'ai_automation'],
       children: [
-        { type: 'link', path: '/executive', name: t('nav_executive_summary'), icon: <LayoutDashboard size={15} />, moduleId: 'executive' },
-        { type: 'link', path: '/executive/reports', name: t('nav_executive_reports'), icon: <BarChart3 size={15} />, moduleId: 'executive' },
+        { type: 'link', path: '/executive', name: t('nav_executive_reports'), icon: <BarChart3 size={15} />, moduleId: 'executive' },
         { type: 'link', path: '/chat', name: t('nav_unified_chat'), icon: <Bot size={15} />, moduleIds: ['ai_automation', 'executive'] },
       ],
     },
@@ -338,6 +337,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       type: 'group', key: 'openshift', name: t('nav_openshift'), icon: <Boxes size={18} />, moduleId: 'openshift',
       children: [
+        { type: 'link', path: '/openshift/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={15} /> },
         {
           type: 'link', path: '/openshift/ops', name: t('nav_command_center'), icon: <Zap size={15} />,
           badge: () => {
