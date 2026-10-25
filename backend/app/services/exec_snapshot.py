@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models.infrastructure_report import InfrastructureReport
 from app.services.exec_facts import build_executive_facts, save_monthly_snapshot
+from app.services.exec_summary_text import compose_summary
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]
         lock_elapsed_month(db, now)
         start, end = current_month(now)
         facts = build_executive_facts(db, start, end)
+        summary = compose_summary(facts)
         row = InfrastructureReport(
             report_type=BUNDLE,
             report_title="Yönetici raporları",
@@ -105,7 +107,9 @@ def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]
                 "locked": True,
                 "period": {"start": start.isoformat(), "end": end.isoformat()},
                 "facts": facts,
+                "summary_source": summary["source"],
             },
+            summary=summary["text"],
             status="locked",
         )
         db.add(row)
@@ -143,6 +147,8 @@ def bundle_payload(db: Session) -> Dict[str, Any]:
         "refreshing": running,
         "period": data.get("period"),
         "report_id": row.id,
+        "summary": row.summary,
+        "summary_source": data.get("summary_source"),
     }
 
 

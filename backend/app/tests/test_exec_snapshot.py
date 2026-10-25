@@ -70,6 +70,10 @@ def test_month_roll_locks_previous_bundle_once(isolated_db, monkeypatch):
         "app.services.exec_snapshot.build_executive_facts",
         lambda *_a, **_k: [{"report_type": "a1", "sections": []}],
     )
+    monkeypatch.setattr(
+        "app.services.exec_snapshot.compose_summary",
+        lambda *_a, **_k: {"text": "Özet cümlesi.", "source": "template"},
+    )
     produce_bundle(isolated_db, now=datetime(2026, 10, 15, tzinfo=timezone.utc))
     produce_bundle(isolated_db, now=datetime(2026, 10, 20, tzinfo=timezone.utc))
     monthly = (
@@ -87,8 +91,14 @@ def test_produce_writes_locked_row(isolated_db, monkeypatch):
         "app.services.exec_snapshot.build_executive_facts",
         lambda *_a, **_k: [{"report_type": "a1", "sections": []}],
     )
+    monkeypatch.setattr(
+        "app.services.exec_snapshot.compose_summary",
+        lambda *_a, **_k: {"text": "Özet cümlesi.", "source": "template"},
+    )
     row_id = produce_bundle(isolated_db)
     assert row_id
     body = _client(isolated_db).get("/ops/executive-facts").json()
     assert body["reports"][0]["report_type"] == "a1"
     assert body["status"] == "ready"
+    assert body["summary"] == "Özet cümlesi."
+    assert body["summary_source"] == "template"
