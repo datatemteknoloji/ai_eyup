@@ -150,14 +150,22 @@ def _calc_health_score(
     }
 
 
-def _weighted_health(parts: List[tuple]) -> Dict[str, Any]:
-    """Ölçülemeyen platform ortalamaya girmez. Hepsi ölçülemeze genel skor da yok."""
-    usable = [(int(score), int(weight)) for score, weight in parts if score is not None and weight > 0]
+def _worst_platform_health(scores: List[Any]) -> Dict[str, Any]:
+    """Genel not, ölçülen platformların en kötüsüdür. Sunucu sayısı ağırlık değildir.
+
+    Ölçülemeyen platform nota girmez. Hepsi ölçülemeze genel not da yoktur.
+    """
+    usable = [int(score) for score in scores if score is not None]
     if not usable:
-        return {"health_score": None, "grade": None, "label": "Ölçülemedi", "measurable": False}
-    total_w = sum(w for _, w in usable)
-    score = round(sum(s * w for s, w in usable) / total_w)
-    return {"health_score": score, "measurable": True, **_grade_for_score(score)}
+        return {
+            "health_score": None, "grade": None, "label": "Ölçülemedi",
+            "measurable": False, "rule": "worst_platform",
+        }
+    score = min(usable)
+    return {
+        "health_score": score, "measurable": True, "rule": "worst_platform",
+        **_grade_for_score(score),
+    }
 
 
 # ── Sunucu bazlı gruplama ─────────────────────────────────────────────────────
@@ -721,10 +729,25 @@ async def executive_summary(db: Session = Depends(get_db)):
     vm_count = vm_q.count()
     vm_running_count = vm_q.filter(sa_func.lower(Server.vm_power_state).in_(["poweredon", "up", "running"])).count()
 
+    from app.services.synthetic_scope import synthetic_cluster_ids
     ocp_clusters = db.query(OpenShiftCluster).all()
+    ocp_synthetic_ids = synthetic_cluster_ids(db)
+    ocp_real = [c for c in ocp_clusters if c.id not in ocp_synthetic_ids]
     ocp_cluster_count = len(ocp_clusters)
-    ocp_unhealthy = sum(1 for c in ocp_clusters if (c.status or "").upper() == "ERROR")
-    ocp_health = _calc_health_score(unique_events(ocp_events), ocp_cluster_count)
+    ocp_real_count = len(ocp_real)
+
+    def _real_ocp_event(ev: SystemEvent) -> bool:
+        cid = (ev.raw_data or {}).get("cluster_id")
+        if cid is None:
+            return True
+        try:
+            return int(cid) not in ocp_synthetic_ids
+        except (TypeError, ValueError):
+            return True
+
+    ocp_events = [ev for ev in ocp_events if _real_ocp_event(ev)]
+    ocp_unhealthy = sum(1 for c in ocp_real if (c.status or "").upper() == "ERROR")
+    ocp_health = _calc_health_score(unique_events(ocp_events), ocp_real_count)
 
     smap = _server_map(db)
     linux_groups = group_events(linux_events, smap)
@@ -872,16 +895,16 @@ async def executive_summary(db: Session = Depends(get_db)):
 
     virt_health = virt_summary.get("health") or {}
     virt_measurable = virt_health.get("measurable", virt_summary.get("health_score") is not None)
-    parts = []
+    platform_scores = []
     if linux_health.get("measurable") and linux_ids:
-        parts.append((linux_health["score"], len(linux_ids)))
+        platform_scores.append(linux_health["score"])
     if windows_health.get("measurable") and windows_ids:
-        parts.append((windows_health["score"], len(windows_ids)))
+        platform_scores.append(windows_health["score"])
     if virt_measurable and hypervisor_count and virt_summary.get("health_score") is not None:
-        parts.append((virt_summary["health_score"], hypervisor_count))
-    if ocp_health.get("measurable") and ocp_cluster_count:
-        parts.append((ocp_health["score"], ocp_cluster_count))
-    overall = _weighted_health(parts)
+        platform_scores.append(virt_summary["health_score"])
+    if ocp_health.get("measurable") and ocp_real_count:
+        platform_scores.append(ocp_health["score"])
+    overall = _worst_platform_health(platform_scores)
 
     by_family = virt_summary.get("by_family") or {}
     families_present = virt_summary.get("families_present") or []
@@ -968,6 +991,8 @@ async def executive_summary(db: Session = Depends(get_db)):
             },
             "openshift": {
                 "cluster_count": ocp_cluster_count,
+                "real_cluster_count": ocp_real_count,
+                "synthetic_excluded": len(ocp_synthetic_ids),
                 "unhealthy_clusters": ocp_unhealthy,
                 "critical": ocp_crit,
                 "warning": ocp_warn,
