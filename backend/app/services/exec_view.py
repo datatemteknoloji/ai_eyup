@@ -125,19 +125,23 @@ def _server_counts(db: Session) -> Dict[str, int]:
     hidden = synthetic_server_ids(db)
     out = {"linux": 0, "linux_agent": 0, "windows": 0, "windows_agent": 0}
     try:
-        rows = db.query(Server.os_type, Server.node_exporter_running, Server.hypervisor_id, Server.id).all()
+        rows = db.query(
+        Server.os_type, Server.node_exporter_running, Server.windows_exporter_running, Server.id,
+    ).all()
     except Exception:
         db.rollback()
         return out
-    for os_type, agent, _hv, sid in rows:
+    for os_type, linux_agent, windows_agent, sid in rows:
         if sid in hidden:
             continue
         name = (os_type or "").lower()
         if "windows" in name:
             out["windows"] += 1
+            if windows_agent:
+                out["windows_agent"] += 1
         else:
             out["linux"] += 1
-            if agent:
+            if linux_agent:
                 out["linux_agent"] += 1
     return out
 
@@ -187,14 +191,14 @@ def _areas(db: Session, facts: List[Dict[str, Any]], series: List[Dict[str, Any]
         },
         {
             "name": "Windows",
-            "monitored": False,
-            "assets": [],
+            "monitored": counts["windows_agent"] > 0,
+            "assets": [(0, 0)] * counts["windows"] if counts["windows_agent"] else [],
             "metrics": [
-                {"label": "Sunucu", "value": "—"},
-                {"label": "İzleme", "value": "Yok"},
-                {"label": "Exporter", "value": "Yok"},
+                {"label": "Sunucu", "value": _tr_int(counts["windows"])},
+                {"label": "İzleme", "value": "Var" if counts["windows_agent"] else "Yok"},
+                {"label": "Ajanı çalışan", "value": _tr_int(counts["windows_agent"])},
             ],
-            "reason": "Windows sunucularında izleme ajanı yok.",
+            "reason": "Windows sunucuları izleniyor." if counts["windows_agent"] else "Windows sunucularında izleme ajanı yok.",
             "formula": FORMULA_TR,
         },
     ]

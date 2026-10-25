@@ -130,8 +130,26 @@ def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]
             logger.exception("executive bundle lock bırakılamadı")
 
 
-def bundle_payload(db: Session) -> Dict[str, Any]:
-    row = latest_locked(db)
+def _row_for_month(db: Session, month: Optional[str]) -> Optional[InfrastructureReport]:
+    if not month:
+        return latest_locked(db)
+    monthly = (
+        db.query(InfrastructureReport)
+        .filter(InfrastructureReport.report_type == "executive_monthly", InfrastructureReport.status == "locked")
+        .order_by(InfrastructureReport.generated_at.desc())
+        .all()
+    )
+    for row in monthly:
+        if str(((row.data or {}).get("period") or {}).get("start") or "").startswith(month):
+            return row
+    current = latest_locked(db)
+    if current and str(((current.data or {}).get("period") or {}).get("start") or "").startswith(month):
+        return current
+    return None
+
+
+def bundle_payload(db: Session, month: Optional[str] = None) -> Dict[str, Any]:
+    row = _row_for_month(db, month)
     running = refresh_running(db)
     if row is None:
         return {
