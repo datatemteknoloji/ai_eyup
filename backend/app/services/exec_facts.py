@@ -159,6 +159,21 @@ def _a1(db: Session, start: datetime, end: datetime) -> Dict[str, Any]:
     }
 
 
+def _openshift_inventory(db: Session) -> tuple:
+    """Gerçek OpenShift küme ve node adedi. Sentetik küme dışarıda."""
+    from app.models.openshift import OpenShiftCluster, OpenShiftNode
+
+    hidden = synthetic_cluster_ids(db)
+    clusters = [c for c in db.query(OpenShiftCluster).all() if c.id not in hidden]
+    nodes = 0
+    if clusters:
+        nodes = db.query(OpenShiftNode).filter(
+            OpenShiftNode.cluster_id.in_([c.id for c in clusters])
+        ).count()
+    names = ", ".join(c.name for c in clusters)
+    return len(clusters), nodes, names
+
+
 def _b1(db: Session) -> Dict[str, Any]:
     syn = list(synthetic_hypervisor_ids(db))
     filt = "AND hypervisor_id != ALL(:syn)" if syn else ""
@@ -207,9 +222,18 @@ def _b1(db: Session) -> Dict[str, Any]:
         notes=[] if any_ok else ["14 günlük örnek yok veya güven low/none. Havuzlama yok."],
         confidence="mixed" if any_ok else "none",
     )
+    ocp_clusters, ocp_nodes, ocp_names = _openshift_inventory(db)
     ocp = _section(
         "b1_ocp", "OpenShift node tükenme", "exec.capacity.unmeasured", "unmeasured",
-        notes=["Bu fazda OpenShift node tahmini üretilmez. Günlük kova birikiyor; ham tick örnek sayılmaz."],
+        numbers={
+            "clusters": _display_int(ocp_clusters, "küme"),
+            "nodes": _display_int(ocp_nodes, "node"),
+        },
+        labels={"clusters": ocp_names or "—", "kind": "OpenShift cluster"},
+        notes=[
+            "Küme sayısı sentetik kayıtları dışlar. Bu ad OpenShift cluster'ıdır; OLVM/oVirt Manager değildir.",
+            "Bu fazda OpenShift node tahmini üretilmez. Günlük kova birikiyor; ham tick örnek sayılmaz.",
+        ],
     )
     linux = _section(
         "b1_linux", "Linux dosya sistemi", "exec.capacity.unmeasured", "unmeasured",
@@ -320,6 +344,27 @@ def _a2(db: Session) -> Dict[str, Any]:
     }
 
 
+_AUTO_NOTE = "kapanış türü ayırt edilemiyor; süreler otomatik kapanışları içerebilir"
+
+
+def _close_kind(inc: Incident) -> str:
+    """automatic: zaman aşımı. manual/rule: gerçek kapanış. unknown: alan boş."""
+    res = (inc.resolution or "").strip()
+    src = (inc.source or "").strip().lower()
+    if res.lower().startswith("otomatik kapatıldı") or src.startswith("auto_"):
+        return "automatic"
+    if not src and not res:
+        return "unknown"
+    if "kural" in src or src.startswith("rule"):
+        return "rule"
+    return "manual"
+
+
+def _hour_number(value: float) -> Dict[str, Any]:
+    text_val = f"{value:.1f}".replace(".", ",")
+    return {"value": value, "unit": "saat", "display": [text_val, f"{text_val} saat"]}
+
+
 def _a6(db: Session, start: datetime, end: datetime) -> Dict[str, Any]:
     events = _events(db, start, end)
     incidents = (
@@ -332,8 +377,11 @@ def _a6(db: Session, start: datetime, end: datetime) -> Dict[str, Any]:
         )
         .all()
     )
+    automatic = [inc for inc in incidents if _close_kind(inc) == "automatic"]
+    sample = [inc for inc in incidents if _close_kind(inc) != "automatic"]
+    unknown = [inc for inc in sample if _close_kind(inc) == "unknown"]
     by_second: Dict[datetime, List[Incident]] = defaultdict(list)
-    for inc in incidents:
+    for inc in sample:
         by_second[inc.resolved_at.replace(microsecond=0)].append(inc)
     bulk = [inc for group in by_second.values() if len(group) > 1 for inc in group]
     kept = [inc for group in by_second.values() if len(group) == 1 for inc in group]
@@ -343,19 +391,33 @@ def _a6(db: Session, start: datetime, end: datetime) -> Dict[str, Any]:
     ]
     numbers = {
         "events": _display_int(len(events)),
+        "auto_closed": _display_int(len(automatic), "otomatik"),
         "bulk_closed": _display_int(len(bulk), "yığın"),
     }
-    notes = ["Aynı saniyede kapanan yığın p50 ve p95 dışındadır. Ortalama yazılmaz."]
+    notes = [
+        "Süre yalnız manuel ve kural kapanışlarından hesaplanır. Otomatik zaman aşımı ayrı sayılır. Ortalama yazılmaz.",
+        "Aynı saniyede kapanan yığın p50 ve p95 dışındadır.",
+    ]
+    if unknown:
+        notes.append(_AUTO_NOTE)
     status = "ok"
     if hours:
         p50 = round(_percentile(hours, 0.50) or 0, 1)
         p95 = round(_percentile(hours, 0.95) or 0, 1)
-        for key, val in (("p50_saat", p50), ("p95_saat", p95)):
-            text_val = f"{val:.1f}".replace(".", ",")
-            numbers[key] = {"value": val, "unit": "saat", "display": [text_val, f"{text_val} saat"]}
+        numbers["p50_saat"] = _hour_number(p50)
+        numbers["p95_saat"] = _hour_number(p95)
+        above = [value for value in hours if value > p95]
+        numbers["tail_count"] = _display_int(len(above), "adet")
+        if above:
+            longest = round(max(above), 1)
+            numbers["tail_longest_saat"] = _hour_number(longest)
+            notes.append(f"p95 üstü uzun kuyruk: {len(above)} kapanış, en uzun {longest} saat.")
+        else:
+            notes.append("p95 üstü uzun kuyruk: 0 kapanış.")
     else:
         status = "unmeasured"
-        notes.append("Tekil kapanış yok.")
+        notes.append("Manuel veya kural kapanışı yok. Süre hesaplanmadı.")
+        notes.append("p95 yok; uzun kuyruk hesaplanmadı.")
     comps: Dict[str, int] = Counter((ev.event_type or "olay") for ev in events)
     top = sorted(comps.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
     labels = {f"component_{i}": name for i, (name, _n) in enumerate(top, start=1)}
@@ -366,7 +428,7 @@ def _a6(db: Session, start: datetime, end: datetime) -> Dict[str, Any]:
     return {
         "report_type": "a6",
         "sections": [section],
-        "data_readiness": [_ready("a6", status, notes[0])],
+        "data_readiness": [_ready("a6", status, notes[-1] if status != "ok" else notes[0])],
     }
 
 
