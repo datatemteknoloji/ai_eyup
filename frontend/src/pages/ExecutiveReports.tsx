@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Download, Printer, RefreshCw } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
-import { AiBlock, MethodBadge } from '../components/insights/MethodBadge'
+import { MethodBadge } from '../components/insights/MethodBadge'
 
 type Num = { value: number | string; unit?: string; display?: string[] }
 type Section = {
@@ -154,7 +154,7 @@ export default function ExecutiveReports() {
                 {Object.keys(section.labels || {}).length > 0 && (
                   <p className="text-xs text-slate-400">{Object.values(section.labels).join(' · ')}</p>
                 )}
-                <AiBlock method={section.method_id}>{ruleLine(section)}</AiBlock>
+                <p className="text-sm text-slate-300">{ruleLine(section)}</p>
               </div>
             ))}
           </article>
