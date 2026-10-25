@@ -14,6 +14,8 @@ from app.services.number_gate import check_text
 logger = logging.getLogger(__name__)
 
 _TOKEN = re.compile(r"\{([a-z0-9_]+)\}")
+_BAD_WORD = re.compile(r"\b(closed|inactive|status|error|null|undefined|warning|critical)\b", re.I)
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 _INSTRUCTION = (
     "Türkçe, 3 ile 5 cümle yaz. Rakam, tarih ve yüzde yazma. "
     "Sayı yerine yalnız süslü parantez içindeki yer tutucuyu kullan: {anahtar}. "
@@ -97,6 +99,8 @@ def compose_summary(
         filled = apply_placeholders(raw, bound)
         if _TOKEN.search(filled):
             raise ValueError("bilinmeyen yer tutucu")
+        if _BAD_WORD.search(filled) or len(_NUMBER.findall(filled)) >= 7:
+            raise ValueError("anlamsız sayı listesi")
         gate = check_text(filled, _gate_facts(facts), require_number=False, all_sections=True)
         if not gate["ok"]:
             raise ValueError(gate.get("reason") or "kapı")

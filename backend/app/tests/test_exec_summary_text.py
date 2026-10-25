@@ -31,6 +31,13 @@ def test_placeholder_is_filled_and_passes_the_gate():
     assert "{" not in out["text"]
 
 
+def test_foreign_words_fall_back_to_the_template():
+    out = compose_summary(FACTS, lambda _p: "{powered_off} inactive ve closed durum.")
+    assert out["source"] == "template"
+    assert "inactive" not in out["text"]
+    assert "5,7 TB disk" in out["text"]
+
+
 def test_invented_digit_falls_back_to_a_sentence():
     out = compose_summary(FACTS, lambda _p: "Toplam 99 VM var.")
     assert out["source"] == "template"
