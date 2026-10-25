@@ -100,6 +100,7 @@ def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]
         lock_elapsed_month(db, now)
         start, end = current_month(now)
         facts = build_executive_facts(db, start, end)
+        db.rollback()
         summary = compose_summary(facts)
         view = build_view(db, facts, summary)
         if summary.get("source") == "template":
