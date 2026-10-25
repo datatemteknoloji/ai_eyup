@@ -150,8 +150,8 @@ export function MethodBadge({ id, at, computedAt, className = '' }: {
       {open && (
         <Popover anchor={anchor} onClose={close}>
           <div><span className="text-slate-500">{t('method_lbl_method')}: </span>{method}</div>
-          {formula && <div><span className="text-slate-500">{formulaLabel}: </span>{formula}</div>}
-          <div><span className="text-slate-500">{t('method_lbl_source')}: </span>{source}</div>}
+          {formula ? <div><span className="text-slate-500">{formulaLabel}{': '}</span>{formula}</div> : null}
+          <div><span className="text-slate-500">{t('method_lbl_source')}: </span>{source}</div>
           {when && <div><span className="text-slate-500">{t('method_lbl_data_time')}: </span>{when}</div>}
           {computed && <div><span className="text-slate-500">{t('method_lbl_computed_time')}: </span>{computed}</div>}
           <div><span className="text-slate-500">{t('method_lbl_limits')}: </span>{limits}</div>
