@@ -194,7 +194,7 @@ Ham politikalar aynı. Ölçülen günlük özet: metric 872 KB / 32 gün, host 
 |---|---|---|---|
 | Linux | 100 A | 100 A | 1077 sunucu |
 | Windows | ölçülemedi | ölçülemedi | izleme yok |
-| Sanallaştırma | 71 C | 95 A | 41 host |
+| Sanallaştırma | 70 C | 94 A | 41 host |
 | OpenShift | 0 F | 0 F | 3 node |
 | Genel | 0 F | 0 F | en kötü platform |
 
@@ -204,4 +204,8 @@ A6: bu dönemde 415 kapanışın tamamı «Otomatik kapatıldı…» / `auto_*`.
 
 Rapor kartı: OpenShift 1 küme, 3 node. Sentetik küme sayılmaz. Sayfa açılışı kilitli satırı okur (ölçülen GET 26 ms). «Şimdi yenile» arka plan işidir.
 
-Canlı model `llama3.2:3b`, beş üretim. İlk ret / ikinci ret / şablon: A1 3/5, 2, 2; B1 5/5, 2, 2; B2 2/5, 1, 1; A2 4/5, 4, 4; A6 2/5, 0, 0. Ret nedeni display dışı token: dönem ISO'su ve `00`, IP/sürüm parçaları, nokta ondalık `403.4` (kayıt `403,4`), yanlış birim `15 sn`, kardeş bölümün sayısı.
+Canlı model `llama3.2:3b`, beş üretim (kapı düzeltmesinden önce). İlk ret / ikinci ret / şablon: A1 3/5, 2, 2; B1 5/5, 2, 2; B2 2/5, 1, 1; A2 4/5, 4, 4; A6 2/5, 0, 0. Ret nedeni display dışı token: dönem ISO'su ve `00`, IP/sürüm parçaları, nokta ondalık `403.4` (kayıt `403,4`), yanlış birim `15 sn`, kardeş bölümün sayısı.
+
+Aynı gün yeniden ölçüm. Sanallaştırma notu canlı olayla 95 A / eski 71 iken 94 A / eski 70 oldu. Sayfa kilitli raporu açıyor. (i) formülü basıyor: «Süre = kapanış − açılış…». CSV ilk satırları `533816`, OpenShift `1` küme ve `3` node. PDF `window.print`; yazdırma penceresi açılmadı.
+
+Kapı düzeltmesinden sonra (`f9a20a20`, dönem tarihi prompt'ta yok) beş üretim daha. İlk ret / ikinci ret / şablon: A1 5/5, 5, 5; B1 3/5, 1, 1; B2 4/5, 4, 4; A2 4/5, 3, 3; A6 3/5, 3, 3. IP, binlik ayırıcı ve dönem kopyası kalmadı. Kalan retler uydurma sayı (`1`–`5` madde sırası, `14`, `100`, `%100`, `95`, `50`), yabancı ondalık `403.4` ve yanlış birim `15 sn`. Şablon yedeği bunları yayımlamaz.
