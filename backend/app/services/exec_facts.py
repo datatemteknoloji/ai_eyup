@@ -16,7 +16,7 @@ from app.models.event import Incident, SystemEvent
 from app.models.infrastructure_report import CostConfig, InfrastructureReport
 from app.models.server import Server
 from app.services.chat_quality import power_state as ps
-from app.services.report_analytics import compute_trend_from_series
+from app.services.report_analytics import compute_trend_from_series, days_to_threshold_range
 from app.services.synthetic_scope import (
     synthetic_cluster_ids, synthetic_hypervisor_ids, synthetic_server_ids,
 )
@@ -199,6 +199,8 @@ def _b1(db: Session) -> Dict[str, Any]:
         days = int(row.days or 0)
         status = "ok" if days >= 14 else "unmeasured"
         confidence = None
+        trend = None
+        series: List[float] = []
         if status == "ok":
             series_rows = db.execute(text("""
                 SELECT date_trunc('day', timestamp) AS day, avg(mem_usage_pct) AS v
@@ -214,11 +216,25 @@ def _b1(db: Session) -> Dict[str, Any]:
             confidence = trend.confidence
             if trend.confidence in ("low", "none") or trend.sample_count < 14:
                 status = "unmeasured"
+        latest = db.execute(text("""
+            SELECT avg(mem_usage_pct) AS mem, avg(cpu_usage_pct) AS cpu
+            FROM hypervisor_host_metrics
+            WHERE hypervisor_id = :hv
+              AND COALESCE(NULLIF(cluster_name, ''), '(küme yok)') = :cluster
+              AND timestamp >= NOW() - INTERVAL '2 days'
+        """), {"hv": row.hypervisor_id, "cluster": row.cluster}).first()
+        mem_now = float(latest.mem) if latest and latest.mem is not None else (series[-1] if series else None)
+        cpu_now = float(latest.cpu) if latest and latest.cpu is not None else None
+        runway = days_to_threshold_range(mem_now, trend, 85.0) if trend and mem_now is not None else None
         if status == "ok":
             any_ok = True
         cluster_rows.append({
             "cluster": row.cluster, "hypervisor_id": row.hypervisor_id,
             "days": days, "status": status, "confidence": confidence,
+            "memory_pct": None if mem_now is None else round(mem_now, 1),
+            "cpu_pct": None if cpu_now is None else round(cpu_now, 1),
+            "runway_days": runway,
+            "low_confidence": confidence in ("low", "none"),
         })
     virt = _section(
         "b1_virt", "Sanal küme ve datastore tükenme", "cap.cluster.mem_runway",

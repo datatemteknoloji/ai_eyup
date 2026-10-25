@@ -17,6 +17,7 @@ from app.core.database import SessionLocal
 from app.models.infrastructure_report import InfrastructureReport
 from app.services.exec_facts import build_executive_facts, save_monthly_snapshot
 from app.services.exec_summary_text import compose_summary
+from app.services.exec_view import build_view, demo_cards
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]
         start, end = current_month(now)
         facts = build_executive_facts(db, start, end)
         summary = compose_summary(facts)
+        view = build_view(db, facts, summary)
         row = InfrastructureReport(
             report_type=BUNDLE,
             report_title="Yönetici raporları",
@@ -108,6 +110,7 @@ def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]
                 "period": {"start": start.isoformat(), "end": end.isoformat()},
                 "facts": facts,
                 "summary_source": summary["source"],
+                "view": view,
             },
             summary=summary["text"],
             status="locked",
@@ -137,6 +140,7 @@ def bundle_payload(db: Session) -> Dict[str, Any]:
             "status": "empty",
             "refreshing": running,
             "period": None,
+            "demo_cards": demo_cards(db),
         }
     data = row.data or {}
     generated = row.generated_at.isoformat() if row.generated_at else None
@@ -149,6 +153,8 @@ def bundle_payload(db: Session) -> Dict[str, Any]:
         "report_id": row.id,
         "summary": row.summary,
         "summary_source": data.get("summary_source"),
+        "view": data.get("view"),
+        "demo_cards": demo_cards(db),
     }
 
 
