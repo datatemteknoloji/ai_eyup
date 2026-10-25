@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.models.infrastructure_report import InfrastructureReport
-from app.services.exec_facts import build_executive_facts
+from app.services.exec_facts import build_executive_facts, save_monthly_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +57,46 @@ def refresh_running(db: Session) -> bool:
     return row is not None
 
 
-def produce_bundle(db: Session) -> Optional[int]:
+def lock_elapsed_month(db: Session, now: Optional[datetime] = None) -> Optional[int]:
+    """Ay döndüyse önceki ayın son kilitli paketini executive_monthly yapar."""
+    start, _end = current_month(now)
+    boundary = start.isoformat()
+    bundles = (
+        db.query(InfrastructureReport)
+        .filter(InfrastructureReport.report_type == BUNDLE, InfrastructureReport.status == "locked")
+        .order_by(InfrastructureReport.generated_at.desc(), InfrastructureReport.id.desc())
+        .all()
+    )
+    chosen = None
+    for row in bundles:
+        raw = str(((row.data or {}).get("period") or {}).get("start") or "")
+        if raw and raw < boundary:
+            chosen = row
+            break
+    if chosen is None:
+        return None
+    period = (chosen.data or {}).get("period") or {}
+    key = str(period.get("start") or "")[:10]
+    existing = (
+        db.query(InfrastructureReport)
+        .filter(InfrastructureReport.report_type == "executive_monthly", InfrastructureReport.status == "locked")
+        .all()
+    )
+    for row in existing:
+        if str(((row.data or {}).get("period") or {}).get("start") or "")[:10] == key:
+            return None
+    snap = save_monthly_snapshot(db, (chosen.data or {}).get("facts"), chosen.summary, period=period)
+    return snap.id
+
+
+def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]:
     """Kilidi alır, mevcut ayın gerçeklerini kilitler. Kilit doluysa None."""
     locked = db.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _LOCK}).scalar()
     if not locked:
         return None
     try:
-        start, end = current_month()
+        lock_elapsed_month(db, now)
+        start, end = current_month(now)
         facts = build_executive_facts(db, start, end)
         row = InfrastructureReport(
             report_type=BUNDLE,

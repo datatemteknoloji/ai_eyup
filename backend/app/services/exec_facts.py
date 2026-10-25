@@ -108,8 +108,14 @@ def _mom_section(db: Session) -> Dict[str, Any]:
             notes=["İki kilitli aylık anlık görüntü yok. Canlı olaylardan geçen ay doldurulmaz."],
         )
     def _count(row: InfrastructureReport) -> Optional[int]:
-        facts = (row.data or {}).get("facts") or {}
-        for section in facts.get("sections") or []:
+        facts = (row.data or {}).get("facts")
+        sections: List[Dict[str, Any]] = []
+        if isinstance(facts, dict):
+            sections = list(facts.get("sections") or [])
+        elif isinstance(facts, list):
+            for item in facts:
+                sections.extend((item or {}).get("sections") or [])
+        for section in sections:
             if section.get("id") == "a1":
                 spec = (section.get("numbers") or {}).get("events") or {}
                 if spec.get("value") is None:
@@ -561,11 +567,22 @@ def build_executive_facts(db: Session, start: datetime, end: datetime) -> List[D
     return [_wrap(key, start, end, bodies[key], scope) for key in ("a1", "b1", "b2", "a2", "a6", "phase2")]
 
 
-def save_monthly_snapshot(db: Session, facts: Dict[str, Any], summary: Optional[str]) -> InfrastructureReport:
+def save_monthly_snapshot(
+    db: Session,
+    facts: Any,
+    summary: Optional[str],
+    period: Optional[Dict[str, Any]] = None,
+) -> InfrastructureReport:
+    title = "Yönetici raporu"
+    if isinstance(facts, dict):
+        title = str(facts.get("report_type") or title)
+    data: Dict[str, Any] = {"locked": True, "facts": facts}
+    if period:
+        data["period"] = period
     row = InfrastructureReport(
         report_type=_MONTHLY,
-        report_title=str(facts.get("report_type") or "executive"),
-        data={"locked": True, "facts": facts},
+        report_title=title,
+        data=data,
         summary=summary,
         status="locked",
     )

@@ -52,6 +52,36 @@ def test_get_returns_locked_bundle_without_recompute(isolated_db, monkeypatch):
     assert body["period"]["start"] == "2026-10-01"
 
 
+def test_month_roll_locks_previous_bundle_once(isolated_db, monkeypatch):
+    db = isolated_db
+    db.add(InfrastructureReport(
+        report_type="executive_bundle",
+        report_title="Yönetici raporları",
+        status="locked",
+        generated_at=datetime(2026, 9, 30, tzinfo=timezone.utc),
+        data={
+            "locked": True,
+            "period": {"start": "2026-09-01T00:00:00+00:00", "end": "2026-10-01T00:00:00+00:00"},
+            "facts": [{"report_type": "a1", "sections": [{"id": "a1", "numbers": {"events": {"value": 8}}}]}],
+        },
+    ))
+    db.commit()
+    monkeypatch.setattr(
+        "app.services.exec_snapshot.build_executive_facts",
+        lambda *_a, **_k: [{"report_type": "a1", "sections": []}],
+    )
+    produce_bundle(isolated_db, now=datetime(2026, 10, 15, tzinfo=timezone.utc))
+    produce_bundle(isolated_db, now=datetime(2026, 10, 20, tzinfo=timezone.utc))
+    monthly = (
+        db.query(InfrastructureReport)
+        .filter(InfrastructureReport.report_type == "executive_monthly")
+        .all()
+    )
+    assert len(monthly) == 1
+    assert monthly[0].data["period"]["start"].startswith("2026-09-01")
+    assert monthly[0].data["facts"][0]["sections"][0]["numbers"]["events"]["value"] == 8
+
+
 def test_produce_writes_locked_row(isolated_db, monkeypatch):
     monkeypatch.setattr(
         "app.services.exec_snapshot.build_executive_facts",
