@@ -35,6 +35,7 @@ const TITLES: Record<string, string> = {
   b2: 'Yatırım ihtiyacı',
   a2: 'Atıl kaynak',
   a6: 'Olay ve operasyon',
+  phase2: 'Kalan raporlar',
 }
 
 const STATUS: Record<string, string> = {

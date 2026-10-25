@@ -326,22 +326,78 @@ def _a2(db: Session) -> Dict[str, Any]:
     notes = ["Tahsis, tüketim değil."]
     if not _cost_defined(db):
         notes.append("Maliyet parametresi yok; para gösterilmez.")
-    orphan = _section(
-        "a2_orphan", "Yetim disk", "reclaim.summary", "unmeasured",
-        notes=["Hazır yetim disk sorgusu yok."],
-    )
     main = _section(
         "a2", "Atıl kaynak", "reclaim.vm.powered_off", "ok",
         numbers=numbers, notes=notes,
     )
-    return {
-        "report_type": "a2",
-        "sections": [main, orphan],
-        "data_readiness": [
-            _ready("a2", "ok", "kapalı VM tahsisi"),
-            _ready("a2_orphan", "unmeasured", orphan["notes"][0]),
-        ],
-    }
+    extra = _reclaim_extra(db, syn)
+    orphan = extra["orphan"]
+    sections = [main, orphan, extra["idle"], extra["oversized"], extra["snapshots"]]
+    readiness = [
+        _ready("a2", "ok", "kapalı VM tahsisi"),
+        _ready("a2_orphan", orphan["status"], orphan["notes"][0]),
+        _ready("a2_idle", extra["idle"]["status"], extra["idle"]["notes"][0]),
+        _ready("a2_oversized", extra["oversized"]["status"], extra["oversized"]["notes"][0]),
+        _ready("a2_snapshots", extra["snapshots"]["status"], extra["snapshots"]["notes"][0]),
+    ]
+    return {"report_type": "a2", "sections": sections, "data_readiness": readiness}
+
+
+def _reclaim_extra(db: Session, syn: set) -> Dict[str, Any]:
+    """Idle, oversized, snapshot ve yetim disk. Sentetik hypervisor dışarıda. Ağ yok."""
+    orphan = _section(
+        "a2_orphan", "Yetim disk", "reclaim.summary", "unmeasured",
+        notes=["Hazır yetim disk sorgusu yok."],
+    )
+    idle = _section("a2_idle", "Atıl VM", "reclaim.vm.idle", "unmeasured", notes=["Atıl VM sorgusu çalışmadı."])
+    oversized = _section("a2_oversized", "Aşırı boyut", "reclaim.vm.oversized", "unmeasured", notes=["Aşırı boyut sorgusu çalışmadı."])
+    snapshots = _section("a2_snapshots", "Snapshot", "reclaim.vm.snapshot_age", "unmeasured", notes=["Snapshot sorgusu çalışmadı."])
+    try:
+        from app.services.virt_reclaim import build_reclaim
+        body = build_reclaim(db)
+    except Exception:
+        db.rollback()
+        return {"orphan": orphan, "idle": idle, "oversized": oversized, "snapshots": snapshots}
+
+    def _keep(rows: Iterable[Dict[str, Any]], key: str = "hypervisor_id") -> List[Dict[str, Any]]:
+        return [row for row in rows if row.get(key) not in syn]
+
+    file_count = 0
+    try:
+        from app.models.infra_finding import VirtDatastoreFile
+        fq = db.query(VirtDatastoreFile.id)
+        if syn:
+            fq = fq.filter(~VirtDatastoreFile.source_id.in_(list(syn)))
+        file_count = fq.count()
+    except Exception:
+        db.rollback()
+        file_count = 0
+    idle_rows = _keep(body.get("idle") or [])
+    over_rows = _keep(body.get("oversized") or [])
+    snap_rows = _keep(body.get("snapshots") or [], "source_id")
+    orphan_rows = _keep(body.get("orphans") or [])
+    if file_count:
+        orphan = _section(
+            "a2_orphan", "Yetim disk", "reclaim.summary", "ok",
+            numbers={"orphans": _display_int(len(orphan_rows), "disk")},
+            notes=["Sentetik hypervisor dışarıda. Tarama satırı yoksa bu bölüm ölçülemedi kalır."],
+        )
+    idle = _section(
+        "a2_idle", "Atıl VM", "reclaim.vm.idle", "ok",
+        numbers={"idle": _display_int(len(idle_rows), "VM")},
+        notes=["Düşük CPU eşiği mevcut geri kazanım kuralıdır. Sentetik hypervisor dışarıda."],
+    )
+    oversized = _section(
+        "a2_oversized", "Aşırı boyut", "reclaim.vm.oversized", "ok",
+        numbers={"oversized": _display_int(len(over_rows), "VM")},
+        notes=["p95 CPU sağa boyutlandırma mevcut kuraldır. Sentetik hypervisor dışarıda."],
+    )
+    snapshots = _section(
+        "a2_snapshots", "Snapshot", "reclaim.vm.snapshot_age", "ok",
+        numbers={"snapshots": _display_int(len(snap_rows), "snapshot")},
+        notes=["Yaş eşiğini aşan snapshot bulgusu. Sentetik hypervisor dışarıda."],
+    )
+    return {"orphan": orphan, "idle": idle, "oversized": oversized, "snapshots": snapshots}
 
 
 _AUTO_NOTE = "kapanış türü ayırt edilemiyor; süreler otomatik kapanışları içerebilir"
@@ -444,6 +500,51 @@ def _wrap(report_type: str, start: datetime, end: datetime, body: Dict[str, Any]
     }
 
 
+def _phase2(db: Session) -> Dict[str, Any]:
+    """Kalan raporlar. Kaynak yoksa ölçülemedi; sayı uydurulmaz."""
+    from app.models.infra_finding import InfraReferenceData
+    from app.models.infrastructure_report import BusinessServiceMap
+    from app.models.integration_instance import IntegrationInstance
+
+    sections = []
+    readiness = []
+
+    def add(sid: str, title: str, note: str) -> None:
+        sections.append(_section(sid, title, "exec.capacity.unmeasured", "unmeasured", notes=[note]))
+        readiness.append(_ready(sid, "unmeasured", note))
+
+    refs = db.query(InfraReferenceData.id).count()
+    add("a3", "Yaşam döngüsü", "Referans paketi yok." if refs == 0 else "Referans paketi takvim üretmez; yaşam döngüsü ölçülemedi.")
+    add("a4", "Güvenlik açığı", "Referans paketi ve gerçek BMC yok. Açık uydurulmaz." if refs == 0 else "Gerçek BMC yok. Açık uydurulmaz.")
+    veeam = db.query(IntegrationInstance.id).filter(
+        IntegrationInstance.kind.like("veeam%"),
+        ~IntegrationInstance.kind.like("%demo"),
+    ).count()
+    add("a5", "Yedek kapsaması", "Gerçek Veeam bağlantısı yok. Demo entegrasyon sayılmaz." if veeam == 0 else "Yedek kapsaması bu üretimde ölçülemedi.")
+    services = db.query(BusinessServiceMap.id).count()
+    add("b3", "Büyüme ve iş servisi", "İş servisi haritası yok." if services == 0 else "İş servisi haritası var; büyüme serisi bu üretimde ölçülemedi.")
+    add("b4", "Lisans", "Lisans parametre tablosu yok. Varsayılan fiyat yazılmaz.")
+    try:
+        span = db.execute(text(
+            "SELECT EXTRACT(EPOCH FROM (max(timestamp) - min(timestamp))) / 86400 FROM hypervisor_host_metrics"
+        )).scalar()
+        days = int(span or 0)
+    except Exception:
+        db.rollback()
+        days = 0
+    add("b5", "Mevsimsellik", f"Seri {days} gün. 13 ay yok. statsmodels eklenmedi.")
+    hw = db.query(IntegrationInstance.id).filter(
+        IntegrationInstance.kind.like("hw%"),
+        ~IntegrationInstance.kind.like("%demo"),
+    ).count()
+    add("b7", "Donanım", "Gerçek OME/OneView bağlantısı yok. Demo entegrasyon sayılmaz." if hw == 0 else "Donanım bağlantısı var; garanti ve firmware bu üretimde ölçülemedi.")
+    add("b8", "Linux kök disk", "Gerekli metrikler yok: " + ", ".join(REQUIRED_FS_METRICS) + ".")
+    add("b9", "Platform geçişi", "Geçiş kaydı yok.")
+    add("c4", "Tahmin isabeti", "Kilitli tahmin ve gerçekleşme çifti yok.")
+    add("a7", "SLA", "Kesinti kaydı yok. Açık kalma süresi SLA diye gösterilmez.")
+    return {"report_type": "phase2", "sections": sections, "data_readiness": readiness}
+
+
 def build_executive_facts(db: Session, start: datetime, end: datetime) -> List[Dict[str, Any]]:
     scope = {
         "platforms": ["linux", "windows", "virtualization", "openshift"],
@@ -455,8 +556,9 @@ def build_executive_facts(db: Session, start: datetime, end: datetime) -> List[D
         "b2": _b2(db),
         "a2": _a2(db),
         "a6": _a6(db, start, end),
+        "phase2": _phase2(db),
     }
-    return [_wrap(key, start, end, bodies[key], scope) for key in ("a1", "b1", "b2", "a2", "a6")]
+    return [_wrap(key, start, end, bodies[key], scope) for key in ("a1", "b1", "b2", "a2", "a6", "phase2")]
 
 
 def save_monthly_snapshot(db: Session, facts: Dict[str, Any], summary: Optional[str]) -> InfrastructureReport:
