@@ -108,9 +108,34 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_windows_live_metrics()))
         self.tasks.append(asyncio.create_task(self._periodic_dashboard_stats()))
         self.tasks.append(asyncio.create_task(self._periodic_automic()))
+        self.tasks.append(asyncio.create_task(self._periodic_executive_report()))
         self.tasks.append(asyncio.create_task(self._syslog_receiver_supervisor()))
 
         logger.info("Background tasks started (intervals: Ayarlar → Gelişmiş)")
+
+    async def _periodic_executive_report(self):
+        """Kilitli yönetici raporu. Sayfa açılışı bu hesabı yapmaz."""
+        logger.info("Executive report snapshot task started (24h)")
+        await asyncio.sleep(120)
+        while self.running:
+            try:
+                from app.core.database import SessionLocal
+                from app.services.exec_snapshot import produce_bundle
+
+                def _run():
+                    db = SessionLocal()
+                    try:
+                        return produce_bundle(db)
+                    finally:
+                        db.close()
+
+                await asyncio.to_thread(_run)
+                await asyncio.sleep(24 * 3600)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Executive report snapshot error: {e}")
+                await asyncio.sleep(3600)
 
     async def stop(self):
         if not self.running:

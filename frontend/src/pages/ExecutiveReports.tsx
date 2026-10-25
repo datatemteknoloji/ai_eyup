@@ -3,7 +3,7 @@
  * Sayılar backend gerçeklerinden gelir. AI metni bu sayfada üretilmez;
  * kapıdan geçmemiş metin yoktur, kartta kural cümlesi durur.
  */
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Download, Printer, RefreshCw } from 'lucide-react'
@@ -43,34 +43,49 @@ const STATUS: Record<string, string> = {
   not_applicable: 'Uygulanmaz',
 }
 
-function monthRange(month: string): { start: string; end: string } {
-  const [y, m] = month.split('-').map(Number)
-  const start = new Date(Date.UTC(y, m - 1, 1))
-  const end = new Date(Date.UTC(y, m, 1))
-  return { start: start.toISOString(), end: end.toISOString() }
-}
-
 function ruleLine(section: Section): string {
   if (section.status !== 'ok') return section.notes[0] || 'Veri yok.'
   const bits = Object.values(section.numbers).map((n) => n.display?.[0]).filter(Boolean)
   return bits.length ? `${section.title}: ${bits.join(', ')}.` : section.notes[0] || section.title
 }
 
+type Bundle = {
+  reports: Facts[]
+  generated_at: string | null
+  status: 'empty' | 'ready'
+  refreshing: boolean
+  period: { start: string; end: string } | null
+}
+
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem('auth_token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 export default function ExecutiveReports() {
-  const now = new Date()
-  const [month, setMonth] = useState(`${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`)
-  const range = useMemo(() => monthRange(month), [month])
-  const q = useQuery<{ reports: Facts[] }>({
-    queryKey: ['executive-facts', range.start, range.end],
+  const q = useQuery<Bundle>({
+    queryKey: ['executive-facts'],
     queryFn: async () => {
-      const url = `${API_BASE_URL}/ops/executive-facts?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`
-      const res = await fetch(url)
+      const res = await fetch(`${API_BASE_URL}/ops/executive-facts`, { headers: authHeaders() })
       if (!res.ok) throw new Error('Raporlar alınamadı')
       return res.json()
     },
+    refetchInterval: (query) => (query.state.data?.refreshing ? 3000 : false),
   })
+  const [refreshError, setRefreshError] = useState('')
+
+  async function refreshNow() {
+    setRefreshError('')
+    const res = await fetch(`${API_BASE_URL}/ops/executive-facts/refresh`, { method: 'POST', headers: authHeaders() })
+    if (!res.ok) {
+      setRefreshError('Yenileme başlatılamadı')
+      return
+    }
+    await q.refetch()
+  }
 
   const reports = q.data?.reports || []
+  const month = (q.data?.period?.start || '').slice(0, 7) || 'rapor'
   const gaps = reports.flatMap((r) => (r.data_readiness || []).filter((d) => d.status !== 'ok').map((d) => ({ ...d, report: r.report_type })))
 
   function downloadCsv() {
@@ -94,18 +109,15 @@ export default function ExecutiveReports() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-white">Yönetici Raporları</h1>
-          <p className="text-sm text-slate-400">Platform notları ayrıdır. Genel not, en kötü platformu aşmaz.</p>
+          <p className="text-sm text-slate-400">Son kilitli rapor gösterilir. Açılışta hesaplama yapılmaz.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm"
-            aria-label="Dönem"
-          />
-          <button type="button" onClick={() => q.refetch()} className="px-3 py-1.5 rounded-lg border border-slate-700 text-sm inline-flex items-center gap-1">
-            <RefreshCw size={14} className={q.isFetching ? 'animate-spin' : ''} /> Yenile
+          <span className="text-sm text-slate-400">
+            {q.data?.generated_at ? `Üretim ${new Date(q.data.generated_at).toLocaleString()}` : 'Kilitli rapor yok'}
+            {q.data?.refreshing ? ' · üretim sürüyor' : ''}
+          </span>
+          <button type="button" onClick={refreshNow} className="px-3 py-1.5 rounded-lg border border-slate-700 text-sm inline-flex items-center gap-1">
+            <RefreshCw size={14} className={q.data?.refreshing ? 'animate-spin' : ''} /> Şimdi yenile
           </button>
           <button type="button" onClick={downloadCsv} className="px-3 py-1.5 rounded-lg border border-slate-700 text-sm inline-flex items-center gap-1">
             <Download size={14} /> CSV
@@ -120,7 +132,9 @@ export default function ExecutiveReports() {
         <h2 className="text-sm font-semibold text-white mb-2">Veri hazırlığı</h2>
         {q.isLoading && <p className="text-sm text-slate-400">Yükleniyor…</p>}
         {q.isError && <p className="text-sm text-red-300">Raporlar alınamadı.</p>}
-        {!q.isLoading && gaps.length === 0 && <p className="text-sm text-slate-400">Eksik bölüm yok.</p>}
+        {refreshError && <p className="text-sm text-red-300">{refreshError}</p>}
+        {!q.isLoading && q.data?.status === 'empty' && <p className="text-sm text-slate-400">Kilitli rapor yok. Şimdi yenile arka planda üretir; bu sayfa açılışta hesaplamaz.</p>}
+        {!q.isLoading && q.data?.status === 'ready' && gaps.length === 0 && <p className="text-sm text-slate-400">Eksik bölüm yok.</p>}
         <ul className="space-y-1 text-sm">
           {gaps.map((g) => (
             <li key={`${g.report}-${g.section_id}`} className="text-slate-300">
@@ -139,7 +153,7 @@ export default function ExecutiveReports() {
               <h2 className="font-semibold text-white">{TITLES[report.report_type] || report.report_type}</h2>
               <Link to="/infra-reports" className="text-xs text-sky-300 hover:underline">Altyapı raporları</Link>
             </div>
-            {report.sections.map((section) => (
+            {(report.sections || []).map((section) => (
               <div key={section.id} className="space-y-2 border-t border-slate-800 pt-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm text-slate-200">{section.title}</span>
