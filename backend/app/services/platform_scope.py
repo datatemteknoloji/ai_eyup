@@ -219,8 +219,12 @@ def apply_platform_filter(q: Query, platform: Optional[str], db: Session) -> Que
         return q.filter(explicit)
 
     if platform == "openshift":
-        # Server tablosuna bağlı değil — sadece kaynak/raw_data.platform eşleşmesiyle filtrelenir.
-        return q.filter(or_(_platform_json("openshift"), SystemEvent.source.in_(_OPENSHIFT_SOURCES)))
+        # Server tablosuna bağlı değil. Sanallaştırma kaynakları (OpenShift Virt, OLVM)
+        # platform etiketi yanlış yazılsa da bu nota girmez.
+        return q.filter(
+            or_(_platform_json("openshift"), SystemEvent.source.in_(_OPENSHIFT_SOURCES)),
+            or_(SystemEvent.source.is_(None), SystemEvent.source.notin_(_VIRT_SOURCES)),
+        )
 
     windows_ids = get_windows_server_ids(db)
     linux_module_ids = get_linux_module_server_ids(db)

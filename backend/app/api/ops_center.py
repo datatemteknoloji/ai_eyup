@@ -52,7 +52,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 SEV_RANK = {"emergency": 4, "critical": 3, "warning": 2, "info": 1}
-SEV_SCORE = {"emergency": 25, "critical": 15, "warning": 5, "info": 1}
 
 ACTIVE_WINDOW_HOURS = 24
 
@@ -100,54 +99,21 @@ def _active_events(db: Session, since: datetime, platform: Optional[str] = None,
 
 # ── Sağlık Skoru ─────────────────────────────────────────────────────────────
 
-def _unmeasured_health() -> Dict[str, Any]:
-    """Popülasyon boş veya izleme yok. Olayı olmayan izlenen filo bu yolu kullanmaz."""
-    return {
-        "score": None, "grade": None, "label": "Ölçülemedi", "color": "slate",
-        "measurable": False, "penalty": None, "severity_breakdown": {},
-        "event_count": 0, "server_count": 0,
-    }
-
-
 def _calc_health_score(
     events: List[SystemEvent], server_count: int, *, monitored: bool | None = None,
+    legacy_population: int | None = None, legacy_events: List[SystemEvent] | None = None,
 ) -> Dict[str, Any]:
-    """
-    0-100 sağlık skoru. 100 = mükemmel, 0 = felaket.
-    Formül: max(0, 100 - penalty), penalty = weighted alarm sum / server_count.
-    Sunucu/cluster yoksa veya izleme hiç yoksa skor üretilmez (A değil).
-    """
-    if server_count <= 0 or monitored is False:
-        return _unmeasured_health()
+    """Yeni formül health_score.score_events. legacy_* yayındaki önceki formül içindir."""
+    from app.services.health_score import legacy_event_score, score_events
 
-    penalty = sum(SEV_SCORE.get(e.severity, 1) for e in events)
-    # Normalize by server count — büyük altyapıda tek sorun skoru çok düşürmesin
-    normalized = min(penalty / max(server_count, 1), 100)
-    score = max(0, round(100 - normalized))
-
-    if score >= 90:
-        grade, label, color = "A", "Sağlıklı", "green"
-    elif score >= 75:
-        grade, label, color = "B", "İyi", "blue"
-    elif score >= 55:
-        grade, label, color = "C", "Dikkat", "yellow"
-    elif score >= 35:
-        grade, label, color = "D", "Sorunlu", "orange"
+    result = score_events(events, server_count, monitored=monitored)
+    pop = server_count if legacy_population is None else legacy_population
+    prior = events if legacy_events is None else legacy_events
+    if result.get("measurable") and pop > 0:
+        result["legacy_score"] = legacy_event_score(prior, pop)
     else:
-        grade, label, color = "F", "Kritik", "red"
-
-    by_sev: Dict[str, int] = defaultdict(int)
-    for e in events:
-        by_sev[e.severity] += 1
-
-    return {
-        "score": score, "grade": grade, "label": label, "color": color,
-        "measurable": True,
-        "penalty": round(normalized, 1),
-        "severity_breakdown": dict(by_sev),
-        "event_count": len(events),
-        "server_count": server_count,
-    }
+        result["legacy_score"] = None
+    return result
 
 
 def _worst_platform_health(scores: List[Any]) -> Dict[str, Any]:
@@ -672,7 +638,7 @@ async def executive_summary(db: Session = Depends(get_db)):
     """
     from sqlalchemy import func as sa_func
     from app.models.hypervisor import Hypervisor
-    from app.models.openshift import OpenShiftCluster
+    from app.models.openshift import OpenShiftCluster, OpenShiftNode
     from app.services.virt_ops_center import virt_ops_summary
     from app.services.platform_scope import (
         get_linux_module_server_ids, get_windows_server_ids, vm_filter_condition,
@@ -706,12 +672,14 @@ async def executive_summary(db: Session = Depends(get_db)):
     )
     # Popülasyon var ama ne exporter ne olay varsa izleme yoktur; A verilmez.
     linux_health = _calc_health_score(
-        unique_events(linux_events), len(linux_ids),
+        linux_events, len(linux_ids),
         monitored=node_exporter_running > 0 or bool(linux_events),
+        legacy_events=unique_events(linux_events),
     )
     windows_health = _calc_health_score(
-        unique_events(windows_events), len(windows_ids),
+        windows_events, len(windows_ids),
         monitored=windows_exporter_running > 0 or bool(windows_events),
+        legacy_events=unique_events(windows_events),
     )
 
     try:
@@ -733,7 +701,6 @@ async def executive_summary(db: Session = Depends(get_db)):
     ocp_clusters = db.query(OpenShiftCluster).all()
     ocp_synthetic_ids = synthetic_cluster_ids(db)
     ocp_real = [c for c in ocp_clusters if c.id not in ocp_synthetic_ids]
-    ocp_cluster_count = len(ocp_clusters)
     ocp_real_count = len(ocp_real)
 
     def _real_ocp_event(ev: SystemEvent) -> bool:
@@ -747,7 +714,17 @@ async def executive_summary(db: Session = Depends(get_db)):
 
     ocp_events = [ev for ev in ocp_events if _real_ocp_event(ev)]
     ocp_unhealthy = sum(1 for c in ocp_real if (c.status or "").upper() == "ERROR")
-    ocp_health = _calc_health_score(unique_events(ocp_events), ocp_real_count)
+    ocp_node_count = (
+        db.query(OpenShiftNode).filter(OpenShiftNode.cluster_id.in_([c.id for c in ocp_real])).count()
+        if ocp_real else 0
+    )
+    # Payda node (host). Eski not küme sayısına bölünüyordu; legacy_population onu korur.
+    ocp_population = ocp_node_count or ocp_real_count
+    ocp_health = _calc_health_score(
+        ocp_events, ocp_population,
+        legacy_population=ocp_real_count,
+        legacy_events=unique_events(ocp_events),
+    )
 
     smap = _server_map(db)
     linux_groups = group_events(linux_events, smap)
@@ -933,12 +910,22 @@ async def executive_summary(db: Session = Depends(get_db)):
             "critical": int(fam.get("critical") or 0) + virt_ev_by_family["ovirt"]["critical"],
             "warning": int(fam.get("warning") or 0) + virt_ev_by_family["ovirt"]["warning"],
         })
-    if ocp_cluster_count or ocp_crit or ocp_warn:
+    if ocp_real_count or ocp_crit or ocp_warn:
         comparison.append({
             "key": "openshift", "label": "OpenShift",
             "critical": ocp_crit,
             "warning": ocp_warn,
         })
+
+    legacy_parts = [
+        item.get("legacy_score")
+        for item in (linux_health, windows_health, ocp_health)
+        if item.get("measurable") and item.get("legacy_score") is not None
+    ]
+    virt_legacy = (virt_summary.get("health") or {}).get("legacy_score")
+    if virt_measurable and virt_legacy is not None:
+        legacy_parts.append(virt_legacy)
+    legacy_overall = min(legacy_parts) if legacy_parts else None
 
     virt_include_labels = []
     if "vcenter" in families_present:
@@ -952,6 +939,7 @@ async def executive_summary(db: Session = Depends(get_db)):
         "generated_at": datetime.utcnow().isoformat(),
         "overall": {
             **overall,
+            "legacy_health_score": legacy_overall,
             "critical_total": total_critical,
             "warning_total": total_warning,
             "open_incidents": open_incidents,
@@ -965,6 +953,9 @@ async def executive_summary(db: Session = Depends(get_db)):
                 "critical": linux_crit,
                 "warning": linux_warn,
                 "health_score": linux_health["score"],
+                "legacy_health_score": linux_health.get("legacy_score"),
+                "score_population": linux_health.get("server_count"),
+                "deduped_events": linux_health.get("event_count"),
                 "measurable": linux_health.get("measurable", False),
                 **_grade_for_score(linux_health["score"]),
             },
@@ -975,6 +966,9 @@ async def executive_summary(db: Session = Depends(get_db)):
                 "critical": windows_crit,
                 "warning": windows_warn,
                 "health_score": windows_health["score"],
+                "legacy_health_score": windows_health.get("legacy_score"),
+                "score_population": windows_health.get("server_count"),
+                "deduped_events": windows_health.get("event_count"),
                 "measurable": windows_health.get("measurable", False),
                 **_grade_for_score(windows_health["score"]),
             },
@@ -985,18 +979,32 @@ async def executive_summary(db: Session = Depends(get_db)):
                 "critical": virt_crit,
                 "warning": virt_warn,
                 "health_score": virt_summary.get("health_score"),
+                "legacy_health_score": virt_legacy,
+                "score_population": virt_summary.get("host_count"),
                 "measurable": bool(virt_measurable),
                 "includes": virt_include_labels,
                 **_grade_for_score(virt_summary.get("health_score")),
             },
             "openshift": {
-                "cluster_count": ocp_cluster_count,
+                "cluster_count": ocp_real_count,
                 "real_cluster_count": ocp_real_count,
                 "synthetic_excluded": len(ocp_synthetic_ids),
+                "node_count": ocp_node_count,
+                "cluster_names": [c.name for c in ocp_real],
+                "platform_kind": "openshift_cluster",
+                "classification_tr": (
+                    "OpenShift cluster. Not yalnız openshift_collector / platform=openshift "
+                    "olaylarından hesaplanır. openshift_virt_event ve ovirt_event sanallaştırmadadır, bu nota girmez."
+                ),
                 "unhealthy_clusters": ocp_unhealthy,
                 "critical": ocp_crit,
                 "warning": ocp_warn,
                 "health_score": ocp_health["score"],
+                "legacy_health_score": ocp_health.get("legacy_score"),
+                "score_population": ocp_health.get("server_count"),
+                "deduped_events": ocp_health.get("event_count"),
+                "deduped_critical": int(ocp_health.get("critical") or 0),
+                "deduped_warning": int(ocp_health.get("warning") or 0),
                 "measurable": ocp_health.get("measurable", False),
                 **_grade_for_score(ocp_health["score"]),
             },

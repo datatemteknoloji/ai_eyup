@@ -42,28 +42,26 @@ def _sev_from_pct(pct: Optional[float], crit: float, warn: float) -> Optional[st
 
 
 def _health_score(critical: int, warning: int, host_count: int, manager_count: int) -> Dict[str, Any]:
-    if manager_count == 0 and host_count == 0:
-        return {"score": None, "grade": None, "label": "Ölçülemedi", "color": "slate", "measurable": False}
+    """Host başına ağırlıklı ceza. Bulgular zaten host kartında tektir.
 
-    # Ceza iki bileşenli: yaygınlık (etkilenen varlık oranı) + varlık cezası.
-    # Yalnız oran kullanıldığında tek host'lu ortamda bir kritik bulgu 92 puan
-    # ("Sağlıklı") üretiyordu; sabit varlık cezası bunu engeller, oran ise
-    # ortam büyüdükçe bulgu sayısını ayırt etmeyi sürdürür.
-    denom = max(host_count + manager_count, 1)
-    spread = (critical / denom) * 60 + (warning / denom) * 20
-    presence = 20 if critical else (8 if warning else 0)
-    score = max(0, min(100, round(100 - spread - presence)))
-    if score >= 90:
-        grade, label, color = "A", "Sağlıklı", "green"
-    elif score >= 75:
-        grade, label, color = "B", "İyi", "blue"
-    elif score >= 55:
-        grade, label, color = "C", "Dikkat", "yellow"
-    elif score >= 35:
-        grade, label, color = "D", "Sorunlu", "orange"
+    Popülasyon host sayısıdır. Host yok, yönetici varsa payda yöneticidir.
+    legacy_score önceki yayılım + sabit ceza formülüdür.
+    """
+    from app.services.health_score import legacy_virt_score, score_from_counts
+
+    if host_count <= 0 and manager_count <= 0:
+        population = 0
+    elif host_count > 0:
+        population = host_count
     else:
-        grade, label, color = "F", "Kritik", "red"
-    return {"score": score, "grade": grade, "label": label, "color": color, "measurable": True}
+        population = manager_count
+    out = score_from_counts(critical, warning, population)
+    out["legacy_score"] = (
+        legacy_virt_score(critical, warning, host_count, manager_count) if out.get("measurable") else None
+    )
+    out["severity_breakdown"] = {}
+    out["event_count"] = critical + warning
+    return out
 
 
 def _latest_host_metrics(db: Session, hypervisor_id: int) -> List[HypervisorHostMetric]:

@@ -79,6 +79,8 @@ export function useMethod(id: string | undefined) {
       cat, m, en,
       classLabel: cls ? (en ? cls.label_en : cls.label_tr) : '',
       method: m ? (en ? m.method_en : m.method_tr) : '',
+      formula: m ? (en ? m.formula_en : m.formula_tr) : '',
+      formulaLabel: en ? 'Formula' : 'Formül',
       source: m ? (en ? m.source_en : m.source_tr) : '',
       limits: m ? (en ? m.limits_en : m.limits_tr) : '',
       aiNote: cat ? (en ? cat.ai_note_en : cat.ai_note_tr) : '',
@@ -128,7 +130,7 @@ export function MethodBadge({ id, at, computedAt, className = '' }: {
   className?: string
 }) {
   const t = useT()
-  const { m, classLabel, method, source, limits, aiNote } = useMethod(id)
+  const { m, classLabel, method, formula, formulaLabel, source, limits, aiNote } = useMethod(id)
   const [open, setOpen] = useState(false)
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const close = useCallback(() => setOpen(false), [])
@@ -148,7 +150,8 @@ export function MethodBadge({ id, at, computedAt, className = '' }: {
       {open && (
         <Popover anchor={anchor} onClose={close}>
           <div><span className="text-slate-500">{t('method_lbl_method')}: </span>{method}</div>
-          <div><span className="text-slate-500">{t('method_lbl_source')}: </span>{source}</div>
+          {formula && <div><span className="text-slate-500">{formulaLabel}: </span>{formula}</div>}
+          <div><span className="text-slate-500">{t('method_lbl_source')}: </span>{source}</div>}
           {when && <div><span className="text-slate-500">{t('method_lbl_data_time')}: </span>{when}</div>}
           {computed && <div><span className="text-slate-500">{t('method_lbl_computed_time')}: </span>{computed}</div>}
           <div><span className="text-slate-500">{t('method_lbl_limits')}: </span>{limits}</div>
