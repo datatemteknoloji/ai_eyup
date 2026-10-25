@@ -45,16 +45,29 @@ def apply_placeholders(text: str, bound: Mapping[str, str]) -> str:
     return _TOKEN.sub(repl, text or "")
 
 
+def _disk_phrase(raw: str) -> str:
+    try:
+        value = float(raw.replace(".", "").replace(",", "."))
+    except ValueError:
+        return f"{raw} disk"
+    if value >= 1024:
+        text = f"{value / 1024:.1f}".replace(".", ",")
+        if text.endswith(",0"):
+            text = text[:-2]
+        return f"{text} TB disk"
+    return f"{raw} GB disk"
+
+
 def template_sentences(bound: Mapping[str, str]) -> str:
     lines: List[str] = []
     if "powered_off" in bound and "wasted_vcpu" in bound:
         ram = bound.get("wasted_ram_gb", "")
         disk = bound.get("wasted_disk_gb", "")
+        ram_bit = f", {ram} GB RAM" if ram else ""
+        disk_bit = f" ve {_disk_phrase(disk)}" if disk else ""
         lines.append(
             f"Kapalı durumdaki {bound['powered_off']} VM toplam {bound['wasted_vcpu']} vCPU"
-            + (f", {ram} RAM" if ram else "")
-            + (f" ve {disk} disk" if disk else "")
-            + " ayırıyor."
+            + ram_bit + disk_bit + " ayırıyor."
         )
     if "hosts_needed" in bound:
         if bound["hosts_needed"] in ("0", "0 host"):

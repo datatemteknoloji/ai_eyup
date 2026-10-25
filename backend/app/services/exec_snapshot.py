@@ -102,6 +102,17 @@ def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]
         facts = build_executive_facts(db, start, end)
         summary = compose_summary(facts)
         view = build_view(db, facts, summary)
+        if summary.get("source") == "template":
+            notes = []
+            for area in view.get("areas") or []:
+                if area.get("status") != "Kritik":
+                    continue
+                count = next((m["value"] for m in area.get("metrics") or [] if "kritik" in m["label"].lower()), None)
+                if count and count != "—":
+                    notes.append(f"{area['name']} alanında {count} varlıkta kritik uyarı açık.")
+            if notes:
+                summary = {**summary, "text": (summary.get("text") or "").rstrip() + " " + " ".join(notes)}
+                view["summary"] = summary
         row = InfrastructureReport(
             report_type=BUNDLE,
             report_title="Yönetici raporları",

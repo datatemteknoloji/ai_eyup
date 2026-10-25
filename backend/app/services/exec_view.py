@@ -144,7 +144,7 @@ def _capacity_rows(facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         typical = _months(runway.get("typical"))
         late = _months(runway.get("slowest")) if runway.get("slowest") is not None else None
         out.append({
-            "name": row.get("cluster") or "Küme",
+            "name": "Adsız küme" if (row.get("cluster") or "") in ("", "(küme yok)") else (row.get("cluster") or "Küme"),
             "resource": "bellek",
             "now": _tr_pct(row.get("memory_pct")),
             "cpu": _tr_pct(row.get("cpu_pct")),
@@ -392,7 +392,13 @@ def _kpis(facts: List[Dict[str, Any]], areas: List[Dict[str, Any]], risks: List[
         {"label": "Kritik durumdaki alan", "value": f"{len(critical)} / {len(watched)} alan" if watched else "—", "hint": ""},
         {
             "label": "En yakın kapasite eşiği",
-            "value": f"{nearest['name']} · bellek · {nearest['early']}–{nearest['late'] or nearest['early']} ay" if nearest and nearest.get("early") else "—",
+            "value": (
+                f"{nearest['name']} · bellek · eşikte"
+                if nearest and nearest.get("early") == "0"
+                else f"{nearest['name']} · bellek · {nearest['early']}–{nearest['late'] or nearest['early']} ay"
+                if nearest and nearest.get("early")
+                else "—"
+            ),
             "hint": "" if nearest else "geçmiş veri yetersiz",
         },
         {"label": "Geri kazanılabilir kaynak", "value": reclaim if off else "—", "hint": ""},

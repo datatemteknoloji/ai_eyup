@@ -241,7 +241,7 @@ export function ExecutiveReportView({
             </select>
           )}
           <a href="#veri-kapsami" className="text-sm" style={{ color: 'var(--theme-link)' }}>
-            {view ? `12 bölümden ${view.coverage.measured}'i ölçülebildi` : 'Veri kapsamı'}
+            {view ? `12 bölümden ${view.coverage.measured} bölüm ölçülebildi` : 'Veri kapsamı'}
           </a>
           <button type="button" className="no-print" onClick={onRefresh} style={cardStyle}>Şimdi yenile</button>
           <button type="button" className="no-print" onClick={() => window.print()} style={cardStyle}>PDF</button>

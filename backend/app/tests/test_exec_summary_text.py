@@ -37,3 +37,5 @@ def test_invented_digit_falls_back_to_a_sentence():
     assert "29" in out["text"]
     assert "99" not in out["text"]
     assert "ek sunucu ihtiyacı görünmüyor" in out["text"]
+    assert "5,7 TB disk" in out["text"]
+    assert "403,4 GB RAM" in out["text"]
