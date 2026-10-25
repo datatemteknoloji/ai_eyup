@@ -110,9 +110,9 @@ Her bölüm `data_readiness` doldurur.
 ## Kabul kriterleri
 
 - [ ] Sentetik/demo veri yönetici raporu gerçeklerine (sayaç, skor, trend, risk) girmiyor; diğer ekranlar değişmedi (test).
-- [ ] "Olay yok" ve "veri yok" ayrı; `not_measurable` yalnız popülasyon boşsa veya izleme yoksa; eski/yeni skor dağılımı raporlandı.
+- [x] "Olay yok" ve "veri yok" ayrı; `not_measurable` yalnız popülasyon boşsa veya izleme yoksa; eski/yeni skor dağılımı raporlandı.
 - [ ] OCP günlük kova yazılıyor; ham tick'ler örnek sayılmıyor (test).
-- [ ] Saklama ayarları raporlandı; değişiklik yapılmadı.
+- [x] Saklama ayarları raporlandı; değişiklik yapılmadı.
 - [ ] Sayı kapısı testleri geçiyor; kapıdan geçmeyen AI metni yayımlanmıyor.
 - [ ] Ay-ay fark yalnız kilitli aylık anlık görüntülerden; ilk ayda `unmeasured`.
 - [ ] 5 rapor üretiliyor; her bölüm `status` ve `data_readiness` taşıyor.
@@ -129,3 +129,40 @@ Yapılanlar, commit'ler, migration'lar, test sonuçları, sentetik veri envanter
 
 - Yönetici raporu sentetik veriyi saymaz. Dashboard, sohbet ve `/infra-reports` sayaçları bu fazda değişmez.
 - Sağlık skoru: popülasyon boş veya izleme yoksa `not_measurable`; Yönetici Ekranı notu buna göre değişebilir.
+
+## Adım 0.3 — saklama (25 Ekim 2026, ayar değişmedi)
+
+Seri başlangıcı = eldeki en eski satır. Politika = silme kuralı. İkisi ayrıdır.
+
+| Tablo | En eski satır | Seri | Silme politikası | Boyut |
+|---|---|---|---|---|
+| hypervisor_host_metrics | 2026-08-15 | 71 gün | Timescale 90 gün (hypertable 3) + 7 gün sonra sıkıştırma | 23 MB |
+| virt_datastore_metrics | 2026-09-05 | 50 gün | Timescale 180 gün (35) + 7 gün sonra sıkıştırma | 3 MB |
+| metric_data | 2026-09-24 | 31 gün | Timescale 30 gün (1) + 3 gün sonra sıkıştırma | 27 MB |
+| system_events | 2026-08-14 | 72 gün | Uygulama işi `event_retention_days` varsayılan 180 (Timescale değil) | 1,4 GB |
+| incidents | 2026-08-14 | 72 gün | RAG retention varsayılan kapalı (`rag_incidents_retention_enabled=false`, 60 gün) | 1,6 MB |
+| infrastructure_reports (tahmin satırları da burada) | 2026-09-02 | 42 gün | Silme politikası yok | 408 KB |
+| ocp_resource_metrics (ham tick, 0.4 notu) | 2026-09-24 | 32 gün | Timescale 30 gün (43) + 3 gün sonra sıkıştırma | 354 MB |
+
+Mevsimsellik için 395 gün gerekir. Mevcut politikalar buna izin vermez. Öneri (uygulanmadı):
+
+- `metric_data` 30 → 395 gün: ~27 MB / 31 gün × 395 ≈ 340 MB. Sıkıştırma zaten 3 günden sonra açık.
+- `hypervisor_host_metrics` 90 → 395 gün: ~23 MB / 71 gün × 395 ≈ 130 MB.
+- `virt_datastore_metrics` 180 → 395 gün: ~25 MB.
+- `system_events` 180 → 395 gün: bugünkü 1,4 GB / 72 gün × 395 ≈ 8 GB. Asıl büyüme burada.
+- `ocp_resource_metrics` ham tick'i 13 ay tutmak ~4 GB. Günlük kova tercih; ham seri 30 günde kalsın.
+- `incidents` ve `infrastructure_reports` için ek politika gerekmez.
+
+## Adım 0.2 — skor dağılımı (canlı, 24 saat penceresi)
+
+| Platform | Eski | Yeni |
+|---|---|---|
+| Linux (1077 sunucu, exporter 0, 3000 olay) | 100 / A | 100 / A (olay var, izleniyor) |
+| Windows (486 sunucu, exporter 0, olay 0) | 100 / A | ölçülemedi (izleme yok) |
+| Sanallaştırma (5 hypervisor) | 72 / C | 72 / C |
+| OpenShift (2 cluster, 242 olay) | 0 / F | 0 / F |
+| Genel (ağırlıklı) | 100 / A | 100 / A (Linux ağırlığı baskın) |
+
+## Adım 0.4 — Linux dosya sistemi
+
+Prometheus'ta `node_filesystem_*` veya `disk_root` metriği yok (323 isim tarandı). Mevcut toplama yoluyla yazılacak seri yok. Yeni scrape hedefi açılmadı. Onay bekleniyor.
