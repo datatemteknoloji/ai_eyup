@@ -163,6 +163,25 @@ Mevsimsellik için 395 gün gerekir. Mevcut politikalar buna izin vermez. Öneri
 | OpenShift (2 cluster, 242 olay) | 0 / F | 0 / F |
 | Genel (ağırlıklı) | 100 / A | 100 / A (Linux ağırlığı baskın) |
 
-## Adım 0.4 — Linux dosya sistemi
+## Adım 0.4 — Linux dosya sistemi (25 Ekim 2026)
 
-Prometheus'ta `node_filesystem_*` veya `disk_root` metriği yok (323 isim tarandı). Mevcut toplama yoluyla yazılacak seri yok. Yeni scrape hedefi açılmadı. Onay bekleniyor.
+Canlı Prometheus yapılandırmasında `metric_relabel_configs` veya `drop` kuralı yok. `node-exporter` işi file_sd ile duruyor; hedef dosyası `[]`. `node_exporter_installed` sunucu sayısı 0. `node_*` metrik adı 0.
+
+Eksik olma nedeni collector bayrağı değil: scrape edilen node_exporter yok. Test ortamında metrik açmak exporter kurulumu ister; bu yeni dış çağrıdır, yapılmadı. Müşteri ortamında ainew Prometheus yapılandırmasını değiştirmez.
+
+B1/B8 ölçülemedi der ve şu listeyi gösterir: `node_filesystem_size_bytes`, `node_filesystem_avail_bytes`, `node_filesystem_files`, `node_filesystem_files_free`. tmpfs, overlay, squashfs sayılmaz.
+
+## OpenShift notu, sentetik hariç (25 Ekim 2026, 24 saat)
+
+ZZ-FAKE-OCP olay üretmiyor (collector atlıyor). Eyleme dönük 91 olayın tamamı gerçek oVirt kümesinde: 12 kritik, 79 uyarı. Ceza her iki popülasyonda da 100'e tıkanıyor.
+
+| Kapsam | Küme | Skor |
+|---|---|---|
+| Sentetik dahil | 2 | 0 / F |
+| ZZ-FAKE-OCP hariç | 1 (oVirt) | 0 / F |
+
+Genel not artık sunucu ağırlıklı ortalama değil; ölçülen platformların en kötüsü. Windows ölçülemediği için nota girmez.
+
+## Günlük özet diski (400 gün, bugünkü kardinalite)
+
+Ham politikalar aynı. Ölçülen günlük özet: metric 872 KB / 32 gün, host 352 KB / 72 gün, datastore 176 KB / 51 gün, ocp node 384 KB / 31 gün, olay sayımı 144 KB / 74 gün. 400 güne uzatma yaklaşık 20 MB. Ham OpenShift tick serisi 30 günde kaldı.
