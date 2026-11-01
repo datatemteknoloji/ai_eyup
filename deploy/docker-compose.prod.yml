@@ -257,7 +257,7 @@ services:
       - backend
 
   prometheus:
-    image: prom/prometheus:v2.55.1
+    image: prom/prometheus:v3.15.1
     pull_policy: never
     container_name: server_management_prometheus
     restart: unless-stopped
@@ -282,7 +282,7 @@ services:
       retries: 5
 
   pushgateway:
-    image: prom/pushgateway:v1.11.0
+    image: prom/pushgateway:v1.11.4
     pull_policy: never
     container_name: server_management_pushgateway
     restart: unless-stopped

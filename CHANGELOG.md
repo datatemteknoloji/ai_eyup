@@ -11,6 +11,98 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.43] - 2026-11-01
+
+### Donanım: şasi/blade görünümü, firmware karşılaştırma, tablo sütunları ve giriş ekranı
+- **Şasi / blade:** Kasalar sekmesi şasi kimliğiyle eşleşir (ad yalnız tekilse), blade'ler doğal yuva sırasında listelenir, sunucu kaydı olmayan yuvalar «Sunucu kaydı yok» diye gösterilir, aynı yuvadaki çok düğümlü sunucular gruplanır, şasisi belirlenemeyen blade'ler ayrı panelde listelenir (sessizce düşmez).
+- **Firmware görünürlüğü:** Dell OME firmware envanteri imleçle döner (sınırdan fazla sunucuda hepsi sırayla okunur), `Installed`/`Available` durumu ve ComponentId saklanır, Dell BIOS sürümü envanterden türetilir. **HPE OneView appliance modu** için bileşen firmware'i (`/rest/server-hardware/{id}/firmware`) eklendi (yalnız okuma; OVGD'de uç yok; alan tipleri sahada doğrulanmadı). Sunucu satırında firmware listesi.
+- **Referans karşılaştırma (Donanım › Firmware):** model veya şasi kapsamlı «referans sunucu» (şasi > model); yalnız kurulu bileşenler, sayısal sürüm karşılaştırması, ayrıştırılamayan sürüm «ölçülemedi» (asla «düşük» denmez). **«Kabul et»** yalnız kabul anındaki sürüm değişmedikçe geçerli. Yeni bulgu `hw.firmware.outdated` (metinde sürüm/BMC IP yok). Yazma uçları operatör+, yalnız ainew'e yazar. Yeni tablolar: `hw_firmware_references`, `hw_firmware_accepts`; `hw_firmware.location` sütunu.
+- **Sunucular tablosu:** sunucu adından önce Dell/HP logosu; yeni sıralanabilir «BMC sürümü» ve «BIOS» sütunları (sayı duyarlı sıralama).
+- **Giriş ekranı:** akış şeması yenilendi — Linux ve Windows ortak yapıyı paylaşır (HP/Dell → Fiziksel, Sanal); «Sanal» tek bağlantı çubuğuyla Sanallaştırma kümesine (vSphere, OpenShift, OLVM) bağlanır; açık temada çizgiler belirginleştirildi. Sol paneldeki **başlık ve açıklama Ayarlar › Marka'dan düzenlenebilir** (boş = varsayılan); «Sayılar ölçümden gelir; AI yalnızca yorumlar.» cümlesi varsayılan metinden kaldırıldı.
+
+### OpenShift ve Yönetici (Tüm Ortamlar) Hazır Raporları + MTV geçmişi
+- **OpenShift → Altyapı Raporları** (`/openshift/reports`): 14 rapor (Executive Summary, Kapasite, Tahmin, Kapasite Planı N+1, Risk, En Riskli, Proje kullanımı, PVC, Workload, KubeVirt VM, Uyum/Güncelleme, Operasyon, **MTV Migrasyon**, **MTV Hazırlık**). Veri yalnız ainew DB'sinden; tahmin ≥14 gün seri ister; veri yoksa «Ölçülemedi».
+- **MTV geçmişi kalıcı:** yeni `mtv_plan_snapshots` tablosu (başlangıçta `create_all` ile oluşur; Alembic yok) — her 10 dk OpenShift senkronunda Plan/Migration anlık görüntüsü; silinen plan «Silindi» kalır, erişilemeyen küme hiçbir planı kapatmaz.
+- **Yönetici → Tüm Ortamlar Raporları** (`/executive/infra-reports`): 11 rapor; her biri Sanallaştırma, OpenShift, Linux, Windows, Exadata'yı kapsar ama alan yalnız anlamlıysa girer (kapsam tablosu kodda; kapsam dışı satırı **neden** ile yazılır). Sentetik (ZZ-FAKE) hariç; yedek (Veeam) yok. Yeni API: `/api/v1/executive-reports/*` (yalnız `executive` modülü). Not: seçilen `/executive/reports` rotası zaten `/executive`'e yönlendirdiği için yeni sayfa `/executive/infra-reports`'ta.
+- Ortak rapor şeması + tek görsel (`GenericReportView`); yöntem notları registry'den (4 yeni yöntem: `report.mtv.history`, `report.mtv.readiness`, `report.exec.health`, `report.exec.matrix`). Ekip raporlarının (virt/Linux/Windows/Exadata) çıktısı değişmedi.
+- Test: yeni backend testleri (matris bütünlüğü, parse_plan, MTV kalıcılık, sentetik dışlama, modül politikası) + frontend Vitest.
+
+### Sohbette «Rapor soruları» (OpenShift + Doğal Dil Asistanı) ve ilgili düzeltmeler
+- **Rapor soruları:** Sanallaştırma sohbetindeki gibi OpenShift sohbetinde (12 chip, MTV dahil) ve Doğal Dil Asistanı'nda (11 chip, Tüm Ortamlar raporları) «Rapor soruları» bölümü; chip'e basınca sohbette doğrudan rapor özeti (KPI + tablolar + öneriler) döner. LLM yok: rakamlar rapor motorundan, cevap kısa özet (tam liste Hazır Raporlar sayfasında). Yönetici raporu `executive`, OpenShift raporu `openshift` yetkisi ister. Ayrıntı: `docs/guides/*/modules/ai-architecture.md`.
+- **Yeniden adlandırma:** «Tüm Altyapı Analizi» → **Doğal Dil Asistanı** (EN: Natural Language Assistant).
+- **Açık tema:** rapor ekranlarında beyaz zeminde okunmayan metinler (`text-yellow-400`, opaklıklı amber/mor/mavi/kırmızı) ve eksik hover/zemin renkleri için override eklendi.
+- **Sentetik kapsam:** eski `/executive` sayfasında hypervisor_id'si boş ZZ-FAKE olayları `external_key` ile dışlanır; `zz-hwdemo-*` sunucuları sentetik sayılır (Yönetici raporları dışlar; kayıt silinmedi).
+- Rapor markdown'ında KPI «2 — /2» biçimi «2 /2» olarak düzeltildi.
+- **Düzeltme (yönetici paketi kilidi):** `exec_snapshot.produce_bundle` advisory kilidini oturum bağlantısında alıyor, `rollback()` sonrası kilit başka havuz bağlantısında bırakılmaya çalışılıp başarısız oluyor ve kilit havuzda sızıyordu (sonraki üretimler sessizce `None`; tam takımda `test_produce_writes_locked_row` sıra bağımlı hatası). Kilit artık özel bağlantıda alınıp bırakılıyor; iki regresyon testi eklendi.
+- **Rapor içeriği EN:** OpenShift ve Yönetici hazır raporlarının başlık, KPI etiketi, sütun, durum sözcüğü, not, öneri, kapsam-dışı nedeni ve yöntem metni arayüz dili İngilizce iken İngilizce görünür (Hazır Raporlar sayfası, markdown, sohbet özeti). Kayıt Türkçe kalır; çeviri çıktı sınırında (`services/report_i18n.py`, API `lang`). Varlık/küme/sunucu adları çevrilmez. Sohbette cevap dili mesajdan seçilir. `test_report_i18n.py` iki motordaki her metnin çevirisini zorunlu kılar.
+
+### Giriş ekranı yenilendi + gerçek OIDC SSO
+- **Yeni giriş ekranı:** iki temaya (koyu/açık) uyumlu iki bölmeli tasarım; ainew merkezli 6 bileşenli (vSphere, OpenShift, Windows, Exadata, OLVM, Linux) animasyonlu hub; dil seçici + tema anahtarı; dar ekran uyumlu. «Parolamı unuttum» ve «Beni hatırla» YOK (parolayı admin sıfırlar). AD açıksa «Active Directory / Yerel hesap» sekmeleri görünür (yalnız ipucu; backend yerel/AD'yi otomatik ayırır). MFA kayıt/doğrulama adımları aynen korundu.
+- **Kullanıcı tarafından değiştirilebilir marka:** Ayarlar → Kurumsal Kimlik: uygulama adı, logo, şirket adı, giriş alt başlığı, alt bilgi metni (boşsa «Datatem Teknoloji» varsayılanı; «Varsayılana dön»). Varsayılan uygulama adı artık `ainew`.
+- **SSO artık gerçekten çalışıyor (OIDC Authorization Code + PKCE S256):** «Kurumsal SSO ile devam et» düğmesi yalnız SSO tam yapılandırılmışsa görünür; yerel giriş her zaman açık kalır (acil durum). state/nonce/PKCE Redis'te (Redis yoksa SSO kapalı kalır), id_token imzası JWKS ile doğrulanır (RS/ES/PS; HS256/none reddedilir), grup→rol eşlemesi tam eşleşme (alt dize yok), eşleşen grup yoksa giriş reddedilir; yerel parolalı hesapla ad çakışması reddedilir; token URL'de taşınmaz (60 sn tek kullanımlık kod → `POST /auth/sso/exchange`); SSO girişinde MFA'yı kimlik sağlayıcı yapar. Ayarlar → Güvenlik → Kimlik'te yeni SSO formu ve «Yapılandırmayı test et» (discovery + JWKS). Kimlik sağlayıcıda redirect URI: `https://<ainew>/api/v1/auth/sso/callback`.
+- Açık temada yan menü kaydırma çubuğunun siyah kalması düzeltildi (Tailwind 4 `scrollbar-*` sınıfları temaya duyarlı kuralları eziyordu; sınıflar kaldırıldı).
+- Dropt'a dokunulmadı. Test: 33 yeni backend testi + gerçek tarayıcı (Playwright) e2e'si — 62/62 (`scripts/e2e_login/`: sahte OIDC IdP + senaryo; her iki tema, dar ekran, yerel giriş, kilitlenme, MFA, SSO rolleri/ret/replay, marka düzenleme). Gerçek AD / gerçek IdP (Keycloak, Entra) ile doğrulama kullanıcıdadır.
+
+### Bağımlılık yükseltmesi (tüm bileşenler en üst sürüm)
+- **Backend:** Python 3.11→3.14; FastAPI 0.104→0.162, Starlette 0.27→1.10, Pydantic 2.5→2.14, SQLAlchemy 2.0→2.1, NumPy 2, Pandas 3, Celery 5.6, LangGraph 1.x, LangChain-core 1.x, ChromaDB 1.x, Paramiko 5, PyPDF 6, Ansible 14 vb. `redis-py` kombu uyumu için 6.4'te tutuldu (kombu `<6.5`).
+- **ChromaDB kaldırıldı:** düzeltmesi olmayan 5 açık taşıyordu ve yalnız eski veriyi pgvector'a taşımak için kullanılıyordu. Paket yoksa taşıma atlanır; pgvector boşken eski `chroma.sqlite3` varsa UYARI loglanır, veri silinmez (`rag_chroma_migrate.py`).
+- **Güvenlik:** `python-jose` (+`ecdsa`, `rsa`) → **PyJWT** (mevcut HS256 oturum token'ları geçerli kalır); `setuptools` güncellendi (torch CPU index'i eski sürüm sunuyordu); `bcrypt` 5 için Dropt'ta 72 bayt kırpma açıkça yapılır. Backend `pip-audit`: yalnız ChromaDB (düzeltmesi yok); Dropt: 0; frontend `npm audit`: 0.
+- **SQLAlchemy 2.1:** `postgresql://` varsayılan sürücüsü psycopg (v3)'e değişti; `app/__init__.py` psycopg2'yi AÇIKÇA korur (mevcut `.env` dosyaları değişmeden çalışır).
+- **Frontend:** React 18→19, Vite 5→8, Tailwind 3→4 (`@layer base` düzeltmesi, sınıf adı geçişleri), react-router 6→7, Recharts 2→3, Mermaid 12, jsPDF 4, TanStack Table 9 (legacy katman), TypeScript 6.0, Vitest 5, Node 20→26, nginx 1.31; `xlsx` SheetJS 0.20.3'e; kullanılmayan ESLint paketleri kaldırıldı.
+- **Dropt:** Python 3.12→3.14, tüm bağımlılıklar güncel.
+- **Paket (offline):** Pushgateway v1.11.0→v1.11.4; Prometheus v2.55.1→v3.15.1 (dev ortam zaten 3.13 ile aynı yapılandırmada çalışıyordu; `promtool check config` geçti; TSDB biçimi uyumlu, gerekirse 2.55.x'e geri dönüş desteklenir). TimescaleDB/PostgreSQL/Redis major sürümleri veri etkilediği için DEĞİŞTİRİLMEDİ.
+- Doğrulama: backend pytest 4557 geçti / 10 başarısız (yükseltmeden ÖNCE de aynı 10); frontend tsc 0 hata, Vitest 280/280; OpenAPI 802 işlem önce/sonra birebir aynı.
+
+### Gerileme taraması (Adım 20; ayrıntı `docs/chat-quality/plan.md`)
+- **Sanallaştırma turu çökmesi giderildi:** canlı akış sonrası iş parçacığı ile orkestratör aynı DB oturumunu eşzamanlı kullanıyordu; artık kendi oturumu var. Doğrulayıcı engeli de turu çökertiyordu (`note_path` anahtar çakışması) — düzeltildi.
+- **Linux sohbet:** «mtv-testserver …» gibi adlar artık hostname/IP listesi sanılmıyor; «X sunucusunun uptime/disk değeri nedir?» canlı veriyle cevaplanıyor.
+- **OpenShift/Sanallaştırma:** hypervisor verilmeyen KubeVirt VM sorusu tüm kaynakları sorguluyor (sahte/ulaşılamayan kaynak «0 VM» yapmıyor); çok cluster'lı pod listesi node ayrıntısını da veriyor; grafik cevabında iç tablo adı gösterilmiyor.
+- İnsan testi İH20 kullanıcıdadır; Adım 20 «Kapandı» değildir.
+
+### Grafik gelmiyor + yazılıp silinen cevap (Adım 19; ayrıntı `docs/chat-quality/plan.md`)
+- **Kök neden bulundu:** model cevaplarında VM/host adlarındaki `-` yerine kırılmaz tire (U+2011) yazıyordu; kullanıcı adı kopyalayıp «grafiğini getir» deyince ad eşleşmiyor, hızlı grafik yolu atlanıp ~2 dk'lık LLM cevabı geliyordu. Artık kullanıcı girdisi (Yönetici, Linux/OpenShift, Windows, Sanallaştırma) ve model çıktısı normal tireye çevriliyor; aynı soru ~2 sn'de 2 grafik veriyor.
+- **Sanallaştırma kanıt guard'ı:** reddedilen cevap silinirken artık «Cevap araç kanıtıyla uyuşmadı, yeniden üretiliyor…» gösteriliyor ve yeniden üretim canlı akıyor (önceden ~23 sn sessiz bekleme); ret nedeni ve ilk cevap başı loga yazılıyor.
+- İnsan testi İH19 kullanıcıdadır; Adım 19 «Kapandı» değildir.
+
+### Sohbet alanı + genel ölçek (Adım 18; ayrıntı `docs/chat-quality/plan.md`)
+- **Genel ölçek %90:** tüm arayüz (login dahil) rem tabanlı olduğundan tek satırla (`index.css` → `html { font-size: 90% }`) küçüldü; geri almak için satırı silmek yeterli.
+- **Sohbet alanı büyüdü (5 asistan ekranı):** üst bantlar sıkılaştırıldı (hub başlığı + sekmeler tek satır, sohbet çubuğu/istatistik şeridi/banner inceltildi), geçmiş çubuğu 256→224 px, giriş alanı kompakt, mesaj sütunu daha geniş. 1366×768'de mesaj alanı +%26…+%47.
+- **Sohbet yazısı varsayılan 12 px**; «Yazı» seçici 11/12/13/15.
+- **Hata düzeltmesi:** DEMO bandı açıkken sohbetin alt kısmı (giriş kutusu) kırpılabiliyordu; sohbet kökü sabit yükseklik yerine `flex-1` oldu.
+- İnsan testi İH18 kullanıcıdadır; Adım 18 «Kapandı» değildir.
+
+### Canlı akış kapsamı (Adım 17; ayrıntı `docs/chat-quality/plan.md`)
+- **Windows ve Linux/OpenShift sohbeti:** araç döngüsünün son turu canlı akar (tek geçiş, ikinci üretim yok); kesik/hatalı/sızıntılı turda ikinci üretim `think` düşük + düşünme iletimiyle çalışır.
+- **Sanallaştırma sohbeti:** LLM cevabı artık sonda topluca değil token token akar; araç turlarının düşünmesi/araç adımları görünür; kanıt guard'ı reddederse ekran geri alınıp doğru cevap yazılır.
+- **«Düşünme süreci» paneli** Linux/OpenShift, Windows ve Sanallaştırma ekranlarında (rol kapılı: `chat_stream_thinking`, vars. yalnız admin). Ortak yardımcı `services/chat_live_final.py`; tek anahtar `chat_unified_stream_final`.
+- İnsan testi İH17 kullanıcıdadır; Adım 17 «Kapandı» değildir.
+
+### Sohbet yazı boyutu (Adım 16; ayrıntı `docs/chat-quality/plan.md`)
+- Tüm NL sohbet ekranlarında (Yönetici, Linux, Windows, Sanallaştırma, OpenShift) varsayılan yazı 14 → **13 px**; başlıklar gövdenin ≤ 1,25 katı (eskiden h2 ≈ 20 px), tablo/kod gövdeye oranlı.
+- Model seçicinin yanında **«Yazı: A A A A»** seçici (12/13/14/16 px, tarayıcıda kalıcı). Diğer sayfalar etkilenmez.
+- Sayfa bazlı akış ölçümü plan.md'de (düşünme paneli/tek geçiş yalnız Yönetici'de; Sanallaştırma LLM cevabı akmıyor).
+
+### Cevap bütünlüğü ve kapsam (Adım 15; ayrıntı `docs/chat-quality/plan.md`)
+- **Kanıt guard'ı:** kapsamlı (uzun + kanıt sayılarını kullanan) cevap, içinde «veri bulunamadı» satırı ya da bazı host adlarının eksikliği yüzünden artık çöpe atılmıyordu — eskiden ~1 dk sessiz yeniden üretim + kuru tablo oluyordu. Tetikleyen koşul adı loglanır (`no_data`/`invented_ip`/`no_names`/`no_anchor`); `ha` alt-dize hatası giderildi.
+- **Özet fallback'i:** sayaç sözlükleri (örn. job başına hata) sıralı tablo olur; başlık sadeleşti.
+- **«Genel durum / tüm altyapı» soruları** vCenter+Linux yerine vCenter+Linux+Windows+OpenShift verisi toplar (yalnız veri toplama; varsayılan kısa cevap kuralı değişmedi).
+
+### Canlı akış (Adım 14; Atlas incelemesi, ayrıntı `docs/chat-quality/plan.md`)
+- **Tek geçiş:** birleşik sohbette araçlı son tur doğrudan kullanıcıya akar; ikinci üretim çağrısı kalktı (`chat_unified_stream_final`). Kesik/hatalı/nudge'lı turlarda otomatik eski yola düşer.
+- **«Düşünme süreci»:** modelin akıl yürütmesi araç aşamasında canlı gösterilir (`chat_stream_thinking`: off/admin/all, vars. admin); cevap/kayıt/önbelleğe karışmaz.
+- **Aralıklı gönderim:** hazır cevaplar (envanter, netleştirme, önbellek…) tek patlama yerine ≤ ~1,2 sn'ye yayılır.
+- Orkestratör: `replace_answer` kayıtlı kısmi metni de sıfırlar (çift metin birikmesi giderildi).
+- **Akış neden görünmüyordu (kök neden düzeltildi):** `GZipMiddleware` SSE yanıtını tamponluyordu (tarayıcı gzip ister, `curl` istemez); artık `text/event-stream` sıkıştırılmaz (`core/gzip_sse.py`). Kesik/sızıntılı canlı cevapta tek hızlı yeniden deneme, ilerleme bekçisi yeniden açılır, ikinci üretimde de düşünme gösterilir (`chat_final_think`).
+- İnsan testi İH14 kullanıcıdadır; Adım 14 «Kapandı» değildir.
+
+### Eşzamanlılık ve kapasite sertleştirmesi (Adım 13; ayrıntı `docs/chat-quality/plan.md`)
+- **Sohbet AI kapısı v2 (`ai_gate`):** sayaç + liste yerine lease ZSET (çöken turun slotu 240 sn'de kendiliğinden düşer, çift release zararsız); ölü bekleyen baştaki sırayı tıkayamaz; bekleme `asyncio.sleep` (iş parçacığı tutmaz — `chat_io` havuzu dolmaz).
+- **Kullanıcı deneyimi:** kullanıcı başına eşzamanlı tur sınırı (`chat_user_max_active_turns`, vars. 2) ve kuyruk üst sınırı (`chat_gate_max_queue`, vars. 20) → tur oluşturulmadan HTTP 429 + Türkçe mesaj; kısa/kavramsal soru için hızlı şerit (`chat_gate_fast_bonus_sec`); tek bekleme bütçesi (`chat_gate_max_wait_sec`) + dostça zaman aşımı; kuyruk olayında sıra + tahmini süre; aynı oturumda turlar sırayla (`chat_session_serial_enabled`).
+- **Ölçüm:** `GET /metrics/chat-gate` (Prometheus) ve `scripts/chat_bench/concurrency_eval.py` (N eşzamanlı soru).
+- **Linux sunucular:** çekmecede «Düzenle» (ad/IP/donanım özellikleri, SSH kimliği, Donanım/BMC hesabı — yalnız Admin); `PUT /servers/{id}` operatör+, `GET /hw/bmc/server-account/{id}`.
+- **LLM semafor lease:** 900 sn → 90 sn + canlı sahip yenilemesi (restart sonrası ölü sahip slotu ≤ 90 sn tutar). Ollama paralelliği ile `llm_max_concurrent` eşit tutulmalı (dev: 3).
+- İnsan testi İH13 kullanıcıdadır; Adım 13 «Kapandı» değildir.
+
 ## [1.0.9.42] - 2026-10-26
 
 ### Sohbet kalite programı (Adım 7–11; ayrıntı `docs/chat-quality/plan.md`)

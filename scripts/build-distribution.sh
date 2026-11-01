@@ -250,8 +250,8 @@ if [[ "$BUILD_IMAGES" -eq 1 ]]; then
   repack_and_save "timescale/timescaledb:2.17.2-pg15" "${IMAGES_DIR}/timescaledb.tar.gz"
   repack_and_save "redis:7-alpine" "${IMAGES_DIR}/redis.tar.gz"
   repack_and_save "postgres:16-alpine" "${IMAGES_DIR}/postgres16.tar.gz"
-  repack_and_save "prom/prometheus:v2.55.1" "${IMAGES_DIR}/prometheus.tar.gz"
-  repack_and_save "prom/pushgateway:v1.11.0" "${IMAGES_DIR}/pushgateway.tar.gz"
+  repack_and_save "prom/prometheus:v3.15.1" "${IMAGES_DIR}/prometheus.tar.gz"
+  repack_and_save "prom/pushgateway:v1.11.4" "${IMAGES_DIR}/pushgateway.tar.gz"
 
   if [[ "$WITH_OLLAMA" -eq 1 ]]; then
     if [[ "$BUNDLE_OLLAMA" -eq 1 ]]; then

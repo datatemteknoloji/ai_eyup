@@ -5,6 +5,7 @@ Kullanım (backend konteyneri içinde, repo kökünden; `.env` içinde HW_DEMO_E
     docker exec -i server_management_backend python - seed    < scripts/hw_demo_seed.py
     docker exec -i server_management_backend python - cleanup < scripts/hw_demo_seed.py
     docker exec -i server_management_backend python - status  < scripts/hw_demo_seed.py
+    docker exec -i server_management_backend python - events  < scripts/hw_demo_seed.py   # (opsiyonel) etiketli DEMO olay/incident üret
 
 Ne yapar (seed):
 - `integration_instances`: category=hardware, kind=hw_demo, `meta_json.demo_scale=large` (24 Dell + 2×16 HPE blade, alarm, garanti).
@@ -13,7 +14,10 @@ Ne yapar (seed):
   → SSH/WinRM toplayıcıları atlar) + `ZZ-FAKE-vCenter` altındaki ilk 8 sahte ESXi host'a `DEMO…` seri numarası.
 - Gerçek kayıtlara (ör. 192.168.1.101 gerçek ESXi hostu) DOKUNMAZ.
 
-cleanup: demo instance'ı (hw_* satırları CASCADE ile gider), `zz-hwdemo-*` sunucuları ve ESXi `DEMO%` seri numaralarını geri alır.
+events: DEMO durumundan etiketli (`[DEMO]`, kaynak `hw_demo`) SystemEvent + Incident üretir — Olaylar/Incident ekranında donanım akışını
+  görmek için. Varsayılan DEMO bulgu/olay üretmez; bu komut açık onayla (opt-in) çalışır, `cleanup` bunları ve YALNIZ onlardan doğan
+  incident'ları siler.
+cleanup: demo olayları + demo instance'ı (hw_* satırları CASCADE ile gider), `zz-hwdemo-*` sunucuları ve ESXi `DEMO%` seri numaralarını geri alır.
 """
 from __future__ import annotations
 
@@ -95,10 +99,21 @@ def seed() -> None:
         db.close()
 
 
-def cleanup() -> None:
-    from app.services.capabilities import invalidate_capabilities
+def events() -> None:
+    from app.services.hw.events import sync_hw_events
     db = SessionLocal()
     try:
+        print("olaylar:", sync_hw_events(db, allow_demo=True))
+    finally:
+        db.close()
+
+
+def cleanup() -> None:
+    from app.services.capabilities import invalidate_capabilities
+    from app.services.hw.events import delete_demo_events
+    db = SessionLocal()
+    try:
+        n_ev = delete_demo_events(db)          # önce olay + onlardan doğan incident (sunucu silinince FK cascade olay siler)
         n_inst = 0
         for inst in db.query(IntegrationInstance).filter(IntegrationInstance.category == CATEGORY,
                                                          IntegrationInstance.kind == KIND).all():
@@ -109,7 +124,7 @@ def cleanup() -> None:
                  .update({"serial_number": None, "enclosure_serial": None}, synchronize_session=False))
         db.commit()
         invalidate_capabilities()
-        print(f"silinen: instance={n_inst} sunucu={n_srv} esxi_seri_geri_alinan={n_esx}")
+        print(f"silinen: olay={n_ev} instance={n_inst} sunucu={n_srv} esxi_seri_geri_alinan={n_esx}")
     finally:
         db.close()
 
@@ -129,4 +144,4 @@ def status() -> None:
 
 if __name__ == "__main__":
     cmd = (sys.argv[1] if len(sys.argv) > 1 else "").lower()
-    {"seed": seed, "cleanup": cleanup, "status": status}.get(cmd, lambda: print(__doc__))()
+    {"seed": seed, "cleanup": cleanup, "status": status, "events": events}.get(cmd, lambda: print(__doc__))()

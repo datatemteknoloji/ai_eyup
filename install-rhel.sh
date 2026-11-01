@@ -687,8 +687,8 @@ require_local_images() {
     "$be" "$fe"
     "timescale/timescaledb:2.17.2-pg15"
     "redis:7-alpine"
-    "prom/prometheus:v2.55.1"
-    "prom/pushgateway:v1.11.0"
+    "prom/prometheus:v3.15.1"
+    "prom/pushgateway:v1.11.4"
     "postgres:16-alpine"
     "dropt-api:local"
   )

@@ -102,7 +102,7 @@ Browser ──► Nginx (port 3000) ──► React SPA
                           ├──► Redis                     (queue / cache)
                           ├──► Dropt API + Postgres 16   (Level 1 sidecar)
                           ├──► Ollama (optional)         (local LLM / embeddings)
-                          ├──► ChromaDB                  (vector search / RAG)
+                          ├──► pgvector (PostgreSQL)     (vector search / RAG)
                           ├──► Prometheus / Pushgateway  (metrics)
                           └──► SSH / WinRM               (managed hosts)
 ```
@@ -135,9 +135,9 @@ Full architecture: [docs/architecture.md](docs/architecture.md)
 
 ## Tech stack
 
-**Backend:** Python 3.11, FastAPI, SQLAlchemy 2, Alembic, Paramiko, LangGraph, ChromaDB  
+**Backend:** Python 3.14, FastAPI, SQLAlchemy 2.1, Alembic, Paramiko, LangGraph, pgvector  
 
-**Frontend:** React 18, TypeScript, Vite, Tailwind, TanStack Query, Recharts  
+**Frontend:** React 19, TypeScript, Vite 8, Tailwind 4, TanStack Query, Recharts  
 
 **Infrastructure:** TimescaleDB (PG15), Redis 7, Prometheus, Pushgateway, optional Ollama; Level‑1 Dropt API (+ Postgres 16)  
 
