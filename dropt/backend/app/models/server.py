@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pydantic import NaiveDatetime
 from enum import Enum
 from typing import Optional
 
@@ -19,8 +20,8 @@ class Credential(SQLModel, table=True):
     label: str = Field(default="default", max_length=128)
     ssh_username: str = Field(default="dtt-automation", max_length=128)
     encrypted_ssh_password: Optional[str] = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class TargetServer(SQLModel, table=True):
@@ -41,5 +42,5 @@ class TargetServer(SQLModel, table=True):
     credentials_id: Optional[int] = Field(default=None, foreign_key="credentials.id", index=True)
     # ainew Server.ai_ready senkronu — False ise Level 1 işleri force olmadan engellenir
     ainew_ai_ready: Optional[bool] = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC))

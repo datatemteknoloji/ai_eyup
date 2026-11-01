@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pydantic import NaiveDatetime
 from enum import Enum
 from typing import Optional
 
@@ -28,5 +29,5 @@ class User(SQLModel, table=True):
     is_active: bool = Field(default=True)
     theme: str = Field(default="dark", max_length=16)  # dark | light
     locale: str = Field(default="tr", max_length=8)  # tr | en
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    last_login_at: Optional[datetime] = Field(default=None)
+    created_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_login_at: Optional[NaiveDatetime] = Field(default=None)

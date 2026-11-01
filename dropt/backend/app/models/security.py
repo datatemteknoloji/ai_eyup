@@ -1,6 +1,7 @@
 """Portal sessions + MFA enrollment (server-side auth state)."""
 
 from datetime import UTC, datetime
+from pydantic import NaiveDatetime
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
@@ -16,10 +17,10 @@ class PortalSession(SQLModel, table=True):
     auth_source: str = Field(default="local", max_length=32)
     client_ip: str = Field(default="", max_length=64)
     user_agent: str = Field(default="", max_length=512)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
-    last_seen_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
-    absolute_expires_at: datetime = Field(index=True)
-    revoked_at: Optional[datetime] = Field(default=None, index=True)
+    created_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
+    last_seen_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
+    absolute_expires_at: NaiveDatetime = Field(index=True)
+    revoked_at: Optional[NaiveDatetime] = Field(default=None, index=True)
 
 
 class UserMfa(SQLModel, table=True):
@@ -28,5 +29,5 @@ class UserMfa(SQLModel, table=True):
     user_id: int = Field(primary_key=True)
     totp_secret_enc: str = Field(default="", max_length=2048)
     enabled: bool = Field(default=False, index=True)
-    enrolled_at: Optional[datetime] = Field(default=None)
-    last_verified_at: Optional[datetime] = Field(default=None)
+    enrolled_at: Optional[NaiveDatetime] = Field(default=None)
+    last_verified_at: Optional[NaiveDatetime] = Field(default=None)

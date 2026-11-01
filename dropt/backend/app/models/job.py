@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pydantic import NaiveDatetime
 from enum import Enum
 from typing import Any, Optional
 
@@ -52,11 +53,11 @@ class Job(SQLModel, table=True):
     progress_total: int = Field(default=0)
     celery_task_id: Optional[str] = Field(default=None, max_length=128)
     error_message: str = Field(default="", max_length=1024)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    previewed_at: Optional[datetime] = Field(default=None)
-    applied_at: Optional[datetime] = Field(default=None)
-    finished_at: Optional[datetime] = Field(default=None)
+    created_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    previewed_at: Optional[NaiveDatetime] = Field(default=None)
+    applied_at: Optional[NaiveDatetime] = Field(default=None)
+    finished_at: Optional[NaiveDatetime] = Field(default=None)
 
 
 class JobRun(SQLModel, table=True):
@@ -76,9 +77,9 @@ class JobRun(SQLModel, table=True):
     stdout: str = Field(default="", sa_column=Column(Text))
     stderr: str = Field(default="", sa_column=Column(Text))
     error_message: str = Field(default="", max_length=1024)
-    started_at: Optional[datetime] = Field(default=None)
-    finished_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    started_at: Optional[NaiveDatetime] = Field(default=None)
+    finished_at: Optional[NaiveDatetime] = Field(default=None)
+    created_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class PreviewArtifact(SQLModel, table=True):
@@ -91,7 +92,7 @@ class PreviewArtifact(SQLModel, table=True):
     planned_commands: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     host_summaries: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
     technical_detail: str = Field(default="", sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class AuditLog(SQLModel, table=True):
@@ -115,4 +116,4 @@ class AuditLog(SQLModel, table=True):
     before_state: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     after_state: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     output: str = Field(default="", sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    created_at: NaiveDatetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
