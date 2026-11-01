@@ -138,7 +138,7 @@ export default function ChatPinFact({
         onClick={() => setOpen((o) => !o)}
         className={
           compact
-            ? 'text-[11px] px-2 py-1 rounded text-slate-500 hover:text-amber-300 border border-transparent hover:border-white/[0.08] inline-flex items-center gap-1 self-start'
+            ? 'text-[11px] px-2 py-1 rounded-sm text-slate-500 hover:text-amber-300 border border-transparent hover:border-white/[0.08] inline-flex items-center gap-1 self-start'
             : 'text-xs px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-slate-300 hover:text-amber-200 inline-flex items-center gap-1.5'
         }
         title="Yalnızca admin — sunucu için kalıcı bilgi sabitle"
@@ -187,7 +187,7 @@ export default function ChatPinFact({
               type="button"
               disabled={busy || !key.trim() || !value.trim() || !effectiveServer}
               onClick={submit}
-              className="text-xs px-2.5 py-1 rounded bg-amber-600/80 hover:bg-amber-500 text-white disabled:opacity-40"
+              className="text-xs px-2.5 py-1 rounded-sm bg-amber-600/80 hover:bg-amber-500 text-white disabled:opacity-40"
             >
               {busy ? '…' : 'Sabitle'}
             </button>

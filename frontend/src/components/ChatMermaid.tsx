@@ -224,7 +224,7 @@ export function ChatMermaid({
   if (phase === 'ok' && svg) {
     return (
       <div
-        className={`chat-mermaid my-3 max-w-full overflow-x-auto rounded-lg border border-slate-300 bg-white p-4 shadow-sm ${className}`}
+        className={`chat-mermaid my-3 max-w-full overflow-x-auto rounded-lg border border-slate-300 bg-white p-4 shadow-xs ${className}`}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
     )

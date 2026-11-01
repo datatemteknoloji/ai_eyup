@@ -243,7 +243,7 @@ export function ServerOpsMenu({ open, x, y, target, onClose }: MenuProps) {
       />
       <div
         ref={menuRef}
-        className="dropt-ops-menu fixed z-[100] flex min-w-[260px] flex-col overflow-hidden rounded-xl border shadow-2xl"
+        className="dropt-ops-menu fixed z-100 flex min-w-[260px] flex-col overflow-hidden rounded-xl border shadow-2xl"
         style={{
           left: pos.left,
           top: pos.top,
@@ -337,7 +337,7 @@ export function ServerOpsMenu({ open, x, y, target, onClose }: MenuProps) {
         ? createPortal(
             <div
               role="menu"
-              className="dropt-ops-menu fixed z-[110] min-w-[220px] rounded-xl border py-1.5 shadow-2xl"
+              className="dropt-ops-menu fixed z-110 min-w-[220px] rounded-xl border py-1.5 shadow-2xl"
               style={{
                 top: fly.top,
                 left: fly.left,

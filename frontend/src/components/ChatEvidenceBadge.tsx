@@ -26,7 +26,7 @@ export function ChatEvidenceBadge({ evidence }: { evidence?: ChatEvidence | null
   return (
     <span
       title={evidence?.reason || t('chat_evidence_hint')}
-      className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border ${STYLES[level]}`}
+      className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-sm border ${STYLES[level]}`}
     >
       {t(`chat_evidence_${level}`)}
     </span>
@@ -55,7 +55,7 @@ export function ChatSources({ evidence }: { evidence?: ChatEvidence | null }) {
       {sources.slice(0, 6).map(s => (
         <div key={s.tool} className="font-mono">
           {t('method_source_line', { tool: s.tool, cls: label(s.class), time: time(s.at) })}
-          {s.demo && <span className="ml-1 px-1 rounded bg-fuchsia-500/20 text-fuchsia-300 font-sans" data-testid="chat-source-demo">{t('chat_source_demo')}</span>}
+          {s.demo && <span className="ml-1 px-1 rounded-sm bg-fuchsia-500/20 text-fuchsia-300 font-sans" data-testid="chat-source-demo">{t('chat_source_demo')}</span>}
         </div>
       ))}
       {sources.length > 6 && <div>+{sources.length - 6}</div>}

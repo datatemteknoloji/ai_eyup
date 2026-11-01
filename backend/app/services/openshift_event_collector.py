@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
@@ -20,7 +21,7 @@ OPENSHIFT_SOURCE = "openshift_collector"
 
 def _upsert_openshift_event(db: Session, cluster: OpenShiftCluster, item: Dict[str, Any], now: datetime) -> bool:
     ext_key = f"ocp{cluster.id}-{item.get('source_object')}-{item.get('reason')}"
-    since = datetime.utcnow() - timedelta(days=7)
+    since = utc_now() - timedelta(days=7)
 
     # PostgreSQL JSON (non-JSONB): contains()/LIKE kırılır — astext ile filtrele
     from sqlalchemy import cast
@@ -73,6 +74,10 @@ def _upsert_openshift_event(db: Session, cluster: OpenShiftCluster, item: Dict[s
 def sync_openshift_events_for_cluster(db: Session, cluster: OpenShiftCluster, hours: int = 48) -> Dict[str, Any]:
     """Tek OpenShift cluster'ı için event sync."""
     from app.services.openshift.cluster_ops import client_from_cluster
+    from app.services.openshift.fake_cluster import is_fake
+
+    if is_fake(cluster):      # sahte test cluster'ı: canlı event yok
+        return {"success": True, "cluster": cluster.name, "total_saved": 0, "total_events": 0, "skipped": True}
 
     client = client_from_cluster(cluster)
 
@@ -84,7 +89,7 @@ def sync_openshift_events_for_cluster(db: Session, cluster: OpenShiftCluster, ho
     finally:
         client.logout()
 
-    now = datetime.utcnow()
+    now = utc_now()
     saved = 0
     for item in items:
         if _upsert_openshift_event(db, cluster, item, now):
@@ -93,7 +98,7 @@ def sync_openshift_events_for_cluster(db: Session, cluster: OpenShiftCluster, ho
     db.commit()
 
     if saved > 0:
-        since_batch = datetime.utcnow() - timedelta(seconds=5)
+        since_batch = utc_now() - timedelta(seconds=5)
         new_events = db.query(SystemEvent).filter(
             SystemEvent.source == OPENSHIFT_SOURCE,
             SystemEvent.created_at >= since_batch,

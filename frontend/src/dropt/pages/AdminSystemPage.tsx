@@ -35,23 +35,23 @@ export function AdminSystemPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("system_logs")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("system_logs_sub")}</p>
-      {error ? <p className="mt-3 text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">{t("system_logs_sub")}</p>
+      {error ? <p className="mt-3 text-sm text-(--color-destructive)">{error}</p> : null}
       {!data ? (
-        <p className="mt-4 text-sm text-[var(--color-muted-foreground)]">{t("loading")}</p>
+        <p className="mt-4 text-sm text-(--color-muted-foreground)">{t("loading")}</p>
       ) : (
         <>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-[var(--color-border)] p-4">
-              <p className="text-xs text-[var(--color-muted-foreground)]">{t("jobs_title")}</p>
+            <div className="rounded-xl border border-(--color-border) p-4">
+              <p className="text-xs text-(--color-muted-foreground)">{t("jobs_title")}</p>
               <p className="text-2xl font-semibold">{data.counts.jobs}</p>
             </div>
-            <div className="rounded-xl border border-[var(--color-border)] p-4">
-              <p className="text-xs text-[var(--color-muted-foreground)]">{t("audit_title")}</p>
+            <div className="rounded-xl border border-(--color-border) p-4">
+              <p className="text-xs text-(--color-muted-foreground)">{t("audit_title")}</p>
               <p className="text-2xl font-semibold">{data.counts.audit}</p>
             </div>
-            <div className="rounded-xl border border-[var(--color-border)] p-4">
-              <p className="text-xs text-[var(--color-muted-foreground)]">Docker</p>
+            <div className="rounded-xl border border-(--color-border) p-4">
+              <p className="text-xs text-(--color-muted-foreground)">Docker</p>
               <p className="text-sm">{data.docker_available ? "socket OK" : "socket yok"}</p>
             </div>
           </div>
@@ -59,7 +59,7 @@ export function AdminSystemPage() {
           <h3 className="mt-6 text-sm font-medium">Konteynerler</h3>
           <div className="mt-2 space-y-2">
             {data.containers.map((c) => (
-              <div key={c.name} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
+              <div key={c.name} className="flex items-center justify-between rounded-lg border border-(--color-border) px-3 py-2 text-sm">
                 <div>
                   <span className="font-mono">{c.name}</span>
                   <Badge className="ml-2" variant={c.state === "running" ? "success" : "muted"}>
@@ -72,13 +72,13 @@ export function AdminSystemPage() {
               </div>
             ))}
             {data.containers.length === 0 ? (
-              <p className="text-xs text-[var(--color-muted-foreground)]">Konteyner listesi yok (socket mount gerekli)</p>
+              <p className="text-xs text-(--color-muted-foreground)">Konteyner listesi yok (socket mount gerekli)</p>
             ) : null}
           </div>
 
           {logName ? (
-            <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--theme-inset)] p-3">
-              <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">{logName}</p>
+            <div className="mt-4 rounded-xl border border-(--color-border) bg-(--theme-inset) p-3">
+              <p className="mb-2 text-xs text-(--color-muted-foreground)">{logName}</p>
               <pre className="max-h-80 overflow-auto font-mono text-[11px]">{lines.join("\n") || "(boş)"}</pre>
             </div>
           ) : null}

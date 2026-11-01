@@ -53,8 +53,13 @@ class InstanceBody(BaseModel):
     alarm_interval_sec: int = Field(DEFAULT_ALARM_SEC, ge=MIN_ALARM_SEC, le=86400)
     inventory_interval_sec: int = Field(DEFAULT_INVENTORY_SEC, ge=3600, le=7 * 86400)
     warranty_interval_sec: int = Field(DEFAULT_WARRANTY_SEC, ge=3600, le=7 * 86400)
-    fetch_firmware: bool = False              # yalnız dell_ome: cihaz başına firmware envanteri (yavaş, kısıtlı)
+    fetch_firmware: bool = False              # dell_ome ve hpe_oneview(mode=oneview): cihaz başına firmware envanteri (yavaş, kısıtlı)
     throttle_sec: float = Field(0.0, ge=0.0, le=5.0)
+    # Faz 3b (opsiyonel): bu portaldaki sunucuların BMC (iLO/iDRAC) hesabı — instance kapsamlı profil. Boş → dokunulmaz.
+    bmc_username: str = ""
+    bmc_password: Optional[str] = None         # boş → mevcut parola korunur
+    bmc_verify_tls: bool = False
+    bmc_clear: bool = False                    # True → bu portalın BMC profilini sil
 
 
 class TestBody(InstanceBody):
@@ -84,7 +89,12 @@ def _dict(db: Session, row: IntegrationInstance) -> Dict[str, Any]:
     halt = auth_guard.halt_info(row)
     iv = m.get("intervals") or {}
     mgrs = db.query(HwManager).filter(HwManager.instance_id == row.id).order_by(HwManager.id).all()
+    from app.models.hw import HwBmcProfile
+    from app.services.hw import bmc_creds as BC
+    bp = db.query(HwBmcProfile).filter(HwBmcProfile.scope == "instance", HwBmcProfile.instance_id == row.id).first()
     return {
+        "bmc": ({"configured": True, "username": BC.username_of(bp), "has_password": bool(BC.load(bp)[1]),
+                 "verify_tls": bool(bp.verify_tls)} if bp is not None else {"configured": False}),
         "id": row.id, "kind": row.kind, "demo": row.kind == KIND_DEMO,
         "demo_inactive": row.kind == KIND_DEMO and not demo_enabled(),
         "label": row.label, "endpoint": row.endpoint, "port": m.get("port") or 443,
@@ -111,6 +121,33 @@ def _dict(db: Session, row: IntegrationInstance) -> Dict[str, Any]:
     }
 
 
+def _save_bmc(db: Session, row: IntegrationInstance, b: InstanceBody) -> None:
+    """Portal entegrasyonuna bağlı BMC profili (scope=instance). Parola yanıtlara dönmez; kimlik DOĞRULANMAZ (BMC'ye bağlanılmaz)."""
+    from app.models.hw import HwBmcProfile
+    from app.services.hw import bmc_creds as BC
+    if row.kind == KIND_DEMO:
+        return
+    p = db.query(HwBmcProfile).filter(HwBmcProfile.scope == "instance", HwBmcProfile.instance_id == row.id).first()
+    if b.bmc_clear:
+        if p is not None:
+            db.delete(p)
+            db.commit()
+        return
+    if not b.bmc_username.strip() and not b.bmc_password:
+        if p is not None:
+            p.verify_tls = bool(b.bmc_verify_tls)
+            db.commit()
+        return
+    if p is None:
+        if not b.bmc_username.strip() or not b.bmc_password:
+            raise HTTPException(422, "BMC hesabı için kullanıcı adı ve parola birlikte girilmeli.")
+        p = HwBmcProfile(scope="instance", instance_id=row.id, name=f"{row.label or row.endpoint} BMC hesabı"[:128])
+        db.add(p)
+    BC.store(p, b.bmc_username, b.bmc_password)
+    p.verify_tls = bool(b.bmc_verify_tls)
+    db.commit()
+
+
 def _apply(row: IntegrationInstance, b: InstanceBody) -> bool:
     """Gövdeyi satıra uygular. Dönüş: bağlantı kimliği (adres/hesap/parola/mod) DEĞİŞTİ mi."""
     if b.kind not in _KINDS:
@@ -131,7 +168,8 @@ def _apply(row: IntegrationInstance, b: InstanceBody) -> bool:
     m.update(port=b.port, ca_bundle_path=(b.ca_bundle_path or None),
              intervals={"alarm": b.alarm_interval_sec, "inventory": b.inventory_interval_sec,
                         "warranty": b.warranty_interval_sec},
-             throttle_sec=b.throttle_sec, fetch_firmware=bool(b.fetch_firmware and b.kind == KIND_DELL))
+             throttle_sec=b.throttle_sec,
+             fetch_firmware=bool(b.fetch_firmware and (b.kind == KIND_DELL or (b.kind == KIND_HPE and b.mode == MODE_ONEVIEW))))
     if b.kind == KIND_HPE:
         m.update(mode=b.mode, appliances=[a.strip() for a in b.appliances if a and a.strip()],
                  login_domain=(b.login_domain or "Local").strip())
@@ -193,6 +231,7 @@ def create_instance(body: InstanceBody, db: Session = Depends(get_db), _u: User 
     db.add(row)
     db.commit()
     db.refresh(row)
+    _save_bmc(db, row, body)
     return _dict(db, row)
 
 
@@ -211,6 +250,7 @@ def update_instance(iid: int, body: InstanceBody, db: Session = Depends(get_db),
         m["auth_halted_at"] = datetime.now(timezone.utc).isoformat()
         row.meta_json = json.dumps(m)
     db.commit()
+    _save_bmc(db, row, body)
     _after_change()
     return _dict(db, row)
 

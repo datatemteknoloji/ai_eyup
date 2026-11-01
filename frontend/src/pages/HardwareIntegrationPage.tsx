@@ -20,6 +20,7 @@ const EMPTY = {
   ca_bundle_path: '', mode: 'ovgd', appliances: [] as string[], login_domain: 'Local',
   alarm_interval_sec: 900, inventory_interval_sec: 86400, warranty_interval_sec: 86400,
   fetch_firmware: false, throttle_sec: 0,
+  bmc_username: '', bmc_password: '', bmc_verify_tls: false, bmc_clear: false,
 }
 
 const SUPPORT_CLS: Record<string, string> = {
@@ -53,6 +54,7 @@ export default function HardwareIntegrationPage() {
   }
   const body = () => ({
     ...f, ca_bundle_path: f.ca_bundle_path || null, password: f.password || null,
+    bmc_password: f.bmc_password || null,
     appliances: appText.split('\n').map((x: string) => x.trim()).filter(Boolean),
   })
   const test = () => run(async () => {
@@ -75,20 +77,20 @@ export default function HardwareIntegrationPage() {
     setMsg({ ok: !!r.sync?.ok, text: r.sync?.ok ? t('hwi_sync_ok') : (r.sync?.error || '') }); reload()
   })
   const del = (i: any) => { if (window.confirm(t('hwi_del_confirm'))) run(async () => { await call(`/instances/${i.id}`, 'DELETE'); reload() }) }
-  const edit = (i: any) => { setMsg(null); setAppText((i.appliances || []).join('\n')); setF({ ...EMPTY, ...i, password: '' }) }
+  const edit = (i: any) => { setMsg(null); setAppText((i.appliances || []).join('\n')); setF({ ...EMPTY, ...i, password: '', bmc_username: i.bmc?.username || '', bmc_password: '', bmc_verify_tls: !!i.bmc?.verify_tls, bmc_clear: false }) }
   const add = (kind: string) => { setMsg(null); setAppText(''); setF({ ...EMPTY, kind }) }
 
   const inp = 'input-field text-sm w-full'
   const isHpe = f?.kind === 'hpe_oneview'
   const isDemo = f?.kind === 'hw_demo'
+  const tool = f?.kind === 'dell_ome' ? 'dell_ome' : (f?.mode === 'oneview' ? 'oneview' : 'ovgd')
   const notes = q.data?.notes || {}
 
   return (
     <div className="p-6 space-y-5 max-w-5xl">
       <PageHeader title={t('hwi_title')} subtitle={t('hwi_sub')} actions={<>
         <Link to="/integrations" className="text-xs text-slate-400 hover:text-white">← {t('int_title')}</Link>
-        <PrimaryButton accent={NEON.blue} onClick={() => add('dell_ome')}>{t('hwi_add_dell')}</PrimaryButton>
-        <PrimaryButton accent={NEON.cyan} onClick={() => add('hpe_oneview')}>{t('hwi_add_hpe')}</PrimaryButton>
+        <PrimaryButton accent={NEON.blue} onClick={() => add('dell_ome')}>{t('hwi_add')}</PrimaryButton>
       </>} />
       <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-2 text-xs text-blue-200">{notes.account || t('hwi_account_note')}</div>
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200" data-testid="hwi-auth-note">{notes.auth_protection || t('hwi_auth_note')}</div>
@@ -101,11 +103,11 @@ export default function HardwareIntegrationPage() {
               <div className="space-y-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-white font-semibold">{i.label}</span>
-                  <span className="text-[11px] px-1.5 rounded bg-slate-500/20 text-slate-300">{i.kind === 'dell_ome' ? 'Dell OME' : i.kind === 'hpe_oneview' ? (i.mode === 'ovgd' ? 'HPE OVGD' : 'HPE OneView') : 'DEMO'}</span>
-                  {i.demo && <span className="px-1.5 text-[11px] rounded bg-fuchsia-500/20 text-fuchsia-300">DEMO</span>}
-                  {i.demo_inactive && <span className="px-1.5 text-[11px] rounded bg-amber-500/15 text-amber-300">{t('hwi_demo_off')}</span>}
-                  <span className={`text-[11px] px-1.5 rounded ${i.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>{i.enabled ? t('hwi_enabled') : t('hwi_disabled')}</span>
-                  <span className={`text-[11px] px-1.5 rounded ${i.last_status === 'ok' ? 'text-emerald-300' : i.last_status === 'never' ? 'text-slate-400' : 'bg-red-500/10 text-red-300'}`}>{i.last_status}</span>
+                  <span className="text-[11px] px-1.5 rounded-sm bg-slate-500/20 text-slate-300">{i.kind === 'dell_ome' ? 'Dell OME' : i.kind === 'hpe_oneview' ? (i.mode === 'ovgd' ? 'HPE OVGD' : 'HPE OneView') : 'DEMO'}</span>
+                  {i.demo && <span className="px-1.5 text-[11px] rounded-sm bg-fuchsia-500/20 text-fuchsia-300">DEMO</span>}
+                  {i.demo_inactive && <span className="px-1.5 text-[11px] rounded-sm bg-amber-500/15 text-amber-300">{t('hwi_demo_off')}</span>}
+                  <span className={`text-[11px] px-1.5 rounded-sm ${i.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>{i.enabled ? t('hwi_enabled') : t('hwi_disabled')}</span>
+                  <span className={`text-[11px] px-1.5 rounded-sm ${i.last_status === 'ok' ? 'text-emerald-300' : i.last_status === 'never' ? 'text-slate-400' : 'bg-red-500/10 text-red-300'}`}>{i.last_status}</span>
                 </div>
                 {!i.demo && <div className="text-xs text-slate-400">{i.endpoint}:{i.port} · {i.username || '—'}{i.kind === 'hpe_oneview' && i.mode === 'oneview' && i.appliances?.length ? ` · +${i.appliances.length}` : ''}</div>}
                 <div className="text-xs text-slate-500">{t('hwi_last_sync')}: {i.last_sync_at ? new Date(i.last_sync_at).toLocaleString() : '—'}
@@ -133,10 +135,10 @@ export default function HardwareIntegrationPage() {
                 <div className="text-[10px] uppercase tracking-wide text-slate-500">{t('hwi_managers')}</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
                   {i.managers.map((m: any) => (
-                    <div key={m.id} className="text-xs flex items-center gap-2 flex-wrap rounded border border-white/[0.06] px-2 py-1">
+                    <div key={m.id} className="text-xs flex items-center gap-2 flex-wrap rounded-sm border border-white/[0.06] px-2 py-1">
                       <span className="text-slate-100">{m.name}</span>
                       <span className="text-slate-500">{m.version || (m.api_version ? `API ${m.api_version}` : '')}</span>
-                      <span className={`px-1.5 rounded ${SUPPORT_CLS[m.support_level] || ''}`}>{t(`hwi_support_${m.support_level}` as any)}</span>
+                      <span className={`px-1.5 rounded-sm ${SUPPORT_CLS[m.support_level] || ''}`}>{t(`hwi_support_${m.support_level}` as any)}</span>
                       {m.status !== 'ok' && <span className="text-red-300">{m.error || m.status}</span>}
                       {m.server_count != null && <span className="text-slate-500">{m.server_count}</span>}
                     </div>
@@ -156,12 +158,25 @@ export default function HardwareIntegrationPage() {
       {!q.isLoading && !(q.data?.instances || []).length && <Panel><div className="py-8 text-center text-sm text-slate-500">{t('hwi_none')}</div></Panel>}
 
       {f && (
-        <Panel title={f.id ? t('hwi_edit') : (isHpe ? t('hwi_add_hpe') : isDemo ? 'DEMO' : t('hwi_add_dell'))}>
+        <Panel title={f.id ? t('hwi_edit') : (isDemo ? 'DEMO' : t('hwi_add'))}>
           <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="text-xs text-slate-400 flex flex-col gap-1">{t('hwi_kind')}
-              <select className={inp} value={f.kind} disabled={!!f.id} onChange={e => setF({ ...f, kind: e.target.value })}>
-                {(q.data?.kinds || []).map((k: any) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
-              </select></label>
+            {isDemo ? (
+              <label className="text-xs text-slate-400 flex flex-col gap-1">{t('hwi_kind')}
+                <select className={inp} value={f.kind} disabled>
+                  {(q.data?.kinds || []).map((k: any) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
+                </select></label>
+            ) : (
+              <div className="text-xs text-slate-400 flex flex-col gap-1 md:col-span-2">
+                <label className="flex flex-col gap-1">{t('hwi_tool')}
+                  <select className={inp} data-testid="hwi-tool" value={tool} disabled={!!f.id}
+                    onChange={e => { const v = e.target.value; setF({ ...f, kind: v === 'dell_ome' ? 'dell_ome' : 'hpe_oneview', mode: v === 'dell_ome' ? f.mode : v }) }}>
+                    <option value="dell_ome">{t('hwi_tool_dell_ome')}</option>
+                    <option value="ovgd">{t('hwi_tool_ovgd')}</option>
+                    <option value="oneview">{t('hwi_tool_oneview')}</option>
+                  </select></label>
+                <span className="text-[11px] text-slate-500">{t(`hwi_tool_help_${tool}` as any)}</span>
+              </div>
+            )}
             <label className="text-xs text-slate-400 flex flex-col gap-1">{t('hwi_label')}
               <input className={inp} value={f.label} onChange={e => setF({ ...f, label: e.target.value })} /></label>
             {!isDemo && (
@@ -176,11 +191,6 @@ export default function HardwareIntegrationPage() {
                   <input className={inp} type="password" autoComplete="new-password" placeholder={f.id ? t('hwi_pass_keep') : ''} value={f.password} onChange={e => setF({ ...f, password: e.target.value })} /></label>
                 {isHpe && (
                   <>
-                    <label className="text-xs text-slate-400 flex flex-col gap-1">{t('hwi_mode')}
-                      <select className={inp} value={f.mode} onChange={e => setF({ ...f, mode: e.target.value })}>
-                        <option value="ovgd">{t('hwi_mode_ovgd')}</option>
-                        <option value="oneview">{t('hwi_mode_oneview')}</option>
-                      </select></label>
                     <label className="text-xs text-slate-400 flex flex-col gap-1">{t('hwi_domain')}
                       <input className={inp} value={f.login_domain} onChange={e => setF({ ...f, login_domain: e.target.value })} /></label>
                     {f.mode === 'oneview' && (
@@ -193,6 +203,22 @@ export default function HardwareIntegrationPage() {
                   <input className={inp} placeholder="/etc/ssl/certs/ca.pem" value={f.ca_bundle_path || ''} onChange={e => setF({ ...f, ca_bundle_path: e.target.value })} /></label>
                 <label className="text-xs text-slate-300 flex items-center gap-2">
                   <input type="checkbox" checked={f.verify_ssl} onChange={e => setF({ ...f, verify_ssl: e.target.checked })} /> {t('hwi_verify')}</label>
+                <div className="md:col-span-2 rounded-sm border border-white/[0.08] p-3 grid md:grid-cols-2 gap-3" data-testid="hwi-bmc">
+                  <div className="md:col-span-2 text-xs text-slate-300">
+                    <div className="font-medium text-slate-100">{t('hwi_bmc_title')}</div>
+                    <div className="text-[11px] text-slate-500">{t('hwi_bmc_help')}</div>
+                  </div>
+                  <label className="text-xs text-slate-400 flex flex-col gap-1">{t('hwb_np_user')}
+                    <input data-testid="hwi-bmc-user" className={inp} autoComplete="off" value={f.bmc_username} onChange={e => setF({ ...f, bmc_username: e.target.value, bmc_clear: false })} /></label>
+                  <label className="text-xs text-slate-400 flex flex-col gap-1">{t('hwb_np_pass')}
+                    <input data-testid="hwi-bmc-pass" className={inp} type="password" autoComplete="new-password" placeholder={f.bmc?.has_password ? t('hwi_pass_keep') : ''} value={f.bmc_password} onChange={e => setF({ ...f, bmc_password: e.target.value, bmc_clear: false })} /></label>
+                  <label className="text-xs text-slate-300 flex items-center gap-2">
+                    <input type="checkbox" checked={f.bmc_verify_tls} onChange={e => setF({ ...f, bmc_verify_tls: e.target.checked })} /> {t('hwb_np_tls')}</label>
+                  {f.bmc?.configured && (
+                    <label className="text-xs text-red-300 flex items-center gap-2">
+                      <input data-testid="hwi-bmc-clear" type="checkbox" checked={f.bmc_clear} onChange={e => setF({ ...f, bmc_clear: e.target.checked })} /> {t('hwi_bmc_clear')}</label>
+                  )}
+                </div>
               </>
             )}
             <label className="text-xs text-slate-400 flex flex-col gap-1">{t('hwi_iv_alarm')}
@@ -201,7 +227,7 @@ export default function HardwareIntegrationPage() {
               <input className={inp} type="number" min={3600} value={f.inventory_interval_sec} onChange={e => setF({ ...f, inventory_interval_sec: Number(e.target.value) })} /></label>
             <label className="text-xs text-slate-400 flex flex-col gap-1">{t('hwi_iv_war')}
               <input className={inp} type="number" min={3600} value={f.warranty_interval_sec} onChange={e => setF({ ...f, warranty_interval_sec: Number(e.target.value) })} /></label>
-            {f.kind === 'dell_ome' && (
+            {(f.kind === 'dell_ome' || (f.kind === 'hpe_oneview' && f.mode === 'oneview')) && (
               <label className="text-xs text-slate-300 flex items-center gap-2 md:col-span-2">
                 <input type="checkbox" checked={!!f.fetch_firmware} onChange={e => setF({ ...f, fetch_firmware: e.target.checked })} /> {t('hwi_firmware')}</label>
             )}

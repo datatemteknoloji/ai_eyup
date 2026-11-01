@@ -100,13 +100,13 @@ export default function OcpProjectPicker({ projects, value, onChange, onQuery, d
         autoComplete="off"
         spellCheck={false}
         title={t('ocp_project_title')}
-        className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/80 text-sm text-slate-200 py-1.5 pl-8 pr-14 placeholder:text-slate-500 focus:outline-none focus:border-rose-500/40"
+        className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/80 text-sm text-slate-200 py-1.5 pl-8 pr-14 placeholder:text-slate-500 focus:outline-hidden focus:border-rose-500/40"
       />
       <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center">
         {value && (
           <button
             type="button"
-            className="p-1 rounded text-slate-500 hover:text-slate-200"
+            className="p-1 rounded-sm text-slate-500 hover:text-slate-200"
             title={t('close')}
             onClick={() => {
               onChange('')
@@ -119,7 +119,7 @@ export default function OcpProjectPicker({ projects, value, onChange, onQuery, d
         )}
         <button
           type="button"
-          className="p-1 rounded text-slate-500 hover:text-slate-200"
+          className="p-1 rounded-sm text-slate-500 hover:text-slate-200"
           onClick={() => {
             setOpen((v) => !v)
             if (!open) inputRef.current?.focus()

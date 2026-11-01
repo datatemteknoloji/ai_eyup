@@ -39,6 +39,30 @@ Bu düzeltme şu dosyalarda uygulandı (referans için): `metric_sync.py`
 def` + senkron `requests`/`paramiko`/`winrm` çağrısı = potansiyel platform
 donması.
 
+### Sohbet SSE'si ve event döngüsü (Adım 11, 2026-10)
+
+Sohbet akışları (SSE) tek event döngüsünde yaşar; döngüde **1 sn senkron iş = tüm
+açık sohbetlerde 1 sn sessizlik**. Ölçülen kaynaklar: LLM `generate_sync`, SQL
+(pgvector/lexical) arama, Redis SCAN, OpenShift API, Celery ping ve — en kötüsü —
+olay toplayıcılarındaki «tüm `SystemEvent` satırlarını ORM ile yükle, Python'da
+ara» döngüsü (91 bin satır × N olay = GIL'i saniyelerce tutan O(N·M)).
+Sonuç: 3 paralel sohbette istemci boşluğu 12–23 sn, Redis tarafı ≤ 6 sn idi.
+
+Uygulanan kalıp:
+
+| Önlem | Yer |
+|---|---|
+| Sohbet için AYRI 96 işçili iş parçacığı havuzu (`run_chat_io`); varsayılan 150'lik havuz arka plan işleriyle (ör. vCenter görev fırtınası) dolabilir | `backend/app/core/chat_executor.py` |
+| Sohbet yolundaki senkron çağrılar (`route_unified`, `plan_sources`, RAG araması, `maybe_fix_no_data_answer`, AI kapısı, `attach_and_stream`) bu havuza alındı | `unified_chat.py`, `chat.py`, `windows_chat.py`, `hypervisors.py`, `rag_service.py`, `chat_orchestrator/*` |
+| Olay tekilleştirme SQL tarafında: `ExternalKeyIndex` (tek sorgu, 7 gün penceresi, bellekte sözlük) + `find_existing_event` | `backend/app/services/event_dedupe.py` (vCenter/oVirt/OpenShift-Virt toplayıcıları, `virt_log_collector`) |
+| Arka plan döngülerinde `asyncio.to_thread` (fleet enqueue, `qa_cache.invalidate_all`) | `background_tasks.py` |
+| Tanı: döngü gözcüsü (`[LoopWatchdog]`: tıkanan yığın + en çok CPU kullanan iş parçacığı; `LOOP_WATCHDOG=0` kapatır) ve teslim gecikmesi (`[SSELag]`) | `core/loop_watchdog.py`, `chat_orchestrator/service.py` |
+
+Ölçüm (3 paralel `silence_eval`): en uzun ilk-token öncesi boşluk 11,4 sn → 5,98 sn;
+SSE teslim gecikmesi ≤ 0,71 sn. **Kural:** yeni bir toplayıcıda/endpoint'te mevcut
+kayıtları «hepsini çek, döngüde karşılaştır» ile arama; SQL'de ara veya tek
+sorguluk indeks kur. Kısa (1,5–2 sn) gözcü uyarıları kalan bilinen sınırdır.
+
 ## Veritabanı bağlantı havuzu
 
 | Ayar | Değer | Dosya |

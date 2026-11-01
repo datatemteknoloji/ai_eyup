@@ -177,6 +177,7 @@ def resolve_live_path(
     has_episode: bool = False,
     force_both: Optional[bool] = None,
     allow_agentic_without_collect: bool = False,
+    has_named_target: bool = False,
 ) -> LivePathDecision:
     """Sabit collect / agentic kararını üret.
 
@@ -184,8 +185,11 @@ def resolve_live_path(
     has_live_targets: Dalga 1 sonrası canlı hedef listesi dolu mu
     allow_agentic_without_collect: OpenShift gibi collect'siz agentic platformlar
     """
+    # Adım 20: mesajda belirli bir sunucu ADIYLA sorulan «<sunucu> uptime/disk/ram değeri nedir?» kalıbı
+    # tanım sorusu değil canlı veri sorusudur — «nedir» yakalayıcısı knowledge_only'e düşürmesin.
+    _named_live = bool(has_named_target) and not is_chitchat(message)
     # Saf bilgi/howto veya chitchat: collect + agentic kapalı
-    if is_knowledge_only(message):
+    if not _named_live and is_knowledge_only(message):
         return LivePathDecision(
             run_fixed_collect=False,
             run_agentic=False,

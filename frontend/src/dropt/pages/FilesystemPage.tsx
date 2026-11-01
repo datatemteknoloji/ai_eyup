@@ -590,21 +590,21 @@ export function FilesystemPage() {
         title: t("fs_extend"),
         hint: t("fs_extend_hint"),
         icon: Maximize2,
-        tone: "bg-[var(--info-bg)] text-[var(--info)]",
+        tone: "bg-(--info-bg) text-(--info)",
       },
       {
         mode: "create",
         title: t("fs_create"),
         hint: t("fs_create_hint"),
         icon: FolderPlus,
-        tone: "bg-[var(--accent-subtle)] text-[var(--accent)]",
+        tone: "bg-(--accent-subtle) text-(--accent)",
       },
       {
         mode: "organize",
         title: t("fs_organize"),
         hint: t("fs_organize_hint"),
         icon: Folders,
-        tone: "bg-[var(--success-bg)] text-[var(--success)]",
+        tone: "bg-(--success-bg) text-(--success)",
       },
     ];
     return (
@@ -614,7 +614,7 @@ export function FilesystemPage() {
         ) : null}
         <p
           className={cn(
-            "text-sm text-[var(--color-muted-foreground)]",
+            "text-sm text-(--color-muted-foreground)",
             !embedded ? "mt-1" : "mb-1",
           )}
         >
@@ -628,7 +628,7 @@ export function FilesystemPage() {
                 key={c.mode}
                 type="button"
                 onClick={() => goMode(c.mode)}
-                className="group flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 text-left transition hover:border-[var(--accent)]/45 hover:bg-[var(--accent-subtle)]"
+                className="group flex flex-col rounded-xl border border-(--color-border) bg-(--color-card) p-4 text-left transition hover:border-(--accent)/45 hover:bg-(--accent-subtle)"
               >
                 <span
                   className={cn(
@@ -638,8 +638,8 @@ export function FilesystemPage() {
                 >
                   <Icon className="h-5 w-5" />
                 </span>
-                <p className="text-sm font-semibold text-[var(--color-foreground)]">{c.title}</p>
-                <p className="mt-1.5 flex-1 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
+                <p className="text-sm font-semibold text-(--color-foreground)">{c.title}</p>
+                <p className="mt-1.5 flex-1 text-xs leading-relaxed text-(--color-muted-foreground)">
                   {c.hint}
                 </p>
               </button>
@@ -660,7 +660,7 @@ export function FilesystemPage() {
           <BackNavButton label={t("network_back_to_choice")} onClick={goChoice} />
         </div>
         <h2 className="text-lg font-semibold tracking-tight">{modeTitle}</h2>
-        <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
+        <p className="mt-0.5 text-xs text-(--color-muted-foreground)">
           {hostname ? `${hostname}` : ""}
           {inv?.root_vg ? ` · root VG: ${inv.root_vg}` : ""}
           {inv?.cached ? " · cache" : ""}
@@ -675,11 +675,11 @@ export function FilesystemPage() {
 
       <form
         onSubmit={onSubmit}
-        className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-5 shadow-sm"
+        className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden rounded-2xl border border-(--color-border) bg-(--color-card) p-5 shadow-xs"
       >
         {loading ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-[var(--theme-overlay)] backdrop-blur-[1px]">
-            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-2 text-sm text-[var(--color-muted-foreground)]">
+          <div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-(--theme-overlay) backdrop-blur-[1px]">
+            <div className="rounded-md border border-(--color-border) bg-(--color-card) px-4 py-2 text-sm text-(--color-muted-foreground)">
               Sunucu envanteri yükleniyor…
             </div>
           </div>
@@ -695,7 +695,7 @@ export function FilesystemPage() {
             disabled={loading || !serverId}
           />
           <p
-            className="truncate font-mono text-[11px] text-[var(--color-muted-foreground)]"
+            className="truncate font-mono text-[11px] text-(--color-muted-foreground)"
             title={hostname || undefined}
           >
             {hostname || (serverId ? `#${serverId}` : "—")}
@@ -713,9 +713,9 @@ export function FilesystemPage() {
         </div>
 
         {/* FS tablosu (df) */}
-        <div className="min-h-0 shrink-0 overflow-hidden rounded-lg border border-[var(--color-border)]">
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-1.5">
-            <p className="text-xs font-medium text-[var(--color-muted-foreground)]">
+        <div className="min-h-0 shrink-0 overflow-hidden rounded-lg border border-(--color-border)">
+          <div className="flex items-center justify-between border-b border-(--color-border) px-3 py-1.5">
+            <p className="text-xs font-medium text-(--color-muted-foreground)">
               {mode === "create" ? "Volume group / Filesystems" : "Filesystems"}
               {mode === "extend"
                 ? " · root VG: yalnızca /home /var /tmp /var/tmp"
@@ -723,13 +723,13 @@ export function FilesystemPage() {
                   ? " · root VG hariç VG seçin"
                   : " · root VG hariç"}
             </p>
-            <span className="text-[10px] text-[var(--color-muted-foreground)]">
+            <span className="text-[10px] text-(--color-muted-foreground)">
               {listedFs.length} satır
             </span>
           </div>
           <div className="max-h-64 overflow-y-auto">
             <table className="w-full text-[11px]">
-              <thead className="sticky top-0 bg-[var(--color-card)] text-[var(--color-muted-foreground)]">
+              <thead className="sticky top-0 bg-(--color-card) text-(--color-muted-foreground)">
                 <tr>
                   <th className="px-2 py-1.5 text-left font-medium">Mounted on</th>
                   <th className="px-2 py-1.5 text-left font-medium">Size</th>
@@ -750,8 +750,8 @@ export function FilesystemPage() {
                     <tr
                       key={r.mount}
                       className={cn(
-                        "cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-accent)]",
-                        selected && "bg-[var(--color-primary)]/15",
+                        "cursor-pointer border-t border-(--color-border) hover:bg-(--color-accent)",
+                        selected && "bg-(--color-primary)/15",
                       )}
                       onClick={() => {
                         setSelectedMount(r.mount);
@@ -765,7 +765,7 @@ export function FilesystemPage() {
                       <td className="px-2 py-1.5 tabular-nums">{r.used || "—"}</td>
                       <td className="px-2 py-1.5 tabular-nums">{r.avail || "—"}</td>
                       <td className="px-2 py-1.5 tabular-nums">{r.use_pct || "—"}</td>
-                      <td className="px-2 py-1.5 font-mono text-[var(--theme-link)]">{r.vg_name || "—"}</td>
+                      <td className="px-2 py-1.5 font-mono text-(--theme-link)">{r.vg_name || "—"}</td>
                       <td className="px-2 py-1.5 font-mono">{r.lv_name || "—"}</td>
                       <td className="px-2 py-1.5 tabular-nums">
                         {typeof r.vg_free_gb === "number" ? `${r.vg_free_gb.toFixed(1)}G` : "—"}
@@ -786,7 +786,7 @@ export function FilesystemPage() {
                   <tr>
                     <td
                       colSpan={9}
-                      className="px-3 py-4 text-center text-[var(--color-muted-foreground)]"
+                      className="px-3 py-4 text-center text-(--color-muted-foreground)"
                     >
                       Bu mod için uygun FS yok
                     </td>
@@ -800,17 +800,17 @@ export function FilesystemPage() {
         {mode === "extend" ? (
           <div className="grid shrink-0 gap-2 sm:grid-cols-2">
             <div>
-              <label className="mb-0.5 block text-[10px] text-[var(--color-muted-foreground)]">
+              <label className="mb-0.5 block text-[10px] text-(--color-muted-foreground)">
                 Seçili FS
               </label>
-              <p className="h-8 truncate rounded-md border border-[var(--color-border)] px-2 leading-8 font-mono text-xs">
+              <p className="h-8 truncate rounded-md border border-(--color-border) px-2 leading-8 font-mono text-xs">
                 {selectedMount || "—"}
                 {effectiveVgName ? ` · ${effectiveVgName}` : ""}
               </p>
             </div>
             <div>
               <div className="mb-0.5 flex flex-wrap items-center gap-2">
-                <label className="text-[10px] text-[var(--color-muted-foreground)]">
+                <label className="text-[10px] text-(--color-muted-foreground)">
                   Büyütülecek miktar (GB)
                   <span className="ml-1 font-normal opacity-80">
                     · VG boş: {freeGb.toFixed(1)} GB
@@ -822,10 +822,10 @@ export function FilesystemPage() {
                   title="VG’deki tüm boş alanı kullan (lvextend -l +100%FREE)"
                   onClick={() => setUseAllFree((v) => !v)}
                   className={cn(
-                    "shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-none",
+                    "shrink-0 rounded-sm border px-1.5 py-0.5 text-[10px] leading-none",
                     useAllFree
                       ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-200"
-                      : "border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-border)]",
+                      : "border-(--color-border) text-(--color-muted-foreground) hover:border-(--color-border)",
                   )}
                 >
                   %100’ü kullan
@@ -859,9 +859,9 @@ export function FilesystemPage() {
                 </span>
               ) : null}
             </p>
-            <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+            <div className="overflow-x-auto rounded-lg border border-(--color-border)">
               <table className="w-full min-w-[36rem] text-[11px]">
-                <thead className="bg-[var(--theme-inset)] text-[var(--color-muted-foreground)]">
+                <thead className="bg-(--theme-inset) text-(--color-muted-foreground)">
                   <tr>
                     <th className="px-2 py-1.5 text-left font-medium">Mount</th>
                     <th className="px-2 py-1.5 text-left font-medium">GB</th>
@@ -880,7 +880,7 @@ export function FilesystemPage() {
                     }, 0);
                     const rowAllFreeGb = Math.max(0, orgBudgetGb - otherFixed);
                     return (
-                    <tr key={s.id} className="border-t border-[var(--color-border)]">
+                    <tr key={s.id} className="border-t border-(--color-border)">
                       <td className="px-1 py-1">
                         <Input
                           className="h-7 font-mono text-[11px]"
@@ -930,10 +930,10 @@ export function FilesystemPage() {
                               )
                             }
                             className={cn(
-                              "rounded border px-1 py-0.5 text-[9px] leading-none",
+                              "rounded-sm border px-1 py-0.5 text-[9px] leading-none",
                               s.useAllFree
-                                ? "border-emerald-400/50 bg-emerald-500/20 text-[var(--theme-success-fg)]"
-                                : "border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-muted-foreground)]",
+                                ? "border-emerald-400/50 bg-emerald-500/20 text-(--theme-success-fg)"
+                                : "border-(--color-border) text-(--color-muted-foreground) hover:border-(--color-muted-foreground)",
                             )}
                           >
                             %100’ü kullan
@@ -973,7 +973,7 @@ export function FilesystemPage() {
                           }
                         />
                       </td>
-                      <td className="px-2 py-1 font-mono text-[10px] text-[var(--theme-link)]">
+                      <td className="px-2 py-1 font-mono text-[10px] text-(--theme-link)">
                         {s.mount.trim().startsWith("/") ? lvNamePreview(s.mount) : "—"}
                       </td>
                       <td className="px-1 py-1">
@@ -1020,8 +1020,8 @@ export function FilesystemPage() {
                 className={cn(
                   "font-mono text-[10px]",
                   orgBudgetGb > 0 && orgUsedSum > orgBudgetGb
-                    ? "text-[var(--color-destructive)]"
-                    : "text-[var(--color-muted-foreground)]",
+                    ? "text-(--color-destructive)"
+                    : "text-(--color-muted-foreground)",
                 )}
               >
                 kullanılan {formatGb(orgUsedSum)} GB
@@ -1035,7 +1035,7 @@ export function FilesystemPage() {
         ) : (
           <div className="grid shrink-0 gap-2 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <label className="mb-0.5 block text-[10px] text-[var(--color-muted-foreground)]">
+              <label className="mb-0.5 block text-[10px] text-(--color-muted-foreground)">
                 Hedef VG (root hariç)
               </label>
               <Select
@@ -1061,10 +1061,10 @@ export function FilesystemPage() {
               ) : null}
             </div>
             <div className="sm:col-span-2">
-              <label className="mb-0.5 block text-[10px] text-[var(--color-muted-foreground)]">
+              <label className="mb-0.5 block text-[10px] text-(--color-muted-foreground)">
                 Yeni mount
                 {autoLvName ? (
-                  <span className="ml-1 font-mono text-[var(--theme-link)]">· LV: {autoLvName}</span>
+                  <span className="ml-1 font-mono text-(--theme-link)">· LV: {autoLvName}</span>
                 ) : null}
               </label>
               <Input
@@ -1077,7 +1077,7 @@ export function FilesystemPage() {
             </div>
             <div>
               <div className="mb-0.5 flex h-5 flex-wrap items-center gap-2">
-                <label className="text-[10px] text-[var(--color-muted-foreground)]">
+                <label className="text-[10px] text-(--color-muted-foreground)">
                   FS boyutu (GB)
                   <span className="ml-1 font-normal opacity-80">· VG boş: {freeGb.toFixed(1)} GB</span>
                 </label>
@@ -1086,10 +1086,10 @@ export function FilesystemPage() {
                   title="VG’deki tüm boş alanı kullan (lvcreate -l 100%FREE)"
                   onClick={() => setUseAllFree((v) => !v)}
                   className={cn(
-                    "shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-none",
+                    "shrink-0 rounded-sm border px-1.5 py-0.5 text-[10px] leading-none",
                     useAllFree
                       ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-200"
-                      : "border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:border-[var(--color-border)]",
+                      : "border-(--color-border) text-(--color-muted-foreground) hover:border-(--color-border)",
                   )}
                 >
                   %100’ü kullan
@@ -1112,7 +1112,7 @@ export function FilesystemPage() {
               />
             </div>
             <div>
-              <label className="mb-0.5 block h-5 text-[10px] leading-5 text-[var(--color-muted-foreground)]">
+              <label className="mb-0.5 block h-5 text-[10px] leading-5 text-(--color-muted-foreground)">
                 Dosya sistemi
               </label>
               <Select value={fstype} onValueChange={setFstype}>
@@ -1134,8 +1134,8 @@ export function FilesystemPage() {
           </div>
         )}
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-[var(--color-border)] pt-2">
-          {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-(--color-border) pt-2">
+          {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
           {needsDisks || useAllFree ? (
             <p className="text-xs text-amber-200/90">
               {useAllFree ? "%100 VG free · " : ""}
@@ -1159,17 +1159,17 @@ export function FilesystemPage() {
         {mode !== "organize" ? (
         <aside
           className={cn(
-            "mt-auto min-h-[7rem] shrink-0 overflow-hidden rounded-lg border border-[var(--color-border)]",
-            showDiskPanel ? "border-amber-500/40 bg-amber-500/5" : "bg-[var(--theme-surface-deep)]",
+            "mt-auto min-h-[7rem] shrink-0 overflow-hidden rounded-lg border border-(--color-border)",
+            showDiskPanel ? "border-amber-500/40 bg-amber-500/5" : "bg-(--theme-surface-deep)",
           )}
         >
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-1.5">
-            <p className="text-[11px] font-medium text-[var(--color-foreground)]">
+          <div className="flex items-center justify-between border-b border-(--color-border) px-3 py-1.5">
+            <p className="text-[11px] font-medium text-(--color-foreground)">
               Partitionsuz diskler ({inv?.free_disks.length ?? 0})
               {needsDisks && selectedDisks.length > 0 ? ` · seçili ${selectedDisks.length}` : ""}
             </p>
           </div>
-          <div className="max-h-36 overflow-y-auto px-2 py-1.5 font-mono text-[10px] leading-4 text-[var(--color-muted-foreground)]">
+          <div className="max-h-36 overflow-y-auto px-2 py-1.5 font-mono text-[10px] leading-4 text-(--color-muted-foreground)">
             {showDiskPanel || needsDisks ? (
               <p className="mb-1 px-1 text-[10px] text-amber-200/90">
                 {needsDisks
@@ -1180,13 +1180,13 @@ export function FilesystemPage() {
                 ).
               </p>
             ) : (
-              <p className="mb-1 px-1 text-[10px] text-[var(--color-muted-foreground)]">
+              <p className="mb-1 px-1 text-[10px] text-(--color-muted-foreground)">
                 VG alanı yeterliyse disk seçimi gerekmez. Yetmezse veya “%100’ü kullan” ile daha fazla
                 alan için disk seçin.
               </p>
             )}
             {(inv?.free_disks || []).length === 0 ? (
-              <p className="px-1 text-[var(--color-muted-foreground)]">(partitionsuz uygun disk yok)</p>
+              <p className="px-1 text-(--color-muted-foreground)">(partitionsuz uygun disk yok)</p>
             ) : (
               inv!.free_disks.map((d) => {
                 const key = freeDiskKey(d);
@@ -1200,22 +1200,22 @@ export function FilesystemPage() {
                     disabled={!clickable || loading}
                     onClick={() => toggleDisk(d)}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded px-1 py-0.5 text-left",
-                      clickable ? "cursor-pointer hover:bg-[var(--color-accent)]" : "cursor-default opacity-70",
-                      on && "bg-emerald-500/15 text-[var(--theme-success-strong)]",
+                      "flex w-full items-center gap-2 rounded-sm px-1 py-0.5 text-left",
+                      clickable ? "cursor-pointer hover:bg-(--color-accent)" : "cursor-default opacity-70",
+                      on && "bg-emerald-500/15 text-(--theme-success-strong)",
                     )}
                   >
                     <span
                       className={cn(
-                        "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border text-[9px]",
+                        "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-xs border text-[9px]",
                         on
                           ? "border-emerald-400 bg-emerald-500 text-white"
-                          : "border-[var(--color-border)] text-transparent",
+                          : "border-(--color-border) text-transparent",
                       )}
                     >
                       {on ? "✓" : ""}
                     </span>
-                    <span className={on ? "text-[var(--theme-success-strong)]" : "text-[var(--theme-link)]"}>{d.alias}</span>
+                    <span className={on ? "text-(--theme-success-strong)" : "text-(--theme-link)"}>{d.alias}</span>
                     <span>
                       {d.size} · usable ~{formatGb(usable)}G
                     </span>

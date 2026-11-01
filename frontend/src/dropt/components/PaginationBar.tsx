@@ -38,7 +38,7 @@ export function PaginationBar({ page, pageCount, total, onPageChange, disabled }
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-muted-foreground)]">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-(--color-border) px-3 py-2 text-xs text-(--color-muted-foreground)">
       <span>{t("total_page", { total, page, pageCount: safeCount })}</span>
       <form className="flex flex-wrap items-center gap-2" onSubmit={onSubmit}>
         <Button

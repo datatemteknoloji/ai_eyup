@@ -9,6 +9,8 @@ vi.mock('../hooks/useCapabilities', () => ({
 vi.mock('../i18n/LocaleProvider', () => ({ useT: () => (k: string, v?: any) => (v ? `${k}:${JSON.stringify(v)}` : k) }))
 
 import HwServerCard from '../components/hardware/HwServerCard'
+import HwBadge from '../components/hardware/HwBadge'
+import IncidentHardwareCard from '../components/hardware/IncidentHardwareCard'
 import { canAccessPath } from '../config/routeAccess'
 
 const wrap = (ui: React.ReactElement) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>)
@@ -78,5 +80,80 @@ describe('Donanım rota erişimi', () => {
   it('/integrations/hardware yalnız admin', () => {
     expect(canAccessPath('/integrations/hardware', has(['integrations', 'hardware']), false)).toBe(false)
     expect(canAccessPath('/integrations/hardware', has([]), true)).toBe(true)
+  })
+})
+
+describe('İki seviyeli yetki: kısıtlı (restricted) donanım kartı', () => {
+  beforeEach(() => { state.hasHw = true; vi.unstubAllGlobals() })
+
+  it('hardware modülü olmayan kullanıcıda BMC, seri ve konsol bağlantısı görünmez', async () => {
+    const { bmc_ip, bmc_type, bmc_version, serial, web_url, manager, ...safe } = SERVER as any
+    mockFetch({ available: true, demo: false, restricted: true, server: { ...safe, restricted: true } })
+    wrap(<HwServerCard kind="server" id={1} />)
+    await waitFor(() => expect(screen.getByTestId('hw-server-card')).toBeInTheDocument())
+    const txt = screen.getByTestId('hw-server-card').textContent || ''
+    expect(txt).not.toContain('10.1.1.9')
+    expect(txt).not.toContain('ABC1234')
+    expect(txt).not.toContain('hw_col_bmc')
+    expect(txt).not.toContain('hw_col_serial')
+    expect(txt).not.toContain('hw_open_console')
+    expect(txt).toContain('PowerEdge R740')                       // model / sağlık / garanti özeti kalır
+    expect(screen.getByTestId('hw-health-critical')).toBeInTheDocument()
+  })
+})
+
+describe('Liste rozeti (HwBadge)', () => {
+  beforeEach(() => { state.hasHw = true; vi.unstubAllGlobals() })
+  const items = {
+    '1': { health: 'critical', critical_alerts: 2, connected: true, warranty_expired: false },
+    '2': { health: 'ok', critical_alerts: 0, connected: true, warranty_expired: false },
+    '3': { health: 'ok', critical_alerts: 0, connected: true, warranty_expired: true },
+    '4': { health: 'warning', critical_alerts: 0, connected: true, warranty_expired: false },
+  }
+  it('yalnız sorun varken görünür (kritik / uyarı / garanti bitti); sağlıklıda gürültü yok', async () => {
+    mockFetch({ enabled: true, items })
+    wrap(<><HwBadge kind="server" id={1} /><HwBadge kind="server" id={2} /><HwBadge kind="server" id={3} /><HwBadge kind="server" id={4} /><HwBadge kind="server" id={99} /></>)
+    await waitFor(() => expect(screen.getAllByTestId('hw-badge').length).toBe(3))
+    const txt = screen.getAllByTestId('hw-badge').map(e => e.textContent)
+    expect(txt).toEqual(expect.arrayContaining([expect.stringContaining('hw_badge_critical'), expect.stringContaining('hw_badge_warranty'), expect.stringContaining('hw_badge_warning')]))
+  })
+  it('entegrasyon yoksa istek atmaz, render etmez', async () => {
+    state.hasHw = false
+    const f = vi.fn()
+    vi.stubGlobal('fetch', f)
+    wrap(<HwBadge kind="server" id={1} />)
+    await new Promise(r => setTimeout(r, 20))
+    expect(f).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('hw-badge')).toBeNull()
+  })
+})
+
+describe('Incident «İlgili donanım» kartı', () => {
+  beforeEach(() => { state.hasHw = true; vi.unstubAllGlobals() })
+  it('donanım olayı + etki alanı (VM, iş servisi, HA riski) gösterir; BMC/seri yok', async () => {
+    mockFetch({ enabled: true, items: [{
+      hw_server_id: 5, name: 'esx01-hw', vendor: 'dell', model: 'PowerEdge R740', health: 'critical', connected: true, enclosure: null,
+      alerts: [{ severity: 'critical', message: 'PSU 1 failed' }],
+      impact: { vm_count: 3, vm_powered_on: 2, services: [{ name: 'ERP', tier: 'critical', vm_count: 2 }], cluster: { name: 'PROD', hosts: 2, healthy_hosts: 1, ha_risk: true } },
+    }] })
+    wrap(<IncidentHardwareCard incidentId={7} />)
+    await waitFor(() => expect(screen.getByTestId('incident-hw-card')).toBeInTheDocument())
+    const txt = screen.getByTestId('incident-hw-card').textContent || ''
+    expect(txt).toContain('esx01-hw')
+    expect(txt).toContain('PSU 1 failed')
+    expect(txt).toContain('ERP (critical)')
+    expect(txt).toContain('hw_impact_ha_risk')
+    expect(screen.getByTestId('hw-impact')).toBeInTheDocument()
+  })
+  it('ilgili donanım yoksa veya entegrasyon yoksa render edilmez', async () => {
+    mockFetch({ enabled: true, items: [] })
+    const { unmount } = wrap(<IncidentHardwareCard incidentId={7} />)
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.queryByTestId('incident-hw-card')).toBeNull()
+    unmount()
+    state.hasHw = false
+    wrap(<IncidentHardwareCard incidentId={8} />)
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.queryByTestId('incident-hw-card')).toBeNull()
   })
 })

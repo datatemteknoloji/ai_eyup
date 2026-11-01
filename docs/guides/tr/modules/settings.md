@@ -9,11 +9,11 @@ Ayarlar (`/settings`), kullanıcılar (`/users`), denetim (`/audit`). Çoğu sek
 | Linux SSH | Kimlik, varsayılan, uygula |
 | WinRM | Windows kimlik |
 | AI | Ollama / `REMOTE_LLM_*`, model |
-| Marka | Ad, logo |
+| Marka | Uygulama adı, logo, şirket adı, giriş ekranı alt başlığı, başlığı ve açıklaması ile alt bilgi metni (giriş ekranına yansır; boş bırakılan alan varsayılan metni kullanır) |
 | RAG | Runbook / incident / metrik gömme |
 | İzleme | Prom / Pushgateway, job adları |
-| Güvenlik | Oturum, politika, SSO |
-| Gelişmiş | Saklama |
+| Güvenlik | Oturum, politika, AD ve SSO (OIDC: Issuer, Client ID/Secret, grup→rol eşleme, «Yapılandırmayı test et») |
+| Gelişmiş | Saklama, sohbet/LLM/RAG kapıları ve süreleri (önbellek, ilerleme göstergesi, varlık/sayım kapıları, veriye dayalılık modu, LLM zaman aşımı, RAG alaka eşiği), işçi sayıları |
 | Hakkında | Sürüm, **ürün GUIDE PDF** |
 | Platform / yedek / güncelleme / tehlikeli | İşletim |
 

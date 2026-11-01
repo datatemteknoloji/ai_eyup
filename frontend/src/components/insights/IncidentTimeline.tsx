@@ -17,7 +17,7 @@ export default function IncidentTimeline({ incidentId, base = 'virt-insights' }:
     <div>
       <div className="flex items-center justify-between mb-1.5">
         <p className="text-xs font-medium text-blue-400">{t('vi_tl_title')}</p>
-        <select value={win} onChange={e => setWin(Number(e.target.value))} className="rounded bg-black/30 border border-white/[0.08] px-1.5 py-0.5 text-[11px] text-slate-300">
+        <select value={win} onChange={e => setWin(Number(e.target.value))} className="rounded-sm bg-black/30 border border-white/[0.08] px-1.5 py-0.5 text-[11px] text-slate-300">
           {[30, 120, 360, 1440].map(m => <option key={m} value={m}>{t('vi_tl_before', { n: m >= 60 ? `${m / 60} h` : `${m} min` })}</option>)}
         </select>
       </div>
@@ -54,10 +54,10 @@ export default function IncidentTimeline({ incidentId, base = 'virt-insights' }:
               {items.length === 0 && <div className="text-xs text-slate-500">{t('vi_tl_empty')}</div>}
               {items.map((it, i) => (
                 <div key={i} className="flex items-start gap-2 text-[11px]">
-                  <span className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${SEV_DOT[it.severity] || 'bg-slate-500'}`} />
+                  <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${SEV_DOT[it.severity] || 'bg-slate-500'}`} />
                   <span className="font-mono text-slate-500 whitespace-nowrap">{it.t ? new Date(it.t).toLocaleTimeString() : ''}</span>
                   <span className="text-slate-500 whitespace-nowrap">{it.source}</span>
-                  <span className="text-slate-300 break-words">{it.title}</span>
+                  <span className="text-slate-300 wrap-break-word">{it.title}</span>
                 </div>
               ))}
             </div>

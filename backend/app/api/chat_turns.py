@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user_optional
-from app.core.database import get_db
+from app.core.database import get_db, release_txn
 from app.models.chat_turn import ChatTurn
 from app.models.user import User
 from app.services.chat_orchestrator.service import cancel_turn, get_turn, subscribe_sse
@@ -81,6 +81,7 @@ async def turn_events(
     if not row:
         raise HTTPException(status_code=404, detail="Turn bulunamadı")
     _authorize_turn(row, user)
+    release_txn(db, keep_loaded=True)   # SSE akışı boyunca istek oturumu idle in transaction kalmasın
 
     async def gen():
         async for line in subscribe_sse(turn_id, after_id=after or "0-0"):

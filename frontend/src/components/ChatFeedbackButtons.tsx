@@ -79,7 +79,7 @@ export default function ChatFeedbackButtons({
           type="button"
           disabled={busy || !!vote}
           onClick={() => send('up')}
-          className={`text-xs px-2 py-1 rounded border flex items-center gap-1 transition-colors ${
+          className={`text-xs px-2 py-1 rounded-sm border flex items-center gap-1 transition-colors ${
             vote === 'up'
               ? 'bg-emerald-700/50 border-emerald-500/50 text-emerald-100'
               : 'bg-white/[0.04] border-white/[0.08] text-slate-400 hover:text-emerald-300 hover:border-emerald-500/40'
@@ -92,7 +92,7 @@ export default function ChatFeedbackButtons({
           type="button"
           disabled={busy || !!vote}
           onClick={() => send('down')}
-          className={`text-xs px-2 py-1 rounded border flex items-center gap-1 transition-colors ${
+          className={`text-xs px-2 py-1 rounded-sm border flex items-center gap-1 transition-colors ${
             vote === 'down'
               ? 'bg-rose-800/40 border-rose-500/40 text-rose-100'
               : 'bg-white/[0.04] border-white/[0.08] text-slate-400 hover:text-rose-300 hover:border-rose-500/40'
@@ -105,7 +105,7 @@ export default function ChatFeedbackButtons({
           type="button"
           disabled={busy || vote === 'up'}
           onClick={() => setShowCorrect((s) => !s)}
-          className="text-[11px] px-2 py-1 rounded text-slate-500 hover:text-slate-300 border border-transparent hover:border-white/[0.08]"
+          className="text-[11px] px-2 py-1 rounded-sm text-slate-500 hover:text-slate-300 border border-transparent hover:border-white/[0.08]"
         >
           Düzelt
         </button>
@@ -118,13 +118,13 @@ export default function ChatFeedbackButtons({
             onChange={(e) => setCorrection(e.target.value)}
             rows={3}
             placeholder="Doğru cevabı yazın…"
-            className="w-full text-xs bg-cyber-deep border border-white/[0.08] rounded-lg px-2 py-1.5 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+            className="w-full text-xs bg-cyber-deep border border-white/[0.08] rounded-lg px-2 py-1.5 text-slate-200 placeholder:text-slate-600 focus:outline-hidden focus:ring-1 focus:ring-blue-500/50"
           />
           <button
             type="button"
             disabled={busy || correction.trim().length < 10}
             onClick={() => send('up', correction.trim())}
-            className="self-start text-xs px-2.5 py-1 rounded bg-blue-600/80 hover:bg-blue-500 text-white disabled:opacity-40"
+            className="self-start text-xs px-2.5 py-1 rounded-sm bg-blue-600/80 hover:bg-blue-500 text-white disabled:opacity-40"
           >
             Düzeltmeyi kaydet
           </button>

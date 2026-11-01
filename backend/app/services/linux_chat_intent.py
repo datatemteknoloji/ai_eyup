@@ -29,6 +29,10 @@ _CMD_SPECS = [
     ("route", 2), ("ip", 4),
 ]
 
+# Doğrudan komut argümanı: yalnız güvenli karakterler (shell metakarakteri / boşluk YOK).
+# `df -h;reboot` gibi token'lar komutun tamamını düşürür (çıplak komuta düşmez).
+_SAFE_FLAG = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9._:=,@%+-]*$")
+
 # NL içinde geçen ama argsız komut sanılmaması gerekenler (free space, top 20, …)
 _BARE_CMD_GUARD = {"free", "df", "ss", "top", "ps", "route", "du", "uptime"}
 
@@ -60,7 +64,8 @@ def extract_direct_commands(msg: str) -> List[str]:
         for cmd_name, max_args in _CMD_SPECS:
             if tok != cmd_name:
                 continue
-            parts = [tokens[i]]
+            parts = [cmd_name]  # ham token değil: "uptime?" → "uptime" (noktalama/glob sızmaz)
+            unsafe = False
             j = i + 1
             if cmd_name == "ip":
                 if j >= len(tokens):
@@ -69,7 +74,7 @@ def extract_direct_commands(msg: str) -> List[str]:
                     break
                 nxt = tokens[j].rstrip(".,?!")
                 nxt_l = nxt.lower()
-                if not (nxt.startswith("-") or nxt_l in _IP_OBJECTS):
+                if not ((nxt.startswith("-") and _SAFE_FLAG.match(nxt)) or nxt_l in _IP_OBJECTS):
                     i += 1
                     matched = True
                     break
@@ -77,7 +82,15 @@ def extract_direct_commands(msg: str) -> List[str]:
             while j < len(tokens) and count < max_args:
                 arg = tokens[j].rstrip(".,?!")
                 arg_l = arg.lower()
-                if arg.startswith("-") or arg.lstrip("-").isdigit():
+                if arg.startswith("-"):
+                    if not _SAFE_FLAG.match(arg):
+                        unsafe = True
+                        j += 1
+                        break
+                    parts.append(arg)
+                    count += 1
+                    j += 1
+                elif arg.isdigit():
                     parts.append(arg)
                     count += 1
                     j += 1
@@ -93,6 +106,10 @@ def extract_direct_commands(msg: str) -> List[str]:
                     j += 1
                 else:
                     break
+            if unsafe:
+                i = max(j, i + 1)
+                matched = True
+                break
             if cmd_name == "ip" and len(parts) < 2:
                 i = max(j, i + 1)
                 matched = True
@@ -139,30 +156,31 @@ _INVENTORY_STATUS_PATTERNS = [
     r"how\s+many\s+servers",
 ]
 
+# Adım 20: kelime sınırı — «mtv-testserver» içindeki «ver» / «script bilgi» içindeki «ip» filo listesi sanılmasın
 _INVENTORY_PATTERNS = [
-    r"hostname.{0,40}ip",
-    r"ip.{0,40}hostname",
-    r"hostname.{0,20}(ve|ile|&|/|,).{0,20}ip",
-    r"makine\s*adi.{0,40}ip",
-    r"ip\s*(adres|bilgi)",
+    r"hostname.{0,40}\bip",
+    r"\bip.{0,40}hostname",
+    r"hostname.{0,20}(ve|ile|&|/|,).{0,20}\bip",
+    r"makine\s*adi.{0,40}\bip",
+    r"\bip\s*(adres|bilgi)",
     r"sunucu(lar(in|imizin|imi|imiz)?)?\s*(listesi|envanter|listele)",
     r"sunucu.{0,40}listele",
     r"listele.{0,40}sunucu",
     r"(hangi|tum|butun)\s+sunucu",
     r"sunucu(lar)?\s*(adi|isim|hostname|ip)",
-    r"(fqdn|host\s*adi).{0,30}ip",
+    r"(fqdn|host\s*adi).{0,30}\bip",
     r"ai\s*ready\s*sunucu",
     r"envanter\s*(ver|goster|listele)",
-    r"(listele|goster|ver)\s*.{0,20}sunucu",
-    r"isim.{0,20}(ve|ile|&|/|,).{0,20}ip",
-    r"adlarini.{0,40}ip",
-    r"\badi\b.{0,20}(ve|ile).{0,20}ip",
+    r"\b(listele|goster|ver)\b\s*.{0,20}sunucu",
+    r"isim.{0,20}(ve|ile|&|/|,).{0,20}\bip",
+    r"adlarini.{0,40}\bip",
+    r"\badi\b.{0,20}(ve|ile).{0,20}\bip",
     r"kayitli.{0,40}sunucu",
     r"hangi.{0,30}sunucu.{0,30}(var|kayit)",
     r"linux\s+host",
     r"server\s+inventory",
     r"list\s+servers",
-    r"inventory.{0,30}ip",
+    r"inventory.{0,30}\bip",
 ]
 
 

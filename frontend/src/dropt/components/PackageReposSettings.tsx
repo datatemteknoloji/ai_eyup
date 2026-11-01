@@ -161,10 +161,10 @@ export function PackageReposSettings() {
   }
 
   return (
-    <div className="space-y-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+    <div className="space-y-5 rounded-xl border border-(--color-border) bg-(--color-card) p-5">
       <div>
         <h3 className="text-sm font-medium">Paket reçeteleri (keyword · kaynak · OS)</h3>
-        <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+        <p className="mt-1 text-xs text-(--color-muted-foreground)">
           Keyword Package ekranında chip olur. Kaynak: NFS mount, Portal RPM veya{" "}
           <strong>Subscription (Satellite)</strong> — her üçünde de post komutlar / data dizini aynı
           reçetede kalır. Portal kök: <span className="font-mono">{portalRoot}/…</span>
@@ -172,7 +172,7 @@ export function PackageReposSettings() {
       </div>
 
       <section className="space-y-2">
-        <h4 className="text-xs font-medium text-[var(--color-muted-foreground)]">
+        <h4 className="text-xs font-medium text-(--color-muted-foreground)">
           Subscription (OS activation key)
         </h4>
         <form onSubmit={onAddSub} className="grid gap-2 sm:grid-cols-4">
@@ -201,7 +201,7 @@ export function PackageReposSettings() {
             Ekle
           </Button>
         </form>
-        <ul className="space-y-1 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+        <ul className="space-y-1 font-mono text-[11px] text-(--color-muted-foreground)">
           {subs.map((s) => (
             <li key={s.id} className="flex items-center justify-between gap-2">
               <span>
@@ -224,8 +224,8 @@ export function PackageReposSettings() {
         </ul>
       </section>
 
-      <section className="space-y-2 border-t border-[var(--color-border)] pt-3">
-        <h4 className="text-xs font-medium text-[var(--color-muted-foreground)]">
+      <section className="space-y-2 border-t border-(--color-border) pt-3">
+        <h4 className="text-xs font-medium text-(--color-muted-foreground)">
           Keyword reçetesi {editingId != null ? `(düzenleniyor #${editingId})` : ""}
         </h4>
         <form onSubmit={onSaveRepo} className="grid gap-2 sm:grid-cols-2">
@@ -275,7 +275,7 @@ export function PackageReposSettings() {
                 value={mount}
                 onChange={(e) => setMount(e.target.value)}
               />
-              <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted-foreground)]">
+              <label className="flex items-center gap-2 text-[11px] text-(--color-muted-foreground)">
                 <input type="checkbox" checked={needsFs} onChange={(e) => setNeedsFs(e.target.checked)} />
                 Data mount (FS) seçimi gerekli
               </label>
@@ -302,13 +302,13 @@ export function PackageReposSettings() {
 
           {sourceType === "subscription" ? (
             <div className="space-y-2 sm:col-span-2">
-              <p className="text-[11px] text-[var(--color-muted-foreground)]">
+              <p className="text-[11px] text-(--color-muted-foreground)">
                 Paketler Satellite/dnf üzerinden kurulur (üstteki OS subscription key kullanılır). Aşağıdaki
                 post komutlar ve data dizini NFS reçetesiyle aynı şekilde çalışır (
                 <span className="font-mono">{"{{docker_pkgs}}"}</span>,{" "}
                 <span className="font-mono">{"{{docker_dir}}"}</span>, …).
               </p>
-              <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted-foreground)]">
+              <label className="flex items-center gap-2 text-[11px] text-(--color-muted-foreground)">
                 <input type="checkbox" checked={needsFs} onChange={(e) => setNeedsFs(e.target.checked)} />
                 Data mount (FS) seçimi gerekli
               </label>
@@ -316,7 +316,7 @@ export function PackageReposSettings() {
           ) : null}
 
           <textarea
-            className="min-h-[8rem] rounded-md border border-[var(--color-border)] bg-transparent p-2 font-mono text-[10px] sm:col-span-2"
+            className="min-h-[8rem] rounded-md border border-(--color-border) bg-transparent p-2 font-mono text-[10px] sm:col-span-2"
             value={postCmd}
             onChange={(e) => setPostCmd(e.target.value)}
             placeholder="Kurulum sonrası komutlar (opsiyonel) — {{data_mount}} {{docker_dir}} {{docker_pkgs}} …"
@@ -339,7 +339,7 @@ export function PackageReposSettings() {
             ) : null}
           </div>
         </form>
-        <ul className="space-y-1 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+        <ul className="space-y-1 font-mono text-[11px] text-(--color-muted-foreground)">
           {repos.map((r) => (
             <li key={r.id} className="flex items-center justify-between gap-2">
               <span>
@@ -352,7 +352,7 @@ export function PackageReposSettings() {
                 {r.needs_data_mount ? " · FS" : ""}
               </span>
               <span className="flex shrink-0 gap-2">
-                <button type="button" className="text-[var(--theme-link)] hover:underline" onClick={() => startEdit(r)}>
+                <button type="button" className="text-(--theme-link) hover:underline" onClick={() => startEdit(r)}>
                   düzenle
                 </button>
                 <button
@@ -375,7 +375,7 @@ export function PackageReposSettings() {
         </ul>
       </section>
 
-      {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
       {msg ? <p className="text-sm text-emerald-300">{msg}</p> : null}
     </div>
   );

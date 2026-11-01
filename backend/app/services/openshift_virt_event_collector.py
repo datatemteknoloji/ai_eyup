@@ -6,13 +6,15 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from app.core.timeutil import utc_now
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor, HypervisorType
 from app.models.server import Server
+from app.services.event_dedupe import ExternalKeyIndex, find_existing_event
 from app.services.incident_auto import auto_create_or_link_incident
 
 logger = logging.getLogger(__name__)
@@ -33,24 +35,17 @@ def _resolve_server_id(db: Session, hypervisor_id: int, source_object: str) -> "
 
 
 def _upsert_openshift_virt_event(
-    db: Session, hypervisor: Hypervisor, item: Dict[str, Any], now: datetime
+    db: Session, hypervisor: Hypervisor, item: Dict[str, Any], now: datetime,
+    index: Optional[ExternalKeyIndex] = None,
 ) -> bool:
     ext_key = f"hv{hypervisor.id}-{item.get('source_object')}-{item.get('reason')}-{item.get('timestamp')}"
-    since = datetime.utcnow() - timedelta(days=7)
-
-    existing_rows = (
-        db.query(SystemEvent)
-        .filter(SystemEvent.source == OPENSHIFT_VIRT_SOURCE, SystemEvent.created_at >= since)
-        .all()
-    )
-    for ev in existing_rows:
-        raw = ev.raw_data or {}
-        if raw.get("external_key") == ext_key:
-            ev.last_seen = now
-            ev.occurrence_count = (ev.occurrence_count or 1) + 1
-            if item.get("severity"):
-                ev.severity = item["severity"]
-            return False
+    ev = find_existing_event(db, OPENSHIFT_VIRT_SOURCE, ext_key, index)  # Adım 11: tüm satırları yükleme yok
+    if ev is not None:
+        ev.last_seen = now
+        ev.occurrence_count = (ev.occurrence_count or 1) + 1
+        if item.get("severity"):
+            ev.severity = item["severity"]
+        return False
 
     server_id = _resolve_server_id(db, hypervisor.id, item.get("source_object", ""))
     title = item.get("title") or "OpenShift Virtualization olayı"
@@ -78,6 +73,8 @@ def _upsert_openshift_virt_event(
         occurrence_count=1,
     )
     db.add(event)
+    if index is not None:
+        index.add(OPENSHIFT_VIRT_SOURCE, ext_key, event)
     return True
 
 
@@ -108,16 +105,17 @@ def sync_openshift_virt_events_for_hypervisor(db: Session, hypervisor: Hyperviso
     finally:
         client.logout()
 
-    now = datetime.utcnow()
+    now = utc_now()
     saved = 0
+    index = ExternalKeyIndex(db)
     for item in items:
-        if _upsert_openshift_virt_event(db, hypervisor, item, now):
+        if _upsert_openshift_virt_event(db, hypervisor, item, now, index):
             saved += 1
 
     db.commit()
 
     if saved > 0:
-        since_batch = datetime.utcnow() - timedelta(seconds=5)
+        since_batch = utc_now() - timedelta(seconds=5)
         new_events = db.query(SystemEvent).filter(
             SystemEvent.source == OPENSHIFT_VIRT_SOURCE,
             SystemEvent.created_at >= since_batch,
@@ -138,6 +136,8 @@ def sync_all_openshift_virt_events(db: Session, hours: int = 48) -> Dict[str, An
     results: List[Dict[str, Any]] = []
     total_saved = 0
     for hv in hvs:
+        if (hv.meta_data or {}).get("fake_seed"):
+            continue          # sahte test envanteri (scripts/fake_virt_seed.py)
         try:
             r = sync_openshift_virt_events_for_hypervisor(db, hv, hours=hours)
             results.append(r)

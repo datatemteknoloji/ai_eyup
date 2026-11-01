@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from app.services.chat_text_norm import normalize_user_text
 from app.core.auth import get_current_user, get_current_user_optional, require_module
 from app.models.user import User
 from app.services.chat_session_scope import (
@@ -18,7 +19,7 @@ from app.services.chat_session_scope import (
     sessions_q,
     user_pk,
 )
-from app.core.database import get_db
+from app.core.database import get_db, release_txn
 from app.core.inventory_guard import require_integrations_inventory
 from app.models.hypervisor import Hypervisor, HypervisorType
 from app.models.server import Server
@@ -244,6 +245,8 @@ def _latest_hosts_for_hypervisor(db: Session, hypervisor_id: int) -> list[dict]:
         .order_by(HypervisorHostMetric.host_name)
         .all()
     )
+    from app.services.host_freshness import fresh_hosts
+    rows = fresh_hosts(rows)
     inv_rows = (
         db.query(HypervisorHostInventory)
         .filter(HypervisorHostInventory.hypervisor_id == hypervisor_id)
@@ -467,11 +470,83 @@ def virt_prom_series(
     )
 
 
+def datastore_summary_by_hypervisor(db: Session, hv_ids: list[int]) -> dict[int, dict]:
+    """Hypervisor başına TEKİL datastore toplamı (kapasite/kullanılan, GB).
+
+    Host satırlarındaki `ds_total_gb` o host'a görünen TÜM datastore'ların toplamıdır; paylaşımlı
+    datastore cluster'daki her host'ta tekrar eder, host başına toplamak katlar. Bu yüzden toplam
+    datastore envanterinden (ad bazında tekil) hesaplanır. Erişilemeyen ve hiçbir host'a bağlı
+    olmayan datastore'lar hariç tutulur.
+    """
+    out: dict[int, dict] = {}
+    if not hv_ids:
+        return out
+    try:
+        rows = db.execute(text("""
+            SELECT DISTINCT ON (hypervisor_id, name)
+                   hypervisor_id, name, capacity_gb, used_gb, free_gb
+            FROM virt_datastore_metrics
+            WHERE hypervisor_id = ANY(:ids)
+              AND timestamp >= now() - interval '2 days'
+              AND capacity_gb IS NOT NULL AND capacity_gb > 0
+              AND COALESCE(accessible, 1) <> 0
+              AND COALESCE(host_count, 1) > 0
+            ORDER BY hypervisor_id, name, timestamp DESC
+        """), {"ids": list(hv_ids)}).mappings().all()
+    except Exception:
+        logger.exception("datastore_summary_by_hypervisor (metrics)")
+        rows = []
+    for r in rows:
+        cap = float(r["capacity_gb"] or 0)
+        if r["used_gb"] is not None:
+            used = float(r["used_gb"])
+        elif r["free_gb"] is not None:
+            used = max(0.0, cap - float(r["free_gb"]))
+        else:
+            used = 0.0
+        s = out.setdefault(int(r["hypervisor_id"]), {"total_gb": 0.0, "used_gb": 0.0, "count": 0})
+        s["total_gb"] += cap
+        s["used_gb"] += used
+        s["count"] += 1
+    # Zaman serisi yoksa (ör. OLVM) envanter tablosundan
+    missing = [i for i in hv_ids if i not in out]
+    if missing:
+        try:
+            from app.models.virt_datastore import VirtDatastore
+            from app.services.ovirt.ovirt_parse import aggregate_data_storage_usage
+            for hid in missing:
+                inv = db.query(VirtDatastore).filter(VirtDatastore.hypervisor_id == hid).all()
+                used, total, _pct = aggregate_data_storage_usage([
+                    {"type": d.ds_type, "capacity_gb": d.capacity_gb, "used_gb": d.used_gb} for d in inv
+                ])
+                if total:
+                    out[hid] = {"total_gb": float(total), "used_gb": float(used or 0), "count": len(inv)}
+        except Exception:
+            logger.exception("datastore_summary_by_hypervisor (inventory)")
+    for s in out.values():
+        s["total_gb"] = round(s["total_gb"], 1)
+        s["used_gb"] = round(s["used_gb"], 1)
+    return out
+
+
+@router.get("/hierarchy")
+def get_virt_hierarchy(hypervisor_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Hypervisor → Cluster → Host ağacı. VM sayıları `servers` envanterinden (host metriği değil).
+
+    VM listesi burada yok; bir host'un VM'leri için `/{id}/host-vms` kullanılır (lazy).
+    """
+    from app.services.virt_hierarchy import hierarchy
+    return hierarchy(db, hypervisor_id)
+
+
 @router.get("/host-metrics")
 def get_all_host_metrics(db: Session = Depends(get_db)):
     """
     Tüm vCenter / OLVM / OpenShift Virt host metrik özetini tek yanıtta döner.
     FE N-way /hypervisors/{id}/host-metrics yerine bunu kullanır.
+
+    `datastore_summary`: hypervisor başına TEKİL datastore toplamı (host satırlarındaki
+    `ds_total_gb` paylaşımlı datastore'ları host sayısı kadar katladığı için toplanmamalı).
     """
     hvs = (
         db.query(Hypervisor)
@@ -479,6 +554,7 @@ def get_all_host_metrics(db: Session = Depends(get_db)):
         .order_by(Hypervisor.name.asc())
         .all()
     )
+    ds_sum = datastore_summary_by_hypervisor(db, [hv.id for hv in hvs])
     flat = []
     by_hv = []
     for hv in hvs:
@@ -488,15 +564,32 @@ def get_all_host_metrics(db: Session = Depends(get_db)):
             "hypervisor_name": hv.name,
             "host_count": len(hosts),
             "hosts": hosts,
+            "datastore_summary": ds_sum.get(hv.id),
         })
         for h in hosts:
             flat.append({"hvName": hv.name, "hypervisor_id": hv.id, "host": h})
+    totals = [s for s in ds_sum.values() if s]
     return {
         "hypervisor_count": len(hvs),
         "host_count": len(flat),
         "hypervisors": by_hv,
         "hosts": flat,
+        "datastore_summary": {
+            "total_gb": round(sum(s["total_gb"] for s in totals), 1),
+            "used_gb": round(sum(s["used_gb"] for s in totals), 1),
+        } if totals else None,
     }
+
+@router.get("/capacity-overview")
+def get_capacity_overview(db: Session = Depends(get_db)):
+    """Toplam CPU / bellek / depolama KAYNAK bazında: envanter (vCPU/RAM) ve fiziksel (host) kapasite."""
+    from app.services.capacity_overview import capacity_overview
+    try:
+        return capacity_overview(db)
+    except Exception as e:
+        logger.exception("capacity overview")
+        raise HTTPException(status_code=500, detail=f"Kapasite dökümü alınamadı: {e}")
+
 
 @router.post("/", response_model=HypervisorResponse, status_code=201)
 async def create_hypervisor(hypervisor: HypervisorCreate, request: Request, db: Session = Depends(get_db)):
@@ -907,6 +1000,8 @@ async def get_host_metrics(
             .order_by(HypervisorHostMetric.host_name)
             .all()
         )
+        from app.services.host_freshness import fresh_hosts
+        rows = fresh_hosts(rows)
 
         from app.models.hypervisor_inventory import HypervisorHostInventory
         inv_rows = (
@@ -963,6 +1058,60 @@ async def get_host_metrics(
                 for r in rows
             ],
         }
+
+
+@router.get("/{hypervisor_id}/host-vms")
+def get_host_vms(
+    hypervisor_id: int,
+    host_ref: Optional[str] = None,
+    host_name: Optional[str] = None,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+):
+    """Yalnız BU host'a ait VM'ler (Dashboard host kartı → VM listesi).
+
+    Eşleşme: `servers.vm_host_ref` (vCenter MOR / oVirt host id) VEYA büyük/küçük harf duyarsız `vm_host_name`.
+    İkisi de boşsa boş liste döner (tüm hypervisor'ün VM'leri asla dönmez). İş servisi adları `business_service_map`ten gelir.
+    """
+    from sqlalchemy import func as sa_func, or_
+    from app.models.infrastructure_report import BusinessServiceMap
+
+    if not db.query(Hypervisor.id).filter(Hypervisor.id == hypervisor_id).first():
+        raise HTTPException(status_code=404, detail="Hypervisor bulunamadı")
+    ref = (host_ref or "").strip()
+    name = (host_name or "").strip()
+    if not ref and not name:
+        return {"hypervisor_id": hypervisor_id, "host_ref": ref, "host_name": name, "total": 0, "running": 0, "unmapped": 0, "vms": []}
+    conds = []
+    if ref:
+        conds.append(Server.vm_host_ref == ref)
+    if name:
+        conds.append(sa_func.lower(Server.vm_host_name) == name.lower())
+    rows = (
+        db.query(Server)
+        .filter(Server.hypervisor_id == hypervisor_id, or_(*conds))
+        .order_by(Server.name.asc())
+        .limit(max(1, min(limit, 2000)))
+        .all()
+    )
+    svc: dict = {}
+    ids = [r.id for r in rows]
+    if ids:
+        for m in db.query(BusinessServiceMap).filter(BusinessServiceMap.server_id.in_(ids)).all():
+            svc.setdefault(m.server_id, []).append(m.service_name)
+    from app.services.hw.impact import is_powered_on
+    vms = [{
+        "id": r.id, "name": r.vm_name or r.name, "hostname": r.hostname, "ip": r.vm_guest_ip or r.ip_address,
+        "power_state": r.vm_power_state, "powered_on": is_powered_on(r.vm_power_state),
+        "status": r.status, "os": r.os_version or r.os_type, "cpu": r.vm_cpu_count, "memory_gb": round((r.vm_memory_mb or 0) / 1024, 1) or None,
+        "disk_gb": r.vm_disk_gb, "tools": r.vm_tools_status, "cluster": r.vm_cluster, "datastore": r.vm_datastore,
+        "tier": getattr(r, "tier", None), "services": sorted(set(svc.get(r.id, []))),
+    } for r in rows]
+    unmapped = (db.query(sa_func.count(Server.id))
+                .filter(Server.hypervisor_id == hypervisor_id, or_(Server.vm_host_ref.is_(None), Server.vm_host_ref == ""),
+                        or_(Server.vm_host_name.is_(None), Server.vm_host_name == "")).scalar() or 0)
+    return {"hypervisor_id": hypervisor_id, "host_ref": ref, "host_name": name, "total": len(vms),
+            "running": sum(1 for v in vms if v["powered_on"]), "unmapped": int(unmapped), "vms": vms}
 
 
 @router.post("/{hypervisor_id}/host-metrics/sync")
@@ -1140,11 +1289,20 @@ def _hv_message_dict(msg) -> dict:
 
 class HypervisorAskRequest(BaseModel):
     question: str
+
+    @field_validator("question", mode="before")
+    @classmethod
+    def _normalize_question(cls, v):
+        # Adım 19: modelin yazdığı kırılmaz tire (U+2011) vb. kopyalanıp sorulunca ad eşleşmesi bozulmasın
+        return normalize_user_text(v) if isinstance(v, str) else v
     model: Optional[str] = None
     history: Optional[List[dict]] = None  # [{role, content}]
     session_id: Optional[int] = None
     # Virt Monitoring UI kapsamı — cluster/ESXi filtresi sohbete taşınır
     monitoring_scope: Optional[dict] = None
+    # Admin/bench: iç tur izini `debug_trace` olayı olarak döndürür (varsayılan KAPALI)
+    debug_trace: Optional[bool] = False
+    now_override: Optional[str] = None  # Admin/bench: sabit "şimdi" (ISO-8601)
 
 
 @router.get("/ask/sessions")
@@ -1403,12 +1561,14 @@ def ask_hypervisor_question(
         from app.services.chat_chitchat_policy import canned_chitchat_answer
         _pending_fs = get_full_scan_pending(session_id, platform="virt")
         _cc = None if (full_scan_this_turn or _pending_fs) else canned_chitchat_answer(
-            question, platform="virt",
+            question, platform="virt", session_id=session_id,
         )
         if _cc:
+            from app.services.chat_quality.count_followup import pop_context as _pop_cc
+            _cc_ctx = _pop_cc()
             db.add(ChatMessage(
                 session_id=session_id, role="assistant", content=_cc,
-                meta={"intents": ["chitchat"]},
+                meta={"intents": ["chitchat"], **({"count_context": _cc_ctx} if _cc_ctx else {})},
             ))
             session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
             if session:
@@ -1507,11 +1667,27 @@ def ask_hypervisor_question(
                 inventory_done = False
                 _hv_tools: list = []   # T2: kaynak satırı için bu turda çağrılan araçlar
                 rag_block = ""
+                # Adım 9: KAVRAMSAL + qa_cache'te hazır cevap varsa ağır araç turu / RAG hiç çalışmasın
+                # (önceden HIT yalnız son adımı kısaltıyordu; tur yine ~30–40 sn araç LLM'i bekliyordu).
+                _early_cached = False
                 try:
-                    from app.services.virt_chat_rag import collect_virt_rag_block
-                    rag_block = collect_virt_rag_block(ask_user_q)
+                    if not history and output_directive == OutputDirective.NONE:
+                        from app.services import qa_cache as _qa_peek
+                        from app.services.chat_cache_service import classify_question as _classify_q
+                        from app.services.chat_coverage import looks_like_no_data_answer as _no_data
+                        if _classify_q(ask_user_q)[0]:
+                            _pk = _qa_peek.peek_cached_answer(ask_user_q, req.model)
+                            _early_cached = bool(_pk and _pk.get("answer") and not _no_data(_pk.get("answer")))
                 except Exception:
-                    rag_block = ""
+                    _early_cached = False
+                if _early_cached:
+                    live_hint = False
+                else:
+                    try:
+                        from app.services.virt_chat_rag import collect_virt_rag_block
+                        rag_block = collect_virt_rag_block(ask_user_q)
+                    except Exception:
+                        rag_block = ""
                 if _rts.get_bool("virt_chat_agentic_mode") and live_hint:
                     try:
                         from app.services.agent.tools import domains_for_platform
@@ -1731,21 +1907,83 @@ async def ask_hypervisor_stream(
         if user_pk(_auth_user) is None:
             yield _sse({"error": "Kimlik doğrulaması gerekli"})
             return
-        result = await asyncio.to_thread(ask_hypervisor_question, inner, db, _auth_user)
-        result = result or {}
+        # Adım 17: LLM üretimi (ve araç turlarının düşünmesi) iş parçacığından sink ile canlı akıtılır
+        from app.services.chat_live_final import (
+            LiveSink, live_sink_var, paced_chunks, thinking_allowed,
+        )
+        from app.services.llm_external import detect_provider as _dp
+        from app.core.config import get_active_model as _gam
+        _prov = _dp(inner.model or await asyncio.to_thread(_gam, db))   # senkron SQL döngüyü bloklamasın
+        _live_on = _prov not in ("groq", "openai", "openrouter")
+        try:
+            from app.services import runtime_settings as _rs17
+            _live_on = _live_on and _rs17.get_bool("chat_unified_stream_final")
+        except Exception:
+            pass
+        sink = LiveSink(allow_thinking=thinking_allowed(_auth_user, _prov)) if _live_on else None
+
+        _uid_ask = user_pk(_auth_user)
+
+        def _run_ask():
+            # Adım 20: bu iş parçacığı ile orkestratör döngüsü (row/commit/release_txn) AYNI Session'ı
+            # eşzamanlı kullanamaz («concurrent operations are not permitted»). Canlı akış sink'i döngüyü
+            # 0,25 sn'de bir uyandırdığı için iş parçacığına KENDİ oturumu verilir.
+            from app.core.database import SessionLocal as _SL
+            tok = live_sink_var.set(sink)
+            _tdb = _SL()
+            try:
+                _tuser = _tdb.get(User, _uid_ask) or _auth_user
+                return ask_hypervisor_question(inner, _tdb, _tuser)
+            finally:
+                live_sink_var.reset(tok)
+                try:
+                    _tdb.close()
+                except Exception:
+                    pass
+
+        task = asyncio.ensure_future(asyncio.to_thread(_run_ask))
+        try:
+            while True:
+                await asyncio.wait({task}, timeout=0.25)
+                if sink is not None:
+                    for _raw in sink.drain():
+                        yield _raw
+                if task.done():
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+        result = task.result() or {}
+        try:
+            from app.services.chat_quality import trace as _cq_trace
+            _cq_trace.note_path("virt_result", intents=list(result.get("intents") or []))
+        except Exception:
+            pass
         sid = result.get("session_id")
         answer = result.get("answer") or result.get("error") or ""
         yield _sse({"session_id": sid, "start": True})
-        yield _sse({"phase": "answering"})
-        for i in range(0, len(answer), 8):
-            yield _sse({"token": answer[i:i + 8]})
+        _live = (sink.live_text if sink is not None else "")
+        if _live and _live.strip() == answer.strip():
+            pass      # cevap zaten canlı akıtıldı
+        else:
+            if _live:
+                yield _sse({"replace_answer": True})     # son işlemden geçen cevap canlı metinden farklı
+            if not (sink is not None and sink.token_started and not _live):
+                yield _sse({"phase": "answering"})
+            async for _pc in paced_chunks(answer):
+                yield _pc
         if result.get("error") and not result.get("answer"):
             yield _sse({"error": result.get("error")})
         _ev = result.get("evidence")
-        yield _sse({"done": True, "session_id": sid, **({"evidence": _ev} if _ev else {})})
+        yield _sse({
+            "done": True, "session_id": sid,
+            **({"evidence": _ev} if _ev else {}),
+            **({"from_cache": True} if result.get("cached") else {}),   # Adım 9: virt Redis önbelleği bench/UI'a görünür
+        })
 
-    from app.services.chat_orchestrator.http_bridge import attach_and_stream
-    return attach_and_stream(
+    from app.services.chat_orchestrator.http_bridge import attach_and_stream_async
+    # Adım 11: create_turn → plan_sources (yönlendirme ipucu LLM'i, senkron, ≤8 sn) event döngüsünü bloklamasın
+    _stream_resp = await attach_and_stream_async(
         platform="hypervisor",
         payload=payload,
         message=req.question,
@@ -1753,6 +1991,8 @@ async def ask_hypervisor_stream(
         pipeline=pipeline,
         user_id=getattr(_auth_user, "id", None),
     )
+    release_txn(db, keep_loaded=True)   # istek oturumu tur boyunca idle in transaction kalmasın
+    return _stream_resp
 
 
 @router.get("/ask/quick-stats")
@@ -1761,22 +2001,25 @@ async def get_quick_stats(db: Session = Depends(get_db)):
     from app.models.server import Server as ServerModel
     from app.models.hypervisor_metric import HypervisorHostMetric
     from app.services.platform_scope import vm_filter_condition
+    from app.services.chat_quality import power_state as _ps_canon
     from sqlalchemy import func
 
     vm_count = db.query(ServerModel).filter(vm_filter_condition()).count()
     powered_on = db.query(ServerModel).filter(
         vm_filter_condition(),
-        ServerModel.vm_power_state.in_(["POWERED_ON", "up", "running", "poweredOn"]),
+        _ps_canon.sqla_is_on(ServerModel.vm_power_state),
     ).count()
 
     # ESX host metrikleri — en son kayıt başına
     try:
         rows = db.execute(text("""
             SELECT DISTINCT ON (hypervisor_id, host_name)
-                cpu_usage_pct, mem_usage_pct, hypervisor_id, host_name
+                cpu_usage_pct, mem_usage_pct, hypervisor_id, host_name, timestamp
             FROM hypervisor_host_metrics
             ORDER BY hypervisor_id, host_name, timestamp DESC
         """)).all()
+        from app.services.host_freshness import fresh_hosts
+        rows = fresh_hosts(rows)
         host_count = len(rows)
         avg_cpu = round(sum(r.cpu_usage_pct or 0 for r in rows) / host_count, 1) if host_count else 0
         avg_mem = round(sum(r.mem_usage_pct or 0 for r in rows) / host_count, 1) if host_count else 0

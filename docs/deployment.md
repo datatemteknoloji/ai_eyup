@@ -49,8 +49,63 @@ Changing `/etc/hosts` does not require recreating containers (read-only bind mou
 | `CELERY_CONCURRENCY` | `2` | Filo Celery worker paralelliği (entrypoint + Gelişmiş Ayarlar; recreate gerekir) |
 | `UVICORN_WORKERS` | `2` | API HTTP process sayısı (1–8; entrypoint + Gelişmiş Ayarlar; recreate gerekir). `.env` yoksa compose/kod default’u 2 |
 | `AINEW_SERVICE_ROLE` | `all` | `all`: API hem istek kabul eder hem sohbet turunu çalıştırır. Ayrı chat container yok |
-| `CHAT_AI_MAX_CONCURRENT` | `3` | Aynı anda LLM üretimi; fazlası FIFO kuyruk (Gelişmiş Ayarlar) |
+| `CHAT_AI_MAX_CONCURRENT` | `3` | Aynı anda çalışan sohbet turu (kapı); fazlası kuyrukta bekler. `llm_max_concurrent` (LLM çağrı semaforu) ile uyumlu seçin: kapı > LLM sınırı ise fazlası LLM önünde bekler (Gelişmiş Ayarlar) |
+| _(Gelişmiş Ayarlar)_ `chat_gate_max_wait_sec` / `chat_gate_max_queue` | `180` / `20` | Kapı bekleme bütçesi (sn) / kuyruk üst sınırı (aşılırsa HTTP 429; 0 = sınırsız) |
+| _(Gelişmiş Ayarlar)_ `chat_unified_stream_final` / `chat_stream_thinking` | `açık` / `admin` | Canlı akış (Adım 14): araç turunun son cevabı doğrudan akar (ikinci üretim yok) / «Düşünme süreci» akışı (`off`·`admin`·`all`) |
+| _(Gelişmiş Ayarlar)_ `chat_user_max_active_turns` | `2` | Kullanıcı başına eşzamanlı sohbet turu (aşılırsa HTTP 429; 0 = kapalı) |
+| _(Gelişmiş Ayarlar)_ `chat_gate_fast_bonus_sec` / `chat_session_serial_enabled` | `45` / `true` | Kısa/kavramsal soruya kuyruk önceliği (sn; 0 = FIFO) / aynı oturumda turları sırayla çalıştır |
+| _(Gelişmiş Ayarlar)_ `llm_max_concurrent` | `1` | Aynı anda LLM çağrısı (semafor). Ollama sunucusundaki `OLLAMA_NUM_PARALLEL` ile **eşit** olmalı (dev: 3/3). Lease 90 sn + canlı sahip yenilemesi |
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `20` / `30` | SQLAlchemy havuzu (process başına). 2 uvicorn worker için PG bağlantısı makul kalır |
+
+Not: `llm_max_concurrent` Ollama sunucusundaki `OLLAMA_NUM_PARALLEL` ile EŞİT olmalı (Ollama varsayılanı 1; artırmak için `systemctl edit ollama` → `Environment="OLLAMA_NUM_PARALLEL=N"`, VRAM/KV maliyeti). Lease: LLM semaforu 90 sn + yenileme.
+
+İzleme: `GET /metrics/chat-gate` (Prometheus metni; kimlik doğrulamasız, yalnız sayaç).
+
+
+### Sohbet kalitesi / RAG / LLM ve ilgili ayarlar (Ayarlar → Gelişmiş; env ile de verilebilir)
+
+Hepsi `runtime_settings.ADVANCED_SCHEMA` içindedir ve **Gelişmiş Ayarlar**'dan (restart gerekmez; ayar önbelleği ≈ 15 sn) ya da aynı adlı ortam değişkeniyle verilir. Her sohbet kapısı/özelliği buradan kapatılabilir (kill switch).
+
+| Ayar | Env | Varsayılan | Aralık (metin ayarlarında: azami uzunluk) | Grup |
+|---|---|---|---|---|
+| `openshift_sync_prune_enabled` — OpenShift senkronu: bayat pod temizliği | `OPENSHIFT_SYNC_PRUNE_ENABLED` | `açık` | 0–1 | Arka plan |
+| `chat_entity_gate_enabled` — Varlık çözümleyici kapısı | `CHAT_ENTITY_GATE_ENABLED` | `açık` | 0–1 | Unified / sohbet kapıları |
+| `chat_count_rules_enabled` — Sayım kuralları (kaç VM/host/datastore/cluster/node/proje) | `CHAT_COUNT_RULES_ENABLED` | `açık` | 0–1 | Unified / sohbet kapıları |
+| `chat_grounding_mode` — Veriye dayalılık doğrulayıcısı modu (off/shadow/enforce) | `CHAT_GROUNDING_MODE` | `enforce` | 0–16 | Unified / sohbet kapıları |
+| `chat_grounding_enforce_classes` — Doğrulama sınıfları (enforce) | `CHAT_GROUNDING_ENFORCE_CLASSES` | `internal_term,source_label,ungrounded_entity,ungrounded_command` | 0–200 | Unified / sohbet kapıları |
+| `chat_timezone` — Sohbet zaman dilimi | `CHAT_TIMEZONE` | `Europe/Istanbul` | 0–64 | Unified / sohbet kapıları |
+| `virt_live_event_retention_days` — vCenter canlı olay saklama süresi (gün) | `VIRT_LIVE_EVENT_RETENTION_DAYS` | `30` | 1–3650 | Unified / sohbet kapıları |
+| `route_hint_num_predict` — Routing ipucu — üretim sınırı (num_predict) | `ROUTE_HINT_NUM_PREDICT` | `128` | 32–1024 | Unified / sohbet kapıları |
+| `route_hint_think` — Routing ipucu — düşünme seviyesi | `ROUTE_HINT_THINK` | `low` | seçmeli | Unified / sohbet kapıları |
+| `llm_circuit_failure_threshold` — Uzak LLM devre kesici — hata eşiği | `LLM_CIRCUIT_FAILURE_THRESHOLD` | `3` | 1–20 | LLM / sohbet çalışma zamanı |
+| `llm_circuit_failure_window_sec` — Uzak LLM devre kesici — hata penceresi (sn) | `LLM_CIRCUIT_FAILURE_WINDOW_SEC` | `60` | 5–3600 | LLM / sohbet çalışma zamanı |
+| `llm_circuit_open_sec` — Uzak LLM devre kesici — açık kalma süresi (sn) | `LLM_CIRCUIT_OPEN_SEC` | `45` | 5–3600 | LLM / sohbet çalışma zamanı |
+| `llm_circuit_probe_timeout_sec` — Uzak LLM devre kesici — sağlık yoklaması zaman aşımı (sn) | `LLM_CIRCUIT_PROBE_TIMEOUT_SEC` | `3` | 1–15 | LLM / sohbet çalışma zamanı |
+| `unified_tool_think` — Araç turu düşünme seviyesi (politikasız sohbetler) | `UNIFIED_TOOL_THINK` | `medium` | seçmeli | LLM / sohbet çalışma zamanı |
+| `unified_tool_num_predict` — Araç turu üretim tavanı (num_predict) | `UNIFIED_TOOL_NUM_PREDICT` | `6144` | 0–32768 | LLM / sohbet çalışma zamanı |
+| `llm_warn_window_sec` — LLM sağlık uyarıları — ölçüm penceresi (sn) | `LLM_WARN_WINDOW_SEC` | `1800` | 60–86400 | LLM / sohbet çalışma zamanı |
+| `llm_warn_queue_wait_ms` — LLM sağlık uyarısı — kuyruk bekleme eşiği (ms, p95) | `LLM_WARN_QUEUE_WAIT_MS` | `5000` | 100–600000 | LLM / sohbet çalışma zamanı |
+| `llm_warn_best_effort_timeouts` — LLM sağlık uyarısı — isteğe bağlı çağrı zaman aşımı eşiği | `LLM_WARN_BEST_EFFORT_TIMEOUTS` | `3` | 1–1000 | LLM / sohbet çalışma zamanı |
+| `llm_warn_hint_skips` — LLM sağlık uyarısı — atlanan ipucu eşiği | `LLM_WARN_HINT_SKIPS` | `5` | 1–10000 | LLM / sohbet çalışma zamanı |
+| `llm_warn_tool_turn_limit` — LLM sağlık uyarısı — araç turu zaman aşımı sınırına dayanma eşiği | `LLM_WARN_TOOL_TURN_LIMIT` | `2` | 1–1000 | LLM / sohbet çalışma zamanı |
+| `llm_timeout_dynamic` — Dinamik LLM zaman aşımı | `LLM_TIMEOUT_DYNAMIC` | `açık` | 0–1 | LLM / sohbet çalışma zamanı |
+| `llm_timeout_min_samples` — Dinamik zaman aşımı — en az örnek sayısı | `LLM_TIMEOUT_MIN_SAMPLES` | `10` | 3–200 | LLM / sohbet çalışma zamanı |
+| `rag_min_relevance_enabled` — RAG alaka eşiği (açık/kapalı) | `RAG_MIN_RELEVANCE_ENABLED` | `kapalı` | 0–1 | RAG |
+| `rag_min_relevance` — RAG alaka eşiği (reranker skoru) | `RAG_MIN_RELEVANCE` | `0.0` | -30–30 | RAG |
+| `rag_lexical_timeout_ms` — RAG lexical (FTS) zaman sınırı (ms) | `RAG_LEXICAL_TIMEOUT_MS` | `1500` | 0–60000 | RAG |
+| `rag_lexical_max_candidates` — RAG lexical aday sınırı | `RAG_LEXICAL_MAX_CANDIDATES` | `2000` | 0–100000 | RAG |
+| `rag_incidents_retention_enabled` — RAG incidents yaş bazlı budama (açık/kapalı) | `RAG_INCIDENTS_RETENTION_ENABLED` | `kapalı` | 0–1 | RAG |
+| `rag_incidents_retention_days` — RAG incidents saklama süresi (gün) | `RAG_INCIDENTS_RETENTION_DAYS` | `60` | 7–3650 | RAG |
+| `chat_cache_enabled` — Sohbet cevap önbelleği (açık/kapalı) | `CHAT_CACHE_ENABLED` | `açık` | 0–1 | LLM / sohbet çalışma zamanı |
+| `chat_cache_ttl_sec` — Sohbet cevap önbelleği TTL (sn) | `CHAT_CACHE_TTL_SEC` | `86400` | 60–604800 | LLM / sohbet çalışma zamanı |
+| `chat_progress_enabled` — Sohbet ilerleme olayları (ilk token öncesi) | `CHAT_PROGRESS_ENABLED` | `açık` | 0–1 | LLM / sohbet çalışma zamanı |
+| `chat_progress_heartbeat_sec` — İlerleme kalp atışı aralığı (sn) | `CHAT_PROGRESS_HEARTBEAT_SEC` | `5` | 2–30 | LLM / sohbet çalışma zamanı |
+
+| Env (yalnız ortam) | Varsayılan | Açıklama |
+|---|---|---|
+| `LOOP_WATCHDOG` | `1` | Event döngüsü tıkanma gözcüsü (`core/loop_watchdog.py`); `0` kapatır. `[LoopWatchdog]` günlüğü ≥ 1,5 sn tıkanmada çağıran yığını + en çok CPU tüketen iş parçacığını yazar |
+
+Sohbet yolu ayrıca `app/core/chat_executor.py` içinde 96 işçili ayrı iş parçacığı havuzu kullanır (ayar yok; arka plan işlerinin 150'lik varsayılan havuzu doldurması sohbeti kilitlemesin diye). Ayrıntı: `docs/scale-and-performance.md`.
 
 > `docker-compose.prod.yml` and `docker-compose.yml` load the backend's environment via `env_file: .env` —
 > any variable in `.env` reaches the container automatically, so new settings never require a compose file change.

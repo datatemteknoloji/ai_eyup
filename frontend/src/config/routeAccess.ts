@@ -26,7 +26,7 @@ export const ROUTE_ACCESS: Array<[string, RouteReq]> = [
   // ── Admin ──
   ['/users', ADMIN], ['/audit', ADMIN], ['/settings', ADMIN], ['/mcp', ADMIN],
   // ── Yönetici / izleme / sohbet ──
-  ['/executive', M('executive')], ['/executive/reports', M('executive')],
+  ['/executive', M('executive')], ['/executive/reports', M('executive')], ['/executive/infra-reports', M('executive')],
   ['/monitoring', M('monitoring')],
   ['/chat', M('ai_automation', 'executive')],
   ['/agent', M('ai_automation')],
@@ -56,13 +56,14 @@ export const ROUTE_ACCESS: Array<[string, RouteReq]> = [
   ['/exadata/ops', M('exadata')], ['/exadata/events', M('exadata')],
   ['/exadata/incidents', M('exadata')], ['/exadata/analysis', M('exadata')],
   // ── OpenShift ──
-  ['/openshift', M('openshift')], ['/openshift/vms', M('openshift')],
+  ['/openshift', M('openshift')], ['/openshift/dashboard', M('openshift')], ['/openshift/vms', M('openshift')],
   ['/openshift/vms/:c/:ns/:n/console', M('openshift')],
-  ['/openshift/monitoring', M('openshift')], ['/openshift/access', M('openshift')],
+  ['/openshift/monitoring', M('openshift')], ['/openshift/access', M('openshift')], ['/openshift/reports', M('openshift')],
   ['/openshift/capacity', ADMIN_OCP], ['/openshift/reclaim', ADMIN_OCP],
   ['/openshift/health', ADMIN_OCP], ['/openshift/changes', ADMIN_OCP],
   ['/openshift/chat', M('openshift')], ['/openshift/ops', M('openshift')],
   ['/openshift/events', M('openshift')], ['/openshift/incidents', M('openshift')],
+  ['/openshift/analysis', M('openshift')],
   // ── Entegrasyonlar ──
   ['/integrations', M('integrations')], ['/integrations/ucmdb', M('integrations')],
   ['/integrations/physical-hosts', M('integrations')],

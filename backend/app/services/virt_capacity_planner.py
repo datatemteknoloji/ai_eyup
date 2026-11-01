@@ -381,7 +381,10 @@ def _reclaim_by_cluster(db: Session, hv_ids: List[int]) -> Dict[Tuple[int, str],
 
 
 def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster: Optional[str] = None,
-                   platform: Optional[str] = None, with_forecast: bool = True) -> Dict[str, Any]:
+                   platform: Optional[str] = None, with_forecast: bool = True,
+                   with_reclaim: bool = True) -> Dict[str, Any]:
+    """`with_reclaim=False`: reclaim toplamı (VM kullanım/snapshot sorguları, yaklaşık %50 süre) ve `actions`
+    hesaplanmaz (`reclaim={}`, `actions=[]`). Yerleşim/senaryo (simulate, host-failure, move, bulk) bunları kullanmaz."""
     capacity_policy.activate(db)
     hvs = vd.virt_hypervisors(db, platform=platform, hypervisor_id=hypervisor_id)
     hv_ids = [h.id for h in hvs]
@@ -417,10 +420,11 @@ def build_capacity(db: Session, *, hypervisor_id: Optional[int] = None, cluster:
         c_new["as_of"] = max(ts).isoformat() if ts else None
         clusters.append(c_new)
     capacity_policy.activate(db)      # küme döngüsünden sonra global eşiklere dön
-    reclaim = _reclaim_by_cluster(db, hv_ids)
+    reclaim = _reclaim_by_cluster(db, hv_ids) if with_reclaim else {}
     for c in clusters:
         c["reclaim"] = reclaim.get((c["hypervisor_id"], c["cluster"]), {})
-        c["actions"] = _actions(c, c["reclaim"], [o for o in clusters if o["hypervisor_id"] == c["hypervisor_id"]])
+        c["actions"] = (_actions(c, c["reclaim"], [o for o in clusters if o["hypervisor_id"] == c["hypervisor_id"]])
+                        if with_reclaim else [])
     ds = _datastores(db, [h.id for h in hvs if vd.platform_of(h) in ("vmware", "olvm")], with_forecast)
     for d in ds:
         d["hypervisor"] = by_hv[d["hypervisor_id"]].name if d["hypervisor_id"] in by_hv else None
@@ -541,7 +545,7 @@ def simulate(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 0.0, 
     memory_gb = max(0.0, float(memory_gb or 0))
     disk_gb = max(0.0, float(disk_gb or 0))
     cpu_util_assumption = min(1.0, max(0.05, float(cpu_util_assumption or DEFAULT_CPU_ASSUMPTION)))
-    cap = build_capacity(db, hypervisor_id=hypervisor_id, cluster=cluster, with_forecast=False)
+    cap = build_capacity(db, hypervisor_id=hypervisor_id, cluster=cluster, with_forecast=False, with_reclaim=False)
     if clusters:
         sel = set(clusters)
         cap["clusters"] = [c for c in cap["clusters"] if c["cluster"] in sel]
@@ -762,7 +766,7 @@ def host_failure(db: Session, *, hypervisor_id: int, cluster: str, hosts: List[s
 
 def _hf_context(db: Session, hypervisor_id: int, cluster: str) -> Dict[str, Any]:
     """Cluster için kapasite + model (host-failure hesabının ortak girdisi; matris tek sefer kurar)."""
-    cap = build_capacity(db, hypervisor_id=hypervisor_id, cluster=cluster, with_forecast=False)
+    cap = build_capacity(db, hypervisor_id=hypervisor_id, cluster=cluster, with_forecast=False, with_reclaim=False)
     c = next((x for x in cap["clusters"] if x["hypervisor_id"] == hypervisor_id and x["cluster"] == cluster), None)
     if c is None:
         return {"error": "Cluster bulunamadı"}
@@ -979,7 +983,10 @@ def move_scenario(db: Session, *, vcpu: int, memory_gb: float, disk_gb: float = 
     """
     if (from_hypervisor_id, from_cluster) == (to_hypervisor_id, to_cluster):
         return {"ok": False, "error": "Kaynak ve hedef cluster aynı"}
-    cap = build_capacity(db, with_forecast=False)
+    # Yalnız kaynak cluster gerekir: tüm hypervisor/cluster'ları hesaplamak (ve ardından `simulate`'in
+    # kendi hesabı) aynı veriyi iki kez üretiyordu.
+    cap = build_capacity(db, hypervisor_id=from_hypervisor_id, cluster=from_cluster, with_forecast=False,
+                          with_reclaim=False)
     src = next((c for c in cap["clusters"] if c["hypervisor_id"] == from_hypervisor_id and c["cluster"] == from_cluster), None)
     if src is None:
         return {"ok": False, "error": "Kaynak cluster bulunamadı"}

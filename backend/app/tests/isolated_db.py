@@ -31,13 +31,15 @@ ROOT_TABLES = (
     # AIOps: otomatik incident kapatma testi
     "incidents",
     # Donanım sağlayıcı çerçevesi (OME / OneView)
-    "hw_managers", "hw_servers", "hw_enclosures", "hw_firmware", "hw_alerts", "hw_log_entries", "hw_warranty",
-    "hw_host_links",
+    "hw_managers", "hw_servers", "hw_enclosures", "hw_firmware", "hw_firmware_references", "hw_firmware_accepts", "hw_alerts", "hw_log_entries", "hw_warranty",
+    "hw_host_links", "hw_bmc_profiles", "hw_bmc_endpoints", "global_credentials",
     # Donanım → olay → incident; ESXi etki alanı (iş servisi)
     "system_events", "business_service_map", "user_modules", "exadata_nodes",
     # OpenShift hiyerarşisi
     "openshift_clusters", "openshift_nodes", "openshift_projects", "openshift_workloads",
-    "infrastructure_reports", "cost_config",
+    "infrastructure_reports", "cost_config", "mtv_plan_snapshots",
+    # Giriş / SSO testleri
+    "identity_config", "user_sessions", "audit_logs",
 )
 
 _STATE: dict = {}

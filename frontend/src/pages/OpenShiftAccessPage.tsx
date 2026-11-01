@@ -563,13 +563,13 @@ function DetailPanel({ item, detail, loading, listKind, t, onLookupSubject }: an
       <div className="font-mono text-sm text-white break-all">{full.name}</div>
       {full.namespace ? <div className="text-slate-500 break-all">ns: {full.namespace}</div> : null}
       {loading && <p className="text-slate-500">{t('mon_loading')}</p>}
-      {full.full_name ? <div className="break-words">fullName: {full.full_name}</div> : null}
+      {full.full_name ? <div className="wrap-break-word">fullName: {full.full_name}</div> : null}
       {full.identities?.length ? (
         <div className="min-w-0">
           <div className="text-slate-500 mb-1">identities</div>
           <ul className="space-y-1.5 font-mono text-[11px] text-slate-300">
             {full.identities.map((id: string) => (
-              <li key={id} className="break-all leading-snug rounded bg-black/20 px-2 py-1.5 border border-white/[0.04]">
+              <li key={id} className="break-all leading-snug rounded-sm bg-black/20 px-2 py-1.5 border border-white/[0.04]">
                 {id}
               </li>
             ))}

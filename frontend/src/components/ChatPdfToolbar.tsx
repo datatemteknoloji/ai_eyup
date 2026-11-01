@@ -111,7 +111,7 @@ export function ChatPdfPairWrap({
             type="checkbox"
             checked={checked}
             onChange={onToggle}
-            className="w-3.5 h-3.5 rounded border-white/30 bg-cyber-card text-blue-500 focus:ring-blue-500"
+            className="w-3.5 h-3.5 rounded-sm border-white/30 bg-cyber-card text-blue-500 focus:ring-blue-500"
           />
         </label>
       )}

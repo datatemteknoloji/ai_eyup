@@ -50,7 +50,7 @@ function RtoBadge({ s }: { s?: string }) {
   }
   const x = m[s]
   if (!x) return <span className="text-slate-500">—</span>
-  return <span className={`text-[11px] px-2 py-0.5 rounded border ${x[1]}`} title={t('bk_f3_rto_note')} data-testid="bk-rto-badge">{t(x[0] as any)}</span>
+  return <span className={`text-[11px] px-2 py-0.5 rounded-sm border ${x[1]}`} title={t('bk_f3_rto_note')} data-testid="bk-rto-badge">{t(x[0] as any)}</span>
 }
 
 function RpoBadge({ s }: { s: string }) {
@@ -62,7 +62,7 @@ function RpoBadge({ s }: { s: string }) {
   }
   const m = map[s]
   if (!m) return <span className="text-slate-500">—</span>
-  return <span className={`text-[11px] px-2 py-0.5 rounded border ${m[1]}`}>{t(m[0] as any)}</span>
+  return <span className={`text-[11px] px-2 py-0.5 rounded-sm border ${m[1]}`}>{t(m[0] as any)}</span>
 }
 
 function Evidence({ syncAt }: { syncAt?: string | null }) {
@@ -79,7 +79,7 @@ function Evidence({ syncAt }: { syncAt?: string | null }) {
       <Panel title={t('bk_ev_title')} method="bk.evidence" methodAt={syncAt}>
         <p className="text-xs text-slate-400 p-3">{t('bk_ev_hint')}</p>
         {ev.data?.blocked && (
-          <div className="m-3 rounded border border-fuchsia-500/40 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-200">{t('bk_ev_demo_blocked')}</div>
+          <div className="m-3 rounded-sm border border-fuchsia-500/40 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-200">{t('bk_ev_demo_blocked')}</div>
         )}
         <SimpleTable rows={ev.data?.items || []} cols={[
           { key: 'control', label: t('bk_ev_control') },
@@ -210,7 +210,7 @@ function Policies({ onChanged }: { onChanged: () => void }) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-400">{t('bk_policy_hint')}</p>
-      <p className="text-xs text-amber-200/90 rounded border border-amber-500/20 bg-amber-500/5 px-3 py-2" data-testid="bk-rto-note">{t('bk_f3_rto_note')}</p>
+      <p className="text-xs text-amber-200/90 rounded-sm border border-amber-500/20 bg-amber-500/5 px-3 py-2" data-testid="bk-rto-note">{t('bk_f3_rto_note')}</p>
       <SimpleTable rows={q.data?.policies || []} empty={t('bk_policy_none')} cols={[
         { key: 'scope_kind', label: t('bk_policy_scope') },
         { key: 'scope_ref', label: t('bk_policy_ref'), render: (r: any) => r.scope_ref || '—' },
@@ -294,7 +294,7 @@ export default function VirtBackup() {
       {providers.map(p => (
         <div key={p.id} className={`rounded-lg border px-4 py-2 text-xs flex flex-wrap gap-x-4 gap-y-1 items-center ${p.stale || p.last_status !== 'ok' ? 'border-amber-500/30 bg-amber-500/5 text-amber-200' : 'border-white/[0.08] bg-white/[0.02] text-slate-300'}`}>
           <span className="text-white font-medium">{p.label}</span>
-          {p.demo && <span className="px-1.5 rounded bg-fuchsia-500/20 text-fuchsia-300">DEMO</span>}
+          {p.demo && <span className="px-1.5 rounded-sm bg-fuchsia-500/20 text-fuchsia-300">DEMO</span>}
           <span>{t('bk_last_sync')}: {p.last_sync_at ? new Date(p.last_sync_at).toLocaleString() : '—'}</span>
           {p.stale && <span className="font-semibold">{t('bk_stale')}</span>}
           {p.last_status !== 'ok' && <span className="text-red-300">{p.last_error || p.last_status}</span>}

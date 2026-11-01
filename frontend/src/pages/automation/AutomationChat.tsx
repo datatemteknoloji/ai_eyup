@@ -250,7 +250,7 @@ export default function AutomationChat() {
           <div className="flex items-center gap-2">
             <Workflow size={16} className="text-amber-300" />
             <span className="text-sm font-semibold text-white">UC4 Automic Asistanı</span>
-            <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-[10px] text-slate-300">salt okunur</span>
+            <span className="rounded-sm bg-slate-700/60 px-1.5 py-0.5 text-[10px] text-slate-300">salt okunur</span>
           </div>
           <div className="ml-auto">
             <SystemPicker systems={systems.data ?? []} value={selected.id} onChange={setSystem} />

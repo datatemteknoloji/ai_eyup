@@ -510,11 +510,11 @@ const UCMDBImport: React.FC = () => {
                       <div className="text-sm font-medium text-white truncate">{col}</div>
                       {sample && <div className="text-xs text-slate-500 truncate mt-0.5">{sample}</div>}
                     </div>
-                    <ChevronRight size={14} className="text-slate-600 flex-shrink-0" />
+                    <ChevronRight size={14} className="text-slate-600 shrink-0" />
                     <select
                       value={mapping[col] || '__skip__'}
                       onChange={e => setMapping(m => ({ ...m, [col]: e.target.value }))}
-                      className={`w-52 bg-slate-700 border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${isMapped ? 'border-blue-500/40 text-white' : 'border-slate-600 text-slate-400'}`}
+                      className={`w-52 bg-slate-700 border rounded-lg px-3 py-1.5 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 ${isMapped ? 'border-blue-500/40 text-white' : 'border-slate-600 text-slate-400'}`}
                     >
                       {fields.map(f => (
                         <option key={f.value} value={f.value}>{f.label}</option>
@@ -554,7 +554,7 @@ const UCMDBImport: React.FC = () => {
           <div className="flex items-center justify-between">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={updateExisting} onChange={e => setUpdateExisting(e.target.checked)}
-                className="w-4 h-4 rounded text-blue-600" />
+                className="w-4 h-4 rounded-sm text-blue-600" />
               <span className="text-sm text-slate-300">{t('ucmdb_update_exist')}</span>
             </label>
             <div className="flex gap-3">
@@ -632,7 +632,7 @@ const UCMDBImport: React.FC = () => {
                         <td className="px-2 py-1.5 text-slate-300 font-mono">{row.ip_address || '—'}</td>
                         <td className="px-2 py-1.5 text-slate-400">{row.hostname || '—'}</td>
                         <td className="px-2 py-1.5">
-                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                          <span className={`text-xs px-1.5 py-0.5 rounded-sm font-medium ${
                             row.category === 'Fiziksel' ? 'bg-orange-500/15 text-orange-400' :
                             row.category === 'Sanal'    ? 'bg-blue-500/15 text-blue-400' :
                             'bg-slate-600 text-slate-400'
@@ -640,7 +640,7 @@ const UCMDBImport: React.FC = () => {
                         </td>
                         <td className="px-2 py-1.5 text-slate-300">{row.os_type || '—'}</td>
                         <td className="px-2 py-1.5">
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${
+                          <span className={`text-xs px-1.5 py-0.5 rounded-sm ${
                             row.tier === 'critical' ? 'bg-red-500/20 text-red-400' :
                             row.tier === 'high' ? 'bg-orange-500/20 text-orange-400' :
                             row.tier === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
@@ -664,7 +664,7 @@ const UCMDBImport: React.FC = () => {
             <button
               onClick={() => importMut.mutate()}
               disabled={importMut.isPending || importResult.created + importResult.updated === 0}
-              className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-white font-medium text-sm rounded-lg transition-all"
+              className="flex items-center gap-2 px-6 py-2.5 bg-linear-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-white font-medium text-sm rounded-lg transition-all"
             >
               {importMut.isPending
                 ? <><RefreshCw size={14} className="animate-spin" /> {t('ucmdb_importing')}</>

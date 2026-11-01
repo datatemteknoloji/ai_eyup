@@ -29,7 +29,7 @@ export function ReferencePacksCard() {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {pk.map(p => (
-          <div key={p.kind} className="rounded border border-white/[0.06] px-3 py-2">
+          <div key={p.kind} className="rounded-sm border border-white/[0.06] px-3 py-2">
             <div className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
               {label[p.kind] || p.kind}<MethodBadge id={`ref.pack.${p.kind}`} at={p.generated_at || p.uploaded_at} />
             </div>

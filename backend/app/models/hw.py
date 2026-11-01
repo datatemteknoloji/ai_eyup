@@ -5,7 +5,7 @@ Tablolar HER kurulumda oluşur ve entegrasyon yokken BOŞ kalır. Uygulama davra
 tümü salt-okunur çekilmiş veridir.
 
 `hw_components` / `hw_utilization` bu sürümde YOK: kaynak alanları doğrulanmadı (docs/plans/hw-api-sources.md).
-`hw_log_entries` Faz 3 (iLO/iDRAC ham log) için ayrılmıştır; bu sürümde doldurulmaz.
+`hw_log_entries` Faz 3a (host kaynaklı donanım logları: ESXi SEL/vmkernel, Linux/Windows) ile dolar; iLO/iDRAC ham logu (Faz 3b) YOK.
 """
 from __future__ import annotations
 
@@ -95,7 +95,42 @@ class HwFirmware(Base):
     name = Column(String(255), nullable=False, default="")
     component_type = Column(String(64), nullable=True)
     version = Column(String(128), nullable=True)
+    status = Column(String(16), nullable=True)                  # OME InventoryInfo.Status: Installed | Available (önceki/yedek)
+    component_id = Column(String(64), nullable=True)            # OME InventoryInfo.ComponentId
+    location = Column(String(255), nullable=True)               # HPE componentLocation
     collected_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class HwFirmwareReference(Base):
+    """Referans (doğrulanmış) sunucu: aynı modeldeki sunucular firmware sürümlerini buna göre kıyaslar. Yalnız ainew'e yazılır.
+
+    scope=model: (vendor, model) için TÜM sunucular. scope=chassis: yalnız bu şasideki (`enclosure_id`) AYNI model sunucular;
+    şasi referansı model referansını geçersiz kılar (şasi > model)."""
+    __tablename__ = "hw_firmware_references"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scope = Column(String(8), nullable=False)                   # model | chassis
+    vendor = Column(String(16), nullable=False)
+    model = Column(String(255), nullable=False)                 # küçük harfe çevrilmiş karşılaştırma anahtarı değil; ham model
+    enclosure_id = Column(Integer, ForeignKey("hw_enclosures.id", ondelete="CASCADE"), nullable=True, index=True)
+    reference_server_id = Column(Integer, ForeignKey("hw_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    set_by = Column(String(128), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class HwFirmwareAccept(Base):
+    """«Kabul edildi»: bu sunucunun bu bileşeni bilinçli olarak referanstan düşük bırakıldı. YALNIZ `accepted_version`
+    sunucudaki güncel sürümle AYNI olduğu sürece geçerli (sürüm değişince otomatik düşer)."""
+    __tablename__ = "hw_firmware_accepts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    server_id = Column(Integer, ForeignKey("hw_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    component_key = Column(String(400), nullable=False)
+    accepted_version = Column(String(128), nullable=False)
+    note = Column(String(500), nullable=True)
+    accepted_by = Column(String(128), nullable=True)
+    accepted_at = Column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint("server_id", "component_key", name="uq_hw_fw_accept"),)
 
 
 class HwAlert(Base):
@@ -120,14 +155,30 @@ class HwAlert(Base):
 
 
 class HwLogEntry(Base):
-    """Faz 3 için ayrılmış (iLO/iDRAC ham log). Bu sürümde doldurulmaz."""
+    """Host kaynaklı donanım kaydı (Faz 3a): ESXi SEL / vmkernel, Linux journal, Windows WHEA.
+
+    iLO/iDRAC'e DOĞRUDAN bağlanılmaz (Faz 3b). Hedef `target_kind`/`target_id` ile (HwHostLink ile aynı anlam:
+    server | esxi) bulunur; `server_id` (hw_servers) yalnız gelecekteki sağlayıcı kaynaklı kayıtlar için opsiyoneldir.
+    Tekilleştirme `(target_kind, target_id, source, event_key)`; tekrar → `occurrences` ve `last_seen_at`.
+    """
     __tablename__ = "hw_log_entries"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    server_id = Column(Integer, ForeignKey("hw_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    server_id = Column(Integer, ForeignKey("hw_servers.id", ondelete="CASCADE"), nullable=True, index=True)
     occurred_at = Column(DateTime(timezone=True), nullable=True)
-    severity = Column(String(16), nullable=True)
+    severity = Column(String(16), nullable=True)                # critical | warning | info
     message = Column(Text, nullable=True)
+    target_kind = Column(String(16), nullable=True)             # server | esxi
+    target_id = Column(Integer, nullable=True)                  # servers.id | hypervisor_host_inventory.id
+    source = Column(String(24), nullable=True)                  # esxi_sel | esxi_vmkernel | linux_journal | windows_event
+    category = Column(String(32), nullable=True)                # memory | cpu | storage | power | thermal | pcie | platform
+    event_key = Column(String(64), nullable=True)               # normalize mesajın özeti (tekilleştirme)
+    occurrences = Column(Integer, nullable=False, default=1, server_default="1")
+    first_seen_at = Column(DateTime(timezone=True), nullable=True)
+    last_seen_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    __table_args__ = (
+        UniqueConstraint("target_kind", "target_id", "source", "event_key", name="uq_hw_log_target_event"),
+    )
 
 
 class HwWarranty(Base):
@@ -157,3 +208,49 @@ class HwHostLink(Base):
     confidence = Column(String(8), nullable=False)                 # exact | low
     matched_at = Column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (UniqueConstraint("target_kind", "target_id", name="uq_hw_link_target"),)
+
+
+class HwBmcProfile(Base):
+    """Faz 3b — BMC (iLO/iDRAC) kimlik profili. Parola `encrypt_secret` ile `credential_ref` içinde; hiçbir yanıtta dönmez.
+
+    scope: global (tek) | vendor (dell|hpe) | instance (portal entegrasyonu) | host (host'a özel; `HwBmcEndpoint.profile_id`).
+    Çözümleme önceliği: host > instance > vendor > global (bkz. services/hw/bmc_creds.py). Başarısızlıkta zincirleme YOK.
+    """
+    __tablename__ = "hw_bmc_profiles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(128), nullable=False, default="")
+    scope = Column(String(16), nullable=False, default="host")      # global | vendor | instance | host
+    vendor = Column(String(16), nullable=True)                      # dell | hpe (scope=vendor)
+    instance_id = Column(Integer, ForeignKey("integration_instances.id", ondelete="CASCADE"), nullable=True, index=True)
+    credential_ref = Column(Text, nullable=True)                    # encrypt_secret(json {username, password})
+    verify_tls = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class HwBmcEndpoint(Base):
+    """Faz 3b — BMC adresi + durum. Hedef: `server` (Linux sayfası) | `hw` (portal kaydı; hw_servers.id).
+
+    ip_source önceliği: manual > portal > discovered. `auth_halted`: kimlik reddedilince True; yalnız başarılı
+    «Bağlantıyı test et» kaldırır (hesap kilitlenmesin).
+    """
+    __tablename__ = "hw_bmc_endpoints"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    target_kind = Column(String(16), nullable=False)                # server | hw
+    target_id = Column(Integer, nullable=False)
+    bmc_ip = Column(String(64), nullable=True)
+    ip_source = Column(String(16), nullable=False, default="manual")  # manual | portal | discovered
+    vendor = Column(String(16), nullable=True)                      # dell | hpe | other
+    profile_id = Column(Integer, ForeignKey("hw_bmc_profiles.id", ondelete="SET NULL"), nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    status = Column(String(24), nullable=False, default="never")    # never|ok|unreachable|auth_failed|unsupported|no_cred|no_ip
+    last_error = Column(Text, nullable=True)
+    auth_halted = Column(Boolean, nullable=False, default=False, server_default="false")
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    last_ok_at = Column(DateTime(timezone=True), nullable=True)
+    # in-band ipmitool durumu: ok | no_ipmitool | no_device | no_sudo | error | None
+    ipmi_status = Column(String(24), nullable=True)
+    ipmi_run_at = Column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint("target_kind", "target_id", name="uq_hw_bmc_target"),)

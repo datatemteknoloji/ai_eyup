@@ -99,7 +99,7 @@ function textToCodes(t: string): number[] {
   return t.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0)
 }
 
-const inputCls = 'w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40'
+const inputCls = 'w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500/40'
 
 function Field({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -321,9 +321,9 @@ export default function AutomicIntegrationPage() {
               title={(
                 <span className="flex items-center gap-2">
                   {s.name}
-                  {s.is_default && <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-300">varsayılan</span>}
-                  {!s.enabled && <span className="rounded bg-slate-600/40 px-1.5 py-0.5 text-[10px] text-slate-300">devre dışı</span>}
-                  {s.source_type === 'fake' && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">fake</span>}
+                  {s.is_default && <span className="rounded-sm bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-300">varsayılan</span>}
+                  {!s.enabled && <span className="rounded-sm bg-slate-600/40 px-1.5 py-0.5 text-[10px] text-slate-300">devre dışı</span>}
+                  {s.source_type === 'fake' && <span className="rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">fake</span>}
                 </span>
               )}
               actions={canManage ? (
@@ -371,7 +371,7 @@ export default function AutomicIntegrationPage() {
               {h && h.circuit_open_sec > 0 && <div className="mt-2"><NoticeBox tone="warning" text={`Devre kesici açık — ${fmtDuration(h.circuit_open_sec)} sonra yeniden denenecek.`} /></div>}
               {cap?.warnings && cap.warnings.length > 0 && (
                 <ul className="mt-2 space-y-0.5 text-[11px] text-amber-300/90">
-                  {cap.warnings.slice(0, 5).map(w => <li key={w} className="flex gap-1"><AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />{w}</li>)}
+                  {cap.warnings.slice(0, 5).map(w => <li key={w} className="flex gap-1"><AlertTriangle size={11} className="mt-0.5 shrink-0" />{w}</li>)}
                 </ul>
               )}
             </Card>
@@ -532,13 +532,13 @@ function Wizard({ initial, profiles, fakeAllowed, onCancel, onSaved }: {
                       const next = cur.includes(di) ? cur.filter(x => x !== di) : [...cur, di].sort()
                       update(i, { days: next.length === 7 ? [] : next })
                     }}
-                    className={`rounded px-1.5 py-0.5 text-[11px] ${on ? 'bg-blue-600/30 text-blue-200' : 'bg-slate-800 text-slate-500'}`}>{d}</button>
+                    className={`rounded-sm px-1.5 py-0.5 text-[11px] ${on ? 'bg-blue-600/30 text-blue-200' : 'bg-slate-800 text-slate-500'}`}>{d}</button>
                 )
               })}
             </div>
-            <input type="time" value={w.from} onChange={e => update(i, { from: e.target.value })} className="rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-white" style={{ colorScheme: 'dark' }} />
+            <input type="time" value={w.from} onChange={e => update(i, { from: e.target.value })} className="rounded-sm border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-white" style={{ colorScheme: 'dark' }} />
             <span className="text-xs text-slate-500">–</span>
-            <input type="time" value={w.to} onChange={e => update(i, { to: e.target.value })} className="rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-white" style={{ colorScheme: 'dark' }} />
+            <input type="time" value={w.to} onChange={e => update(i, { to: e.target.value })} className="rounded-sm border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-white" style={{ colorScheme: 'dark' }} />
             <button type="button" onClick={() => setSt(path, list.filter((_, j) => j !== i))} className="ml-auto text-slate-500 hover:text-red-400"><X size={14} /></button>
           </div>
         ))}
@@ -647,7 +647,7 @@ function Wizard({ initial, profiles, fakeAllowed, onCancel, onSaved }: {
                 {test.capability?.features && (
                   <div className="flex flex-wrap gap-1">
                     {Object.entries(test.capability.features).map(([k, v]) => (
-                      <span key={k} className={`rounded px-1.5 py-0.5 text-[10px] ${v === true || (typeof v === 'string' && v !== 'unavailable') ? 'bg-green-500/10 text-green-300' : 'bg-slate-700/50 text-slate-500'}`}>{k}</span>
+                      <span key={k} className={`rounded-sm px-1.5 py-0.5 text-[10px] ${v === true || (typeof v === 'string' && v !== 'unavailable') ? 'bg-green-500/10 text-green-300' : 'bg-slate-700/50 text-slate-500'}`}>{k}</span>
                     ))}
                   </div>
                 )}
@@ -682,7 +682,7 @@ function Wizard({ initial, profiles, fakeAllowed, onCancel, onSaved }: {
               }} className="rounded-lg border border-slate-600 px-3 py-1.5 text-sm text-slate-300 hover:text-white">Ekle</button>
               <div className="flex flex-wrap gap-1">
                 {f.clients.map(c => (
-                  <span key={c} className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-2 py-0.5 font-mono text-xs text-blue-200">
+                  <span key={c} className="inline-flex items-center gap-1 rounded-sm bg-blue-500/15 px-2 py-0.5 font-mono text-xs text-blue-200">
                     {c}<button type="button" onClick={() => setF(p => ({ ...p, clients: p.clients.filter(x => x !== c) }))}><X size={11} /></button>
                   </span>
                 ))}
@@ -1033,7 +1033,7 @@ function AutomicSetupGuide({ systemId }: { systemId?: number }) {
               sistem ekle/düzenle → <code className="text-blue-200">integrations</code> + operator.
             </li>
             <li>
-              Teşhis: <code className="rounded bg-slate-800 px-1 text-[11px] text-slate-200">scripts/automic-diagnose.sh</code>
+              Teşhis: <code className="rounded-sm bg-slate-800 px-1 text-[11px] text-slate-200">scripts/automic-diagnose.sh</code>
               (sır yazdırmaz). (i) ikonu her sayfada davranış + gereksinim özetini açar.
             </li>
           </ol>
@@ -1058,7 +1058,7 @@ function AutomicSetupGuide({ systemId }: { systemId?: number }) {
                     <ul className="space-y-1.5">
                       {g.items.map((it, i) => (
                         <li key={i} className="flex gap-2 text-[12px]">
-                          <span className={`mt-0.5 shrink-0 rounded px-1 py-0.5 text-[10px] ${it.must ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/10 text-amber-200'}`}>
+                          <span className={`mt-0.5 shrink-0 rounded-sm px-1 py-0.5 text-[10px] ${it.must ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/10 text-amber-200'}`}>
                             {it.must ? 'zorunlu' : 'öneri'}
                           </span>
                           <span>{it.text}</span>

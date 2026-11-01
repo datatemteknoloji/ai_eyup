@@ -91,6 +91,20 @@ def _save_state(path: Path, state: Dict[str, str]) -> None:
         logger.warning("rag_seed state yazılamadı (%s): %s", path, e)
 
 
+def _manifest_disabled_files(seed_dir: Path) -> set:
+    """manifest'te `enabled:false` olan dosya adları (manifest dışı taramada da dışlanır)."""
+    manifest = seed_dir / "manifest.json"
+    out: set = set()
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        for d in (data.get("documents") if isinstance(data, dict) else None) or []:
+            if isinstance(d, dict) and d.get("enabled") is False and d.get("file"):
+                out.add(str(d["file"]).strip())
+    except Exception:
+        pass
+    return out
+
+
 def _load_manifest_docs(seed_dir: Path) -> List[Dict[str, Any]]:
     manifest = seed_dir / "manifest.json"
     if not manifest.is_file():
@@ -138,6 +152,25 @@ def _scan_dir_docs(seed_dir: Path) -> List[Dict[str, Any]]:
     return docs
 
 
+def collect_docs(seed_dir: Path) -> List[Dict[str, Any]]:
+    """Manifest girdileri (öncelikli) + manifest dışı desteklenen dosyalar (Adım 8R/R1.2).
+
+    `enabled:false` dosyaları ve manifest'te zaten geçen dosya/başlıklar tekrar eklenmez.
+    Her girdi `source`: manifest|scan taşır.
+    """
+    docs = [dict(d, source="manifest") for d in _load_manifest_docs(seed_dir)]
+    known_files = {d["file"] for d in docs} | _manifest_disabled_files(seed_dir)
+    known_titles = {d["title"] for d in docs}
+    for d in _scan_dir_docs(seed_dir):
+        if d["file"] in known_files or d["title"] in known_titles:
+            continue
+        docs.append(dict(d, source="scan"))
+    return docs
+
+
+SHORT_PDF_BYTES = 50_000  # «kaynak dosya kısa» uyarı eşiği (örn. OCP-4.18-Monitoring 29,9 KB / 8 sayfa)
+
+
 def _read_file_text(path: Path) -> str:
     suf = path.suffix.lower()
     if suf in _PDF_SUFFIXES:
@@ -155,14 +188,15 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
         "skipped": [],
         "updated": [],
         "errors": [],
+        "off_manifest": [],
+        "short_source": [],
+        "chunks_by_title": {},
     }
     if root is None:
         logger.warning("RAG seed: dizin yok (RAG_SEED_PATH / docs/rag_seed), atlandı")
         return summary
 
-    docs = _load_manifest_docs(root)
-    if not docs:
-        docs = _scan_dir_docs(root)
+    docs = collect_docs(root)
     if not docs:
         logger.info("RAG seed: %s boş (manifest/documents yok)", root)
         return summary
@@ -170,7 +204,7 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
     state_file = _state_path(root)
     state = _load_state(state_file)
 
-    from app.services.rag_service import ingest_runbook_append
+    from app.services.rag_service import ingest_runbook_append, ingest_runbook_pages
     from app.services.rag_store import delete_runbook_by_title
 
     for doc in docs:
@@ -180,6 +214,15 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
         if not path.is_file():
             summary["errors"].append({"title": title, "error": f"dosya yok: {doc['file']}"})
             continue
+        if doc.get("source") == "scan":
+            summary["off_manifest"].append(title)
+        try:
+            if path.suffix.lower() in _PDF_SUFFIXES and path.stat().st_size < SHORT_PDF_BYTES:
+                summary["short_source"].append({"title": title, "bytes": path.stat().st_size})
+                logger.warning("RAG seed: kaynak dosya kısa (%s bayt) title=%r — tam kitap değil olabilir",
+                               path.stat().st_size, title)
+        except Exception:
+            pass
         prev = state.get(title)
         if prev == version:
             # Title Chroma'da var mı diye de bak (state var ama silinmiş olabilir)
@@ -194,7 +237,13 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
                 continue
 
         try:
-            text = _read_file_text(path)
+            pages = None
+            if path.suffix.lower() in _PDF_SUFFIXES:
+                from app.services.pdf_parser import extract_pages_from_pdf
+                pages = extract_pages_from_pdf(path.read_bytes())
+                text = "\n\n".join(t for _, t in pages)
+            else:
+                text = _read_file_text(path)
             if not (text or "").strip():
                 summary["errors"].append({"title": title, "error": "metin boş / PDF extract başarısız"})
                 continue
@@ -221,7 +270,13 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
             else:
                 action = "added"
 
-            n = await ingest_runbook_append(title=title, content=text)
+            if pages:
+                n = await ingest_runbook_pages(title=title, pages=pages)  # PDF: metadata.page korunur
+            else:
+                n = await ingest_runbook_append(title=title, content=text)
+            if not n:
+                raise RuntimeError("chunk üretilemedi / eklenmedi")
+            summary["chunks_by_title"][title] = n
             state[title] = version
             # Belge bitince kalıcı state — restart'ta tüm tur bitmeden kaybolmasın
             _save_state(state_file, state)
@@ -233,11 +288,14 @@ async def seed_rag_from_directory(seed_dir: Optional[Path] = None) -> Dict[str, 
 
     _save_state(state_file, state)
     logger.info(
-        "RAG seed bitti: dir=%s added=%s updated=%s skipped=%s errors=%s",
+        "RAG seed bitti: dir=%s added=%s updated=%s skipped=%s errors=%s manifest_disi=%s kisa_kaynak=%s chunks=%s",
         root,
         len(summary["added"]),
         len(summary["updated"]),
         len(summary["skipped"]),
         len(summary["errors"]),
+        len(summary["off_manifest"]),
+        len(summary["short_source"]),
+        summary["chunks_by_title"],
     )
     return summary

@@ -98,14 +98,14 @@ export function ServicesPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("wizard_services")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("services_subtitle")}</p>
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">{t("services_subtitle")}</p>
 
       <form
         onSubmit={onSubmit}
-        className="mt-6 max-w-3xl space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
+        className="mt-6 max-w-3xl space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-5"
       >
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("talep_id")}</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("talep_id")}</label>
           <Input value={talepId} onChange={(e) => setTalepId(e.target.value)} required />
         </div>
 
@@ -118,7 +118,7 @@ export function ServicesPage() {
         />
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-xs text-(--color-muted-foreground)">
             {t("services_list_hint")}
             {loading ? ` · ${t("loading")}` : null}
           </p>
@@ -127,9 +127,9 @@ export function ServicesPage() {
           </Button>
         </div>
 
-        <div className="max-h-72 overflow-y-auto rounded-lg border border-[var(--color-border)]">
+        <div className="max-h-72 overflow-y-auto rounded-lg border border-(--color-border)">
           <table className="w-full text-left text-xs">
-            <thead className="sticky top-0 bg-[var(--theme-surface-deep)] text-[var(--color-muted-foreground)]">
+            <thead className="sticky top-0 bg-(--theme-surface-deep) text-(--color-muted-foreground)">
               <tr>
                 <th className="px-3 py-2 font-medium">{t("services_col_unit")}</th>
                 <th className="px-3 py-2 font-medium">{t("services_col_active")}</th>
@@ -140,7 +140,7 @@ export function ServicesPage() {
             <tbody>
               {!rows.length && !loading ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-[var(--color-muted-foreground)]">
+                  <td colSpan={4} className="px-3 py-6 text-center text-(--color-muted-foreground)">
                     {t("services_empty")}
                   </td>
                 </tr>
@@ -151,18 +151,18 @@ export function ServicesPage() {
                   <tr
                     key={r.unit}
                     className={cn(
-                      "cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-accent)]",
-                      on && "bg-[var(--color-primary)]/10",
+                      "cursor-pointer border-t border-(--color-border) hover:bg-(--color-accent)",
+                      on && "bg-(--color-primary)/10",
                       !r.operable && "opacity-50",
                     )}
                     onClick={() => r.operable && setSelectedUnit(r.unit)}
                   >
-                    <td className="px-3 py-2 font-mono text-[var(--theme-link)]">{r.name}</td>
+                    <td className="px-3 py-2 font-mono text-(--theme-link)">{r.name}</td>
                     <td className="px-3 py-2">
                       <Badge variant={activeBadge(r.active)}>{r.active}</Badge>
                     </td>
-                    <td className="px-3 py-2 font-mono text-[var(--color-muted-foreground)]">{r.enabled}</td>
-                    <td className="max-w-[14rem] truncate px-3 py-2 text-[var(--color-muted-foreground)]" title={r.description}>
+                    <td className="px-3 py-2 font-mono text-(--color-muted-foreground)">{r.enabled}</td>
+                    <td className="max-w-[14rem] truncate px-3 py-2 text-(--color-muted-foreground)" title={r.description}>
                       {r.description || "—"}
                     </td>
                   </tr>
@@ -173,7 +173,7 @@ export function ServicesPage() {
         </div>
 
         <div>
-          <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">{t("services_operation")}</label>
+          <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">{t("services_operation")}</label>
           <div className="flex flex-wrap gap-2">
             {(
               [
@@ -189,8 +189,8 @@ export function ServicesPage() {
                 className={cn(
                   "rounded-md border px-3 py-1.5 text-sm",
                   op === id
-                    ? "border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--theme-success-fg)]"
-                    : "border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]",
+                    ? "border-(--color-primary) bg-(--color-primary)/15 text-(--theme-success-fg)"
+                    : "border-(--color-border) text-(--color-muted-foreground) hover:bg-(--color-accent)",
                 )}
               >
                 {label}
@@ -200,12 +200,12 @@ export function ServicesPage() {
         </div>
 
         {selected ? (
-          <p className="font-mono text-[11px] text-[var(--color-muted-foreground)]">
+          <p className="font-mono text-[11px] text-(--color-muted-foreground)">
             {selected.unit} · {selected.active}/{selected.sub_state || "—"} · {selected.fragment_path || "—"}
           </p>
         ) : null}
 
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
 
         <Button type="submit" disabled={busy || !selectedUnit || !selected?.operable}>
           {busy ? "…" : t("preview")}

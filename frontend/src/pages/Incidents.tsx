@@ -9,6 +9,7 @@ import {
   SearchInput, Select, ActionMenu, Section, EmptyState, sevColor, Pagination,
 } from '../components/aiops/ui'
 import IncidentTimeline from '../components/insights/IncidentTimeline'
+import IncidentHardwareCard from '../components/hardware/IncidentHardwareCard'
 import type { PlatformAiopsProps } from '../utils/platformApi'
 import { appendPlatform } from '../utils/platformApi'
 import { exportMarkdownToPrintWindow, exportMultipleRcaToPrintWindow } from '../utils/pdfExport'
@@ -226,7 +227,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
       return next
     })
   }
-  const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-none'
+  const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-hidden'
   const inputStyle = { background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.2)' } as React.CSSProperties
 
   const rowMenu = (inc: Incident) => {
@@ -378,7 +379,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
       {/* Right: detail — kaydırılabilir (cyber-card overflow:hidden engelini aşar) */}
       {selectedIncident && (
         <div className="flex-1 max-w-[540px] sticky top-0 self-start h-[calc(100vh-7rem)] min-h-0">
-          <div className="cyber-card h-full flex flex-col !overflow-hidden">
+          <div className="cyber-card h-full flex flex-col overflow-hidden!">
             <div className="px-5 py-4 flex items-start justify-between shrink-0" style={{ borderBottom: '1px solid rgba(99,130,194,0.12)' }}>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 mb-1.5">
@@ -388,7 +389,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                 </div>
                 <h2 className="text-white font-semibold text-sm leading-snug">{selectedIncident.title}</h2>
               </div>
-              <button onClick={() => setSelectedIncident(null)} className="text-slate-400 hover:text-white ml-2 text-xl leading-none flex-shrink-0">&times;</button>
+              <button onClick={() => setSelectedIncident(null)} className="text-slate-400 hover:text-white ml-2 text-xl leading-none shrink-0">&times;</button>
             </div>
 
             {detailLoading ? (
@@ -421,13 +422,15 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                     <p className="text-xs font-medium mb-2" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('inc_affected')}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {selectedIncident.affected_server_details.map(s => (
-                        <span key={s.id} className="text-[11px] px-2 py-0.5 rounded" style={{ background: `rgba(${rgb(NEON.blue)},0.12)`, color: NEON.blue, border: `1px solid rgba(${rgb(NEON.blue)},0.25)` }}>
+                        <span key={s.id} className="text-[11px] px-2 py-0.5 rounded-sm" style={{ background: `rgba(${rgb(NEON.blue)},0.12)`, color: NEON.blue, border: `1px solid rgba(${rgb(NEON.blue)},0.25)` }}>
                           {s.name}{s.ip ? ` (${s.ip})` : ''}
                         </span>
                       ))}
                     </div>
                   </div>
                 )}
+
+                <IncidentHardwareCard key={`hw-${selectedIncident.id}`} incidentId={selectedIncident.id} />
 
                 {/* Status actions */}
                 <div className="flex gap-2 flex-wrap">
@@ -476,7 +479,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <p className="text-xs font-medium flex items-center gap-1.5" style={{ color: NEON.blue }}>
                         {t('ops_rca')}
-                        {selectedIncident.rca_result.auto && <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: `rgba(${rgb(NEON.blue)},0.15)` }}>{t('inc_auto')}</span>}
+                        {selectedIncident.rca_result.auto && <span className="px-1.5 py-0.5 rounded-sm text-[9px]" style={{ background: `rgba(${rgb(NEON.blue)},0.15)` }}>{t('inc_auto')}</span>}
                       </p>
                       <GhostButton accent={NEON.blue} onClick={() => downloadRcaPdf(selectedIncident)}>{t('ops_pdf_download')}</GhostButton>
                     </div>
@@ -484,7 +487,7 @@ const Incidents: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) => {
                       <p className="text-[10px] mb-2" style={{ color: 'rgba(148,163,184,0.5)' }}>
                         {selectedIncident.rca_result.model} · {fmt(selectedIncident.rca_result.analyzed_at, locale, false)}
                       </p>
-                      <div className="chat-response-content prose prose-invert prose-sm max-w-none text-xs leading-relaxed break-words text-slate-200">
+                      <div className="chat-response-content prose prose-invert prose-sm max-w-none text-xs leading-relaxed wrap-break-word text-slate-200">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedIncident.rca_result.analysis}</ReactMarkdown>
                       </div>
                     </AiBlock>

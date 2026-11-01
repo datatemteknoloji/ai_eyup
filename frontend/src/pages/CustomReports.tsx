@@ -172,7 +172,7 @@ function NewReportTab({ onSaved }: { onSaved: () => void }) {
             <select
               value={platform}
               onChange={e => setPlatform(e.target.value as Platform)}
-              className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500"
             >
               {PLATFORMS.map(p => <option key={p.id} value={p.id}>{t(p.labelKey)}</option>)}
             </select>
@@ -204,7 +204,7 @@ function NewReportTab({ onSaved }: { onSaved: () => void }) {
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleResolve() } }}
               placeholder={t('cr_question_ph')}
               rows={2}
-              className="flex-1 bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 resize-none"
+              className="flex-1 bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:border-blue-500 resize-none"
             />
             <button
               onClick={handleResolve}
@@ -246,7 +246,7 @@ function NewReportTab({ onSaved }: { onSaved: () => void }) {
                 >
                   <div className="flex items-center justify-between gap-3 mb-2">
                     <div className="flex items-center gap-2">
-                      <code className="text-xs px-2 py-1 rounded bg-slate-900/60 text-cyan-300">{c.tool}</code>
+                      <code className="text-xs px-2 py-1 rounded-sm bg-slate-900/60 text-cyan-300">{c.tool}</code>
                       <span className="text-xs text-slate-500">{c.label}</span>
                       {!c.ok && <XCircle size={13} className="text-red-400" />}
                     </div>
@@ -287,7 +287,7 @@ function NewReportTab({ onSaved }: { onSaved: () => void }) {
               value={title}
               onChange={e => setTitle(e.target.value)}
               placeholder={t('cr_report_title_ph')}
-              className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:border-blue-500"
             />
           </div>
           <div>
@@ -295,7 +295,7 @@ function NewReportTab({ onSaved }: { onSaved: () => void }) {
             <input
               value={description}
               onChange={e => setDescription(e.target.value)}
-              className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500"
             />
           </div>
           <p className="text-xs text-slate-500">{t('cr_deterministic_note')}</p>
@@ -497,7 +497,7 @@ export default function CustomReports() {
         <button
           onClick={() => setTab('new')}
           className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all ${
-            tab === 'new' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+            tab === 'new' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
           }`}
         >
           <Sparkles size={15} /> {t('cr_tab_new')}
@@ -505,7 +505,7 @@ export default function CustomReports() {
         <button
           onClick={() => setTab('saved')}
           className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all ${
-            tab === 'saved' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+            tab === 'saved' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
           }`}
         >
           <FileBarChart2 size={15} /> {t('cr_tab_saved')}

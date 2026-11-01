@@ -510,7 +510,7 @@ function ServerAlarmCard({
         <input type="checkbox" checked={selected}
           onChange={e => { e.stopPropagation(); onSelect(card.event_ids, e.target.checked) }}
           onClick={e => e.stopPropagation()}
-          className="mt-1 shrink-0 accent-cyan-500 cursor-pointer rounded"
+          className="mt-1 shrink-0 accent-cyan-500 cursor-pointer rounded-sm"
         />
 
         {/* Severity dot */}
@@ -688,7 +688,7 @@ function BulkToolbar({ selectedIds, onClear, onDone }: {
   }
 
   return (
-    <div className="sticky top-0 z-20 flex items-center gap-2 bg-slate-900/95 backdrop-blur-sm border border-cyan-500/40 rounded-2xl px-5 py-2.5 shadow-xl">
+    <div className="sticky top-0 z-20 flex items-center gap-2 bg-slate-900/95 backdrop-blur-xs border border-cyan-500/40 rounded-2xl px-5 py-2.5 shadow-xl">
       <span className="text-sm font-semibold text-cyan-400">{t('ops_n_alarms_sel', { n: selectedIds.length })}</span>
       <div className="flex gap-1.5 ml-3">
         {([
@@ -1091,7 +1091,7 @@ export default function OpsCenter({ platform = 'linux' }: PlatformAiopsProps) {
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={viewMode === 'handled' ? t('ops_search_handled') : t('ops_search_active')}
-                className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600"
+                className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600"
               />
               {search && (
                 <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">

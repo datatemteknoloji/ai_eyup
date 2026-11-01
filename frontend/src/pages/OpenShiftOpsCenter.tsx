@@ -39,12 +39,12 @@ function ClusterCard({ c }: { c: ClusterSummary }) {
   const t = useT()
   const healthy = c.status !== 'ERROR' && c.not_ready_nodes.length === 0
   return (
-    <div className={`rounded-xl border bg-gradient-to-br p-4 w-[min(100%,320px)] min-w-[280px] flex-shrink-0 ${
+    <div className={`rounded-xl border bg-linear-to-br p-4 w-[min(100%,320px)] min-w-[280px] shrink-0 ${
       healthy ? 'from-rose-600/10 to-red-700/5 border-rose-500/25' : 'from-red-600/20 to-orange-600/10 border-red-500/40'
     }`}>
       <div className="flex items-start justify-between mb-3 gap-2">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-lg bg-slate-900/60 border border-rose-500/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
+          <div className="w-10 h-10 rounded-lg bg-slate-900/60 border border-rose-500/20 flex items-center justify-center shrink-0 overflow-hidden">
             <img src="/assets/logos/redhat-logo.png" alt="" className="w-7 h-7 object-contain" />
           </div>
           <div className="min-w-0">
@@ -52,7 +52,7 @@ function ClusterCard({ c }: { c: ClusterSummary }) {
             <div className="text-xs text-slate-400 truncate">{c.version || t('ocp_version_unknown')} · {c.api_url}</div>
           </div>
         </div>
-        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold uppercase flex-shrink-0 ${
+        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold uppercase shrink-0 ${
           healthy ? 'bg-green-500/20 text-green-300 border-green-500/40' : 'bg-red-500/20 text-red-300 border-red-500/40'
         }`}>
           {healthy ? 'OK' : t('ocp_unhealthy')}
@@ -64,7 +64,7 @@ function ClusterCard({ c }: { c: ClusterSummary }) {
       </div>
       {c.not_ready_nodes.length > 0 && (
         <div className="text-xs text-red-300 flex items-start gap-1.5">
-          <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
           <span className="truncate">NotReady: {c.not_ready_nodes.join(', ')}</span>
         </div>
       )}
@@ -131,7 +131,7 @@ export default function OpenShiftOpsCenter() {
 
       <div className="rounded-xl border border-white/[0.08] bg-cyber-card/60 p-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-lg bg-slate-900/50 flex items-center justify-center flex-shrink-0">
+          <div className="w-10 h-10 rounded-lg bg-slate-900/50 flex items-center justify-center shrink-0">
             <ClipboardList size={18} className="text-amber-300" />
           </div>
           <div className="min-w-0">

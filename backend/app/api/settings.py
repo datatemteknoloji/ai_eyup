@@ -2117,6 +2117,30 @@ BRANDING_MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2 MB
 
 class BrandingRequest(BaseModel):
     app_name: str
+    # İsteğe bağlı (eski istemciler yalnız app_name gönderir). None = dokunma, "" = varsayılana dön.
+    company_name: Optional[str] = None
+    tagline: Optional[str] = None
+    footer_text: Optional[str] = None
+    hero_title: Optional[str] = None
+    hero_text: Optional[str] = None
+
+
+_BRANDING_TEXT_FIELDS = (
+    # (istek alanı, AppSettings anahtarı, en çok karakter, etiket)
+    ("company_name", "branding_company_name", 64, "Şirket adı"),
+    ("tagline", "branding_tagline", 80, "Alt başlık"),
+    ("footer_text", "branding_footer_text", 160, "Alt bilgi metni"),
+    ("hero_title", "branding_hero_title", 120, "Giriş ekranı başlığı"),
+    ("hero_text", "branding_hero_text", 320, "Giriş ekranı açıklaması"),
+)
+
+
+def _set_app_setting(db: Session, key: str, value: str) -> None:
+    row = db.query(AppSettings).filter(AppSettings.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(AppSettings(key=key, value=value))
 
 
 @router.put("/branding")
@@ -2132,13 +2156,21 @@ async def set_branding(
     if len(app_name) > 64:
         raise HTTPException(status_code=400, detail="Uygulama adı en fazla 64 karakter olabilir")
 
-    row = db.query(AppSettings).filter(AppSettings.key == "branding_app_name").first()
-    if row:
-        row.value = app_name
-    else:
-        db.add(AppSettings(key="branding_app_name", value=app_name))
+    extra: dict[str, str] = {}
+    for field, key, max_len, label in _BRANDING_TEXT_FIELDS:
+        raw = getattr(data, field)
+        if raw is None:
+            continue
+        val = " ".join(raw.split())  # satır sonu/çoklu boşluk temizle
+        if len(val) > max_len:
+            raise HTTPException(status_code=400, detail=f"{label} en fazla {max_len} karakter olabilir")
+        extra[key] = val
+
+    _set_app_setting(db, "branding_app_name", app_name)
+    for key, val in extra.items():
+        _set_app_setting(db, key, val)
     db.commit()
-    logger.info(f"Kurumsal uygulama adı güncellendi: {app_name}")
+    logger.info(f"Kurumsal kimlik güncellendi: {app_name}")
     return {"success": True, "app_name": app_name}
 
 

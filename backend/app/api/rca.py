@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from app.core.timeutil import utc_now
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -339,7 +340,7 @@ async def quick_analyze(req: QuickRCARequest, db: Session = Depends(get_db)):
         servers_map[s.id] = s
 
     # Son 6 saatteki ilgili eventleri her sunucu için topla
-    since = datetime.utcnow() - timedelta(hours=6)
+    since = utc_now() - timedelta(hours=6)
     related_events: List[SystemEvent] = (
         db.query(SystemEvent)
         .filter(

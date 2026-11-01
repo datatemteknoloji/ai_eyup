@@ -85,6 +85,7 @@ class OpenShiftClient:
         # hata olursa doldurulur. Çağıran kod (agent/tools.py handler'ları) bunu
         # kontrol ederek "0 node/pod" yerine açık hata döndürebilir.
         self.last_error: str = ""
+        self.pods_complete: bool = False   # son list_pods TAM mı (hata yok, sayfalama bitti; İş-1 prune güvenliği)
         self.token = token or ""
 
         if not self.token and self.username and self.password:
@@ -321,10 +322,12 @@ class OpenShiftClient:
         bağlamını şişirir ve 300+ pod'da çıktı kesilip 1-2 pod kalırdı.
         """
         self.last_error = ""
+        self.pods_complete = False
         try:
             path = f"/api/v1/namespaces/{namespace}/pods" if namespace else "/api/v1/pods"
             pods: List[Dict] = []
             continue_token: Optional[str] = None
+            _finished = False
             for _page in range(50):  # güvenlik üst sınırı
                 params: Dict[str, Any] = {"limit": 500}
                 if continue_token:
@@ -386,9 +389,13 @@ class OpenShiftClient:
                     })
                 continue_token = (body.get("metadata") or {}).get("continue") or None
                 if not continue_token:
+                    _finished = True
                     break
+            # TAM = sayfalama continue-token bitince doğal bitti; HTTP hatası (break) / 50 sayfa sınırı → kısmi
+            self.pods_complete = bool(_finished and not self.last_error)
             return pods
         except Exception as e:
+            self.pods_complete = False
             self.last_error = f"Bağlantı hatası: {e}"
             logger.error(f"OpenShift list_pods error: {e}", exc_info=True)
             return []

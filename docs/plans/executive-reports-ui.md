@@ -143,14 +143,7 @@ Her bölümün en az bir cümlesi vardır. Ölçülemeyen bölüm: «X ölçüle
 
 ## Demo kart (önizleme modu yok)
 
-Ayrı düğme veya mod kurulmaz. Yedek ve donanım kartları:
-
-- `BACKUP_DEMO_ENABLED` açıksa yedek kartı mevcut `veeam_demo` sağlayıcının sayısını gösterir. Kapalıysa veya gerçek Veeam yoksa Ölçülemedi.
-- `HW_DEMO_ENABLED` açıksa donanım ve garanti kartı mevcut `hw_demo` sağlayıcının sayısını gösterir. Kapalıysa veya gerçek OME/OneView yoksa Ölçülemedi.
-- Sayı demo sağlayıcıdan gelir. Uydurulmaz.
-- Demo kart: kesikli turuncu çerçeve, «DEMO» filigranı, «Örnek veri» etiketi. Filigran her zaman görünür.
-- Gerçek bölüm gerçek veriyle kalır. Aynı kartta demo ve gerçek sayı karışmaz (test).
-- Demo sayı KPI, AI özeti, risk listesi, kilitli paket, ay-ay fark, PDF ve CSV'ye girmez (test).
+Yedek kapsamı ve donanım/garanti kartı kaldırıldı. Geri konmaz. Sahte UC4 önizlemesi, Automic kaynağı sahteyse, kesikli çerçeveyle kalır. Bu kart KPI, AI özeti, risk, kilitli paket ve CSV'ye girmez. Gerçek host donanım bulgusu bu kart değildir; envanter bölümündedir.
 
 ## PDF ve CSV
 
@@ -188,3 +181,18 @@ Bitince her bölümün ekran görüntüsü alınır (açık tema, 1920×1080) ve
 Bu tura girmez. Final raporda ayrı öneri olarak durur.
 
 Kapsam: OpenShift notunun küme olayından çıkıp Red Hat'in önerdiği ölçüme geçmesi. Kaynak, Firing durumundaki monitoring alert'leridir. Silenced, Watchdog ve info dışarıdadır. Bugün bu alert'lerin son senkron tablosu yoktur; küme olayı (`openshift_collector`, `platform=openshift`) notu şişirebilir, not gerçekten kötü görünebilir. Toplamak yeni bir senkron ve büyük olasılıkla yeni bir API çağrısıdır. Onay olmadan çağrı açılmaz. Karttaki uyarı cümlesi o iş bitene kadar kalır.
+
+## Özet sayfası yeniden düzeni (2026-10-27)
+
+Tek model: **Ortam → Küme → Host** (`services/exec_inventory.py`, kilitli pakete yazılır). Sayfa hesaplamaz: `exec_snapshot.bundle_payload` kilitli sayfa modelini aynen döner (`present_bundle` ve canlı yeniden hesap kaldırıldı). Güncellik üretimle (günlük + «Şimdi yenile») sağlanır; başlıkta **Veri yaşı** görünür, 30 saati aşarsa sarı uyarı çıkar.
+
+- Ortam kartı: işlemci / bellek / depolama çubuğu (sanallaştırma ve OpenShift sayfalarındaki `ResourceGauge`, `compact` kipi), sayılar, «Küme ve hostları göster» ağacı. Sorun metni kartta yok.
+- Modül şeridi: yalnız durum, tek cümle neden, ilk iki sorun; sayılar kartlarda, ayrıntı çekmecede.
+- **Dikkat gerektirenler**: host sorunları + öncelikli riskler **varlık başına tek satır** (`build_attention`); aynı varlığın diğer bulguları «+N bulgu daha». Ayrı «Öncelikli riskler» ve «Host sorunları» tabloları yok. Kapalı makine kaynağı grafiği yok (Atıl kaynak bölümü).
+- IP adıyla gelen host: «ESXi host (192.168.1.101)», «KVM host (…)», «Node (…)». Küme kaydı olmayan host'lar «Kümesiz» altında.
+- Kullanım yüzdesi %100'e kırpılır (OpenShift istek/limit oranı yönetici için anlamsız). Yeniden adlandırılan host `host_ref` ile tek host sayılır (`host_freshness`).
+- Şablon özet en çok üç cümle; «AI tarafından yazıldı» etiketi yalnız `summary_source = ai` iken.
+- Frontend: `pages/executive/` (`EnvironmentCard`, `AttentionList`, `ModuleStrip`, `ResourceCharts`, `CapacitySection`, `OperationsSection`, `Drawer`, `shared`, `types`); `ExecutiveReports.tsx` yalnız kabuk.
+- **Grafik tutarlılığı:** Diğer sayfalarla aynı kütüphane (Recharts) ve aynı bileşenler. Küme/depolama/kapasite grafikleri `components/dashboard/ResourceCharts.tsx` içindeki `ResourceBarsChart` (host grafiği `HostResourceChart` de bunu kullanır). Renkler `RESOURCE_ACCENT` (işlemci camgöbeği, bellek mavi, disk turuncu), eşikler %75 turuncu / %90 kırmızı. Eksen, tooltip ve çubuk yuvarlaklığı `pages/executive/shared.tsx` sabitlerinden.
+- **Dikkat gerektirenler:** satır başına renkli şerit (donanım kırmızı, 30 gün+ turuncu), simge, ortam/alan etiketi, yaş rozeti, «+N bulgu daha», çözüm satırı; geniş ekranda iki sütun.
+- **Çekmece:** arka plana (boşluğa) tıklayınca ve Esc ile kapanır.

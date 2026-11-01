@@ -311,15 +311,15 @@ export function AssistantFab() {
       >
         {open ? (
           <div
-            className="pointer-events-auto absolute flex h-[min(70vh,520px)] w-[min(92vw,380px)] flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] shadow-2xl"
+            className="pointer-events-auto absolute flex h-[min(70vh,520px)] w-[min(92vw,380px)] flex-col overflow-hidden rounded-2xl border border-(--color-border) bg-(--color-card) shadow-2xl"
             style={{
               ...(openAbove ? { bottom: FAB_SIZE + 12 } : { top: FAB_SIZE + 12 }),
               ...(alignRight ? { right: 0 } : { left: 0 }),
             }}
           >
-            <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
+            <div className="flex items-center justify-between border-b border-(--color-border) px-3 py-2">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <Bot className="h-4 w-4 text-[var(--color-primary)]" />
+                <Bot className="h-4 w-4 text-(--color-primary)" />
                 {t("assistant_title")}
               </div>
               <div className="flex items-center gap-0.5">
@@ -345,8 +345,8 @@ export function AssistantFab() {
                   key={idx}
                   className={
                     it.role === "user"
-                      ? "ml-8 rounded-xl bg-[var(--color-primary)]/15 px-3 py-2 whitespace-pre-wrap"
-                      : "mr-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 whitespace-pre-wrap"
+                      ? "ml-8 rounded-xl bg-(--color-primary)/15 px-3 py-2 whitespace-pre-wrap"
+                      : "mr-4 rounded-xl border border-(--color-border) bg-(--color-background) px-3 py-2 whitespace-pre-wrap"
                   }
                 >
                   {it.text}
@@ -363,7 +363,7 @@ export function AssistantFab() {
                       >
                         {it.result.title_tr || t("assistant_open")} →
                       </Button>
-                      <p className="text-[10px] text-[var(--color-muted-foreground)]">
+                      <p className="text-[10px] text-(--color-muted-foreground)">
                         {t("assistant_confidence")} {Math.round((it.result.confidence || 0) * 100)}% · {it.result.source}
                         {it.result.server_ids?.length ? ` · id ${it.result.server_ids.join(",")}` : ""}
                       </p>
@@ -373,7 +373,7 @@ export function AssistantFab() {
                             type="button"
                             size="sm"
                             variant="ghost"
-                            className="h-6 gap-1 px-1.5 text-[10px] text-[var(--color-muted-foreground)]"
+                            className="h-6 gap-1 px-1.5 text-[10px] text-(--color-muted-foreground)"
                             onClick={() => setFeedbackIdx(feedbackIdx === idx ? null : idx)}
                             title={t("assistant_wrong_hint")}
                           >
@@ -385,15 +385,15 @@ export function AssistantFab() {
                         <p className="text-[10px] text-emerald-600">{t("assistant_thanks")}</p>
                       )}
                       {feedbackIdx === idx && !it.feedbackDone ? (
-                        <div className="max-h-28 space-y-0.5 overflow-y-auto rounded border border-[var(--color-border)] p-1">
-                          <p className="px-1 text-[10px] text-[var(--color-muted-foreground)]">
+                        <div className="max-h-28 space-y-0.5 overflow-y-auto rounded-sm border border-(--color-border) p-1">
+                          <p className="px-1 text-[10px] text-(--color-muted-foreground)">
                             {t("assistant_pick_correct")}
                           </p>
                           {caps.map((c) => (
                             <button
                               key={c.id}
                               type="button"
-                              className="block w-full rounded px-1.5 py-1 text-left text-[11px] hover:bg-[var(--color-accent)]"
+                              className="block w-full rounded-sm px-1.5 py-1 text-left text-[11px] hover:bg-(--color-accent)"
                               onClick={() => void submitFeedback(idx, c.id)}
                             >
                               {c.title_tr}
@@ -407,9 +407,9 @@ export function AssistantFab() {
               ))}
               <div ref={bottomRef} />
             </div>
-            <form onSubmit={onSend} className="flex gap-2 border-t border-[var(--color-border)] p-2">
+            <form onSubmit={onSend} className="flex gap-2 border-t border-(--color-border) p-2">
               <textarea
-                className="min-h-[44px] max-h-28 flex-1 resize-none rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                className="min-h-[44px] max-h-28 flex-1 resize-none rounded-md border border-(--color-border) bg-(--color-background) px-2 py-1.5 text-xs outline-hidden focus:ring-1 focus:ring-(--color-primary)"
                 placeholder={t("assistant_placeholder")}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -429,7 +429,7 @@ export function AssistantFab() {
 
         <button
           type="button"
-          className={`pointer-events-auto flex h-12 w-12 touch-none items-center justify-center rounded-full bg-[var(--color-primary)] text-[var(--color-primary-foreground)] shadow-lg ring-2 ring-[var(--color-primary)]/30 transition hover:scale-105 ${
+          className={`pointer-events-auto flex h-12 w-12 touch-none items-center justify-center rounded-full bg-(--color-primary) text-(--color-primary-foreground) shadow-lg ring-2 ring-(--color-primary)/30 transition hover:scale-105 ${
             dragging ? "cursor-grabbing scale-105" : "cursor-grab"
           }`}
           title={`${t("assistant_title")} — ${t("assistant_drag_hint")}`}

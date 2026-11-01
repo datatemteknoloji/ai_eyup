@@ -153,6 +153,27 @@ For high-quality reasoning tasks (complex RCA, code generation), run a larger mo
 
 ---
 
+## Chat quality behaviour (what users see)
+
+- **Progress while waiting:** before the first token the UI shows a live status
+  (e.g. «Veriler sorgulanıyor (…)», «Sonuçlar değerlendiriliyor — 12 sn») instead of silence;
+  it carries only fixed phrases and tool labels, never your data. Setting
+  `chat_progress_enabled` / `chat_progress_heartbeat_sec`.
+- **Answer cache:** conceptual questions with an exact match are answered from a
+  24 h cache (`from_cache` flag; keyed by platform + selection + RBAC signature).
+  Live-data questions are never cached. 👎 feedback invalidates the entry.
+- **Honesty gates:** ambiguous or unknown names make the chat ask or say «not
+  found» instead of guessing (entity resolver); counts follow deterministic
+  rules; a grounding verifier blocks invented entities/commands
+  (`chat_grounding_mode` = off | shadow | enforce).
+- **Queueing:** at most 3 AI answers run at once cluster-wide; others see their
+  queue position.
+- All of these have kill switches under *Settings → Advanced* (see
+  [Deployment](../deployment.md#sohbet-kalitesi--rag--llm-ve-ilgili-ayarlar-ayarlar--gelişmiş-env-ile-de-verilebilir)).
+  Program status and measurements: [chat-quality plan](../chat-quality/plan.md).
+
+---
+
 ## Related
 
 - [Agentic AI](agent.md) — tool-calling mode for executing actions

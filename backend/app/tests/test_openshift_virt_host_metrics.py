@@ -61,7 +61,12 @@ def test_sync_writes_host_metrics():
     q_nodes = MagicMock()
     q_nodes.filter.return_value.all.return_value = nodes
     q_vms = MagicMock()
-    q_vms.filter.return_value.all.return_value = []
+    q_vms.filter.return_value.all.return_value = [
+        SimpleNamespace(vm_host_name="master-0", vm_host_ref=None, status="ONLINE", vm_power_state="POWERED_ON"),
+        SimpleNamespace(vm_host_name="master-0", vm_host_ref=None, status="OFFLINE", vm_power_state="POWERED_OFF"),
+        SimpleNamespace(vm_host_name="worker-1", vm_host_ref=None, status="ONLINE", vm_power_state="POWERED_ON"),
+        SimpleNamespace(vm_host_name=None, vm_host_ref=None, status="ONLINE", vm_power_state="POWERED_ON"),
+    ]
 
     def _query(model):
         name = getattr(model, "__name__", str(model))
@@ -83,6 +88,9 @@ def test_sync_writes_host_metrics():
     ):
         out = sync_openshift_virt_host_metrics(db)
 
+    metric = next(c.args[0] for c in db.add.call_args_list if getattr(c.args[0], "vms_total", None) is not None)
+    # Yalnız bu node'un VM'leri sayılır (worker-1 ve host'suz VM bu node'a yazılmaz; toplam × node şişmesi yok)
+    assert metric.vms_total == 2 and metric.vms_running == 1
     assert out["hosts"] == 1
     assert out["hypervisors"] == 1
     assert db.add.call_count >= 1

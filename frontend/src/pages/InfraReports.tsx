@@ -21,12 +21,14 @@ import {
 import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { chatMarkdownComponents } from '../components/chatMarkdown'
 import type { PlatformKey } from '../config/platformAiops'
+import GenericReportView, { isGenericReport } from '../components/reports/GenericReportView'
 import {
   PLATFORM_REPORT_CATALOGS,
   PLATFORM_REPORT_TITLE_KEYS,
   PLATFORM_REPORT_SUBTITLE_KEYS,
   reportMethodologyKey,
   reportsApiBase,
+  type ReportPlatformKey,
 } from '../config/infraReportCatalog'
 
 const COLOR_MAP: Record<string, string> = {
@@ -115,7 +117,7 @@ function DataQualityBanner({ quality }: { quality: any }) {
     <div className={`rounded-xl border p-4 ${levelStyles[level] || levelStyles['Orta']}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-2">
-          <Info size={16} className="flex-shrink-0 mt-0.5 opacity-80" />
+          <Info size={16} className="shrink-0 mt-0.5 opacity-80" />
           <div>
             <p className="text-sm font-medium">{t('rpt_quality', { level: qualityT(level, t) })}</p>
             <p className="text-xs opacity-80 mt-1">
@@ -304,14 +306,14 @@ function ReportCard({
   return (
     <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 hover:border-slate-600/80 transition-all group flex flex-col gap-3">
       <div className="flex items-start gap-3">
-        <div className={`w-9 h-9 rounded-lg border flex items-center justify-center flex-shrink-0 ${cls}`}>
+        <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${cls}`}>
           {icon}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-white text-sm font-medium">{title}</h3>
             {badge && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-lime-500/15 text-lime-400 border border-lime-500/25">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-lime-500/15 text-lime-400 border border-lime-500/25">
                 {badge}
               </span>
             )}
@@ -360,7 +362,7 @@ function ReportViewer({ type, title, data, markdown, onClose, onRegenerate, rege
   ] as const
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4" onClick={onClose}>
       <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
@@ -541,7 +543,7 @@ function ExecSummaryView({ d }: { d: any }) {
           <ul className="space-y-2 mt-2">
             {d.recommendations.map((rec: string, i: number) => (
               <li key={i} className="text-sm text-blue-100 flex items-start gap-2">
-                <ChevronRight size={14} className="flex-shrink-0 mt-0.5 text-blue-400" />
+                <ChevronRight size={14} className="shrink-0 mt-0.5 text-blue-400" />
                 {rec}
               </li>
             ))}
@@ -565,7 +567,7 @@ function NarrativeBlock({ lines, title }: { lines?: string[]; title?: string }) 
       <ul className="space-y-1">
         {lines.map((line, i) => (
           <li key={i} className="text-[11px] text-slate-300 leading-relaxed flex gap-1.5">
-            <span className="text-blue-400/70 flex-shrink-0">•</span>
+            <span className="text-blue-400/70 shrink-0">•</span>
             <span>{line}</span>
           </li>
         ))}
@@ -622,7 +624,7 @@ function CapacityView({ d }: { d: any }) {
       <NarrativeBlock lines={d.narrative} />
       {d.warnings?.length > 0 && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex gap-2">
-          <AlertTriangle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
+          <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
           <div className="space-y-1">
             {d.warnings.map((w: string, i: number) => (
               <p key={i} className="text-amber-300 text-sm">{w}</p>
@@ -738,7 +740,7 @@ function CapacityView({ d }: { d: any }) {
                       <td className="px-3 py-1.5 text-white">{vm.vm}</td>
                       <td className="px-3 py-1.5 text-right text-blue-400 font-medium">{vm.disk_gb}</td>
                       <td className="px-3 py-1.5 text-right">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${['POWERED_ON','up','running','poweredOn'].includes(vm.power_state) ? 'bg-green-500/20 text-green-400' : 'bg-slate-500/20 text-slate-500'}`}>
+                        <span className={`px-1.5 py-0.5 rounded-sm text-[10px] ${['POWERED_ON','up','running','poweredOn'].includes(vm.power_state) ? 'bg-green-500/20 text-green-400' : 'bg-slate-500/20 text-slate-500'}`}>
                           {vm.power_state}
                         </span>
                       </td>
@@ -1164,7 +1166,7 @@ function SecurityView({ d }: { d: any }) {
         <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-3 space-y-1.5">
           {d.issues.map((issue: string, i: number) => (
             <div key={i} className="flex items-start gap-2">
-              <AlertTriangle size={13} className="text-red-400 flex-shrink-0 mt-0.5" />
+              <AlertTriangle size={13} className="text-red-400 shrink-0 mt-0.5" />
               <span className="text-red-300 text-sm">{issue}</span>
             </div>
           ))}
@@ -1211,6 +1213,10 @@ function CapacityPlanView({ d }: { d: any }) {
   const t = useT()
   const sm = d.summary || {}
   const tone = (s?: string) => s === 'fail' ? 'text-red-400' : s === 'warn' ? 'text-amber-400' : s === 'ok' ? 'text-emerald-400' : 'text-slate-400'
+  // N+1 durum kodu (ok/warn/fail/info) → okunur etiket; yüzde "bir host düşünce kalan host'ların Memory doluluğu".
+  const n1Label = (s?: string) => s === 'ok' ? t('vi_cap_n1_ok') : s === 'warn' ? t('vi_cap_n1_warn')
+    : s === 'fail' ? t('vi_cap_n1_fail') : s === 'single_host' ? t('vi_cap_n1_single')
+    : s === 'no_data' ? t('vi_cap_n1_nodata') : (s || '—')
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1229,8 +1235,12 @@ function CapacityPlanView({ d }: { d: any }) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 border-b border-white/[0.06]">
-            <th className="px-3 py-2">Cluster</th><th className="px-3 py-2">Host</th><th className="px-3 py-2">{t('vi_cap_eff_mem')}</th>
-            <th className="px-3 py-2">N+1</th><th className="px-3 py-2">{t('vi_cap_runway_mem')}</th><th className="px-3 py-2">{t('vi_cap_actions')}</th>
+            <th className="px-3 py-2">Cluster</th>
+            <th className="px-3 py-2" title={t('vi_cap_hosts')}>{t('vi_cap_hosts')}</th>
+            <th className="px-3 py-2" title={t('vi_cap_hint_eff_mem')}>{t('vi_cap_eff_mem')}</th>
+            <th className="px-3 py-2" title={t('vi_cap_hint_n1')}>{t('vi_cap_n1_hdr')}</th>
+            <th className="px-3 py-2">{t('vi_cap_runway_mem')} ({t('vi_cap_unit_days')})</th>
+            <th className="px-3 py-2">{t('vi_cap_actions')}</th>
           </tr></thead>
           <tbody>
             {(d.clusters || []).map((c: any) => {
@@ -1240,7 +1250,7 @@ function CapacityPlanView({ d }: { d: any }) {
                   <td className="px-3 py-2 text-white">{c.cluster}<div className="text-[11px] text-slate-500">{c.hypervisor} · {c.platform}</div></td>
                   <td className="px-3 py-2 font-mono text-slate-300">{c.hosts_usable}/{c.hosts_total}</td>
                   <td className="px-3 py-2 font-mono text-slate-300">%{c.memory?.effective_used_pct ?? '—'}</td>
-                  <td className={`px-3 py-2 font-mono ${tone(c.n_plus_one?.status)}`}>{c.n_plus_one?.status}{c.n_plus_one?.mem_after_pct != null ? ` (%${c.n_plus_one.mem_after_pct})` : ''}</td>
+                  <td className={`px-3 py-2 font-mono ${tone(c.n_plus_one?.status)}`} title={t('vi_cap_hint_n1')}>{n1Label(c.n_plus_one?.status)}{c.n_plus_one?.mem_after_pct != null ? ` (%${c.n_plus_one.mem_after_pct})` : ''}</td>
                   <td className="px-3 py-2 font-mono text-slate-300">{days?.typical != null ? (days.typical === 0 ? t('vi_cap_exceeded') : `~${days.typical}`) : '—'}</td>
                   <td className="px-3 py-2 text-xs text-slate-400">{(c.actions || []).map((a: any) => <div key={a.step}>{a.step}. {a.title}{a.hosts_needed ? ` (+${a.hosts_needed} host)` : ''}</div>)}</td>
                 </tr>
@@ -1395,7 +1405,7 @@ function ConsolidationView({ d }: { d: any }) {
                   <span className="text-slate-400">{v.ram_gb} GB Memory</span>
                   {v.avg_cpu_pct != null && <span className="text-amber-400">CPU %{v.avg_cpu_pct}</span>}
                   {v.basis && (
-                    <span className="text-[10px] text-slate-500 border border-slate-600/40 rounded px-1.5 py-0.5">
+                    <span className="text-[10px] text-slate-500 border border-slate-600/40 rounded-sm px-1.5 py-0.5">
                       {v.basis === 'usage' ? t('rpt_basis_usage') : t('rpt_basis_alloc')}
                     </span>
                   )}
@@ -1508,7 +1518,7 @@ function AnomalyView({ d }: { d: any }) {
                 <div key={i}>
                   <div className="flex justify-between text-xs mb-0.5">
                     <span className="text-slate-300 truncate">{s.server}</span>
-                    <div className="flex gap-2 flex-shrink-0">
+                    <div className="flex gap-2 shrink-0">
                       {s.critical > 0 && <span className="text-red-400">{t('rpt_n_crit', { n: s.critical })}</span>}
                       {s.warning > 0 && <span className="text-amber-400">{t('rpt_n_warn', { n: s.warning })}</span>}
                     </div>
@@ -1535,7 +1545,7 @@ function AnomalyView({ d }: { d: any }) {
       </div>
       {d.analysis_note && (
         <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-800/30 rounded-lg p-3">
-          <Info size={12} className="flex-shrink-0 mt-0.5" />
+          <Info size={12} className="shrink-0 mt-0.5" />
           <span>{d.analysis_note}</span>
         </div>
       )}
@@ -1602,7 +1612,7 @@ function ForecastView({ d }: { d: any }) {
                         <td className="py-2 align-top">
                           <div className="flex items-center gap-1.5 text-slate-400">{icons[res]} {labels[res]}</div>
                           <div className="mt-1 flex flex-wrap gap-1">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${badge.cls}`}>{badge.label}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-sm border ${badge.cls}`}>{badge.label}</span>
                             <span className="text-[10px] text-slate-500">{fitLabel(fit, t)}</span>
                             {unc && res !== 'cpu' && (
                               <span className="text-[10px] text-slate-500">{uncLabel(unc, t)}</span>
@@ -1722,7 +1732,7 @@ function FinanceView({ d }: { d: any }) {
       </div>
       {d.note && (
         <div className="flex items-start gap-2 text-xs text-slate-500">
-          <Info size={12} className="flex-shrink-0 mt-0.5" />
+          <Info size={12} className="shrink-0 mt-0.5" />
           <span>{d.note}</span>
         </div>
       )}
@@ -1773,8 +1783,8 @@ function RiskiestAssetsView({ d }: { d: any }) {
                 <div key={i}>
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-slate-300 truncate">{v.vm}</span>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {v.tier === 'production' && <span className="text-[9px] bg-red-900/40 text-red-400 px-1 rounded">PROD</span>}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {v.tier === 'production' && <span className="text-[9px] bg-red-900/40 text-red-400 px-1 rounded-sm">PROD</span>}
                       <span className="text-amber-400 font-bold">{v.risk_score}</span>
                     </div>
                   </div>
@@ -1822,7 +1832,7 @@ function OperationsView({ d }: { d: any }) {
             <div className="space-y-2">
               {breakdown.slice(0, 12).map((e: any, i: number) => (
                 <div key={i} className="flex items-center gap-2 text-xs">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${sevColor[e.severity] || 'bg-slate-500'}`} />
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${sevColor[e.severity] || 'bg-slate-500'}`} />
                   <span className="text-slate-300 flex-1 truncate">{e.type}</span>
                   <div className="w-20 h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
                     <div className={`h-full rounded-full ${sevColor[e.severity] || 'bg-slate-500'}`}
@@ -1841,7 +1851,7 @@ function OperationsView({ d }: { d: any }) {
             <div className="space-y-1.5">
               {daily.slice(0, 10).map((day: any, i: number) => (
                 <div key={i} className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-500 w-20 flex-shrink-0">{day.day?.slice(5)}</span>
+                  <span className="text-slate-500 w-20 shrink-0">{day.day?.slice(5)}</span>
                   <div className="flex-1 h-2 bg-slate-700/50 rounded-full overflow-hidden flex">
                     <div className="bg-red-500 h-full" style={{ width: `${(day.critical / maxDay) * 100}%` }} />
                     <div className="bg-blue-500/60 h-full" style={{ width: `${((day.total - day.critical) / maxDay) * 100}%` }} />
@@ -1893,7 +1903,7 @@ function OperationsView({ d }: { d: any }) {
       )}
       {d.note && (
         <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-800/30 rounded-lg p-3">
-          <Info size={12} className="flex-shrink-0 mt-0.5" />
+          <Info size={12} className="shrink-0 mt-0.5" />
           <span>{d.note}</span>
         </div>
       )}
@@ -2006,7 +2016,7 @@ function SlaView({ d }: { d: any }) {
         <div className="space-y-1.5">
           {items.slice(0, 20).map((s: any) => (
             <div key={s.server} className="flex items-center gap-3 text-xs bg-slate-800/40 rounded-lg px-3 py-2">
-              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.sla_met ? 'bg-green-500' : 'bg-red-500'}`} />
+              <div className={`w-2 h-2 rounded-full shrink-0 ${s.sla_met ? 'bg-green-500' : 'bg-red-500'}`} />
               <span className="text-white flex-1">{s.server}</span>
               <div className="w-24">
                 <ProgressBar pct={s.estimated_uptime_pct} label="" showPct={false} />
@@ -2039,7 +2049,7 @@ function BusinessImpactView({ d }: { d: any }) {
       </div>
       {d.message && (
         <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 flex items-start gap-3">
-          <Info size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
+          <Info size={16} className="text-amber-400 shrink-0 mt-0.5" />
           <div>
             <p className="text-amber-300 text-sm font-medium">{t('rpt_no_svc_map')}</p>
             <p className="text-slate-400 text-xs mt-1">{d.message}</p>
@@ -2059,7 +2069,7 @@ function BusinessImpactView({ d }: { d: any }) {
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {(svc.vms || []).map((v: any, i: number) => (
-                    <span key={i} className="text-xs bg-blue-900/30 text-blue-300 px-2 py-0.5 rounded border border-blue-700/30">
+                    <span key={i} className="text-xs bg-blue-900/30 text-blue-300 px-2 py-0.5 rounded-sm border border-blue-700/30">
                       {v.vm}
                     </span>
                   ))}
@@ -2112,7 +2122,7 @@ function PatchStatusView({ d }: { d: any }) {
 
       {d.note && (
         <div className="flex items-start gap-2 bg-slate-800/30 border border-slate-700/30 rounded-xl px-4 py-3 text-xs text-slate-400">
-          <Info size={14} className="text-slate-500 flex-shrink-0 mt-0.5" />
+          <Info size={14} className="text-slate-500 shrink-0 mt-0.5" />
           <span>{d.note}</span>
         </div>
       )}
@@ -2291,7 +2301,7 @@ function SecurityAuditView({ d }: { d: any }) {
         </div>
         {d.note && (
           <div className="flex items-start gap-2 bg-slate-800/30 border border-slate-700/30 rounded-xl px-4 py-3 text-xs text-slate-400">
-            <Info size={14} className="text-slate-500 flex-shrink-0 mt-0.5" />
+            <Info size={14} className="text-slate-500 shrink-0 mt-0.5" />
             <span>{d.note}</span>
           </div>
         )}
@@ -2417,7 +2427,7 @@ function MonitoringCoverageView({ d }: { d: any }) {
       </div>
       {d.note && (
         <div className="flex items-start gap-2 bg-slate-800/30 border border-slate-700/30 rounded-xl px-4 py-3 text-xs text-slate-400">
-          <Info size={14} className="text-slate-500 flex-shrink-0 mt-0.5" />
+          <Info size={14} className="text-slate-500 shrink-0 mt-0.5" />
           <span>{d.note}</span>
         </div>
       )}
@@ -2534,7 +2544,7 @@ function PlatformExecSummaryView({ d }: { d: any }) {
           <ul className="space-y-2 mt-2">
             {d.recommendations.map((rec: string, i: number) => (
               <li key={i} className="text-sm text-blue-100 flex items-start gap-2">
-                <ChevronRight size={14} className="flex-shrink-0 mt-0.5 text-blue-400" />
+                <ChevronRight size={14} className="shrink-0 mt-0.5 text-blue-400" />
                 {rec}
               </li>
             ))}
@@ -2550,6 +2560,8 @@ function PlatformExecSummaryView({ d }: { d: any }) {
 function ReportSummaryView({ type, data }: { type: string; data: Record<string, unknown> }) {
   const t = useT()
   const d = data as any
+  // OpenShift ve Yönetici «Tüm Ortamlar» raporları ortak şemadadır (backend generic_report).
+  if (isGenericReport(data)) return <GenericReportView d={data} />
   if (type.startsWith('custom:')) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
@@ -2606,7 +2618,7 @@ export default function InfraReports({
   platform = 'virt',
   initialTab,
 }: {
-  platform?: PlatformKey
+  platform?: ReportPlatformKey
   initialTab?: 'reports' | 'chat' | 'compare'
 }) {
   const t = useT()
@@ -2654,8 +2666,10 @@ export default function InfraReports({
     tool_name: string
   }
 
+  const supportsCustom = platform !== 'executive'
   const { data: customReportsData, refetch: refetchCustom } = useQuery({
     queryKey: ['custom-reports-catalog', platform],
+    enabled: supportsCustom,
     queryFn: async (): Promise<CustomReportRow[]> => {
       const r = await fetch(`${API_BASE_URL}/custom-reports/?platform=${encodeURIComponent(platform)}`)
       if (!r.ok) return []
@@ -2667,9 +2681,9 @@ export default function InfraReports({
   const customReports = customReportsData || []
 
   const { data: history, refetch: refetchHistory } = useQuery({
-    queryKey: ['report-history', platform],
+    queryKey: ['report-history', platform, locale],
     queryFn: async () => {
-      const r = await fetch(`${apiBase}/history?limit=50`)
+      const r = await fetch(`${apiBase}/history?limit=50&lang=${locale}`)
       if (!r.ok) return { reports: [] }
       return r.json()
     },
@@ -2782,7 +2796,7 @@ export default function InfraReports({
       const r = await fetch(`${apiBase}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ report_type: type, save: true }),
+        body: JSON.stringify({ report_type: type, save: true, lang: locale }),
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const { data, markdown } = await r.json()
@@ -2802,7 +2816,7 @@ export default function InfraReports({
       await handleViewCustom(type)
       return
     }
-    const r = await fetch(`${apiBase}/latest/${type}`)
+    const r = await fetch(`${apiBase}/latest/${type}?lang=${locale}`)
     if (!r.ok) { handleGenerate(type); return }
     const { data, markdown } = await r.json()
     const cat = catalog.find(c => c.type === type)
@@ -2837,7 +2851,7 @@ export default function InfraReports({
           onClick={() => setMainTab('reports')}
           className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all ${
             mainTab === 'reports'
-              ? 'bg-blue-600 text-white shadow'
+              ? 'bg-blue-600 text-white shadow-sm'
               : 'text-slate-400 hover:text-white'
           }`}
         >
@@ -2848,7 +2862,7 @@ export default function InfraReports({
           onClick={() => setMainTab('chat')}
           className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all ${
             mainTab === 'chat'
-              ? 'bg-blue-600 text-white shadow'
+              ? 'bg-blue-600 text-white shadow-sm'
               : 'text-slate-400 hover:text-white'
           }`}
         >
@@ -2860,7 +2874,7 @@ export default function InfraReports({
           onClick={() => setMainTab('compare')}
           className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all ${
             mainTab === 'compare'
-              ? 'bg-indigo-600 text-white shadow'
+              ? 'bg-indigo-600 text-white shadow-sm'
               : 'text-slate-400 hover:text-white'
           }`}
         >
@@ -2872,7 +2886,7 @@ export default function InfraReports({
       )}
 
       {showCompare && mainTab === 'compare' && (
-        <ServerComparePanel platform={platform} />
+        <ServerComparePanel platform={platform as PlatformKey} />
       )}
 
       {showChat && mainTab === 'chat' && (
@@ -2907,7 +2921,7 @@ export default function InfraReports({
       {platform === 'virt' && <DataQualityBanner quality={dataQuality} />}
 
       {showChat && (
-      <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 border border-blue-700/40 rounded-xl p-4">
+      <div className="bg-linear-to-r from-blue-900/30 to-indigo-900/30 border border-blue-700/40 rounded-xl p-4">
         <div className="flex items-center gap-2 mb-3">
           <Bot size={16} className="text-blue-400" />
           <span className="text-blue-300 text-sm font-medium">{t('rpt_ask_ai')}</span>
@@ -2922,7 +2936,7 @@ export default function InfraReports({
               platform === 'windows' ? t('rpt_ph_win') :
               t('rpt_ph_virt')
             }
-            className="flex-1 bg-slate-800/60 border border-slate-700 rounded-lg px-4 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            className="flex-1 bg-slate-800/60 border border-slate-700 rounded-lg px-4 py-2 text-white text-sm placeholder-slate-500 focus:outline-hidden focus:border-blue-500"
           />
           <button onClick={handleChatAsk} disabled={!chatQuestion.trim()}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2 transition-all">
@@ -2940,6 +2954,7 @@ export default function InfraReports({
       <div>
         <div className="flex items-center justify-between gap-3 mb-3">
           <h2 className="text-slate-300 text-sm font-medium">{t('rpt_all')}</h2>
+          {supportsCustom && (
           <Link
             to="/custom-reports"
             className="text-[11px] text-lime-400/80 hover:text-lime-300 flex items-center gap-1"
@@ -2947,6 +2962,7 @@ export default function InfraReports({
             <FileBarChart2 size={12} />
             {t('rpt_custom_manage')}
           </Link>
+          )}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {catalog.map(cat => (
@@ -3035,7 +3051,7 @@ export default function InfraReports({
                           </button>
                           <button
                             onClick={async () => {
-                              const r = await fetch(`${apiBase}/latest/${rpt.type}`)
+                              const r = await fetch(`${apiBase}/latest/${rpt.type}?lang=${locale}`)
                               if (!r.ok) return
                               const { markdown } = await r.json()
                               if (!markdown) return

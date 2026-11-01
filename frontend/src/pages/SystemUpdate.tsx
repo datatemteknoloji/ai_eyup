@@ -164,13 +164,13 @@ const ServerSelector = ({ servers, selected, onChange }: {
       <div className="bg-cyber-card/80 px-3 py-2 flex gap-2 border-b border-white/[0.06] flex-wrap items-center">
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder={t('upd_search_ip')}
-          className="flex-1 min-w-[160px] bg-white/[0.07] text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+          className="flex-1 min-w-[160px] bg-white/[0.07] text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
         <button onClick={() => onChange(filtered.map(s => s.id))}
-          className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('filter_all')}</button>
+          className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded-sm">{t('filter_all')}</button>
         <button onClick={() => onChange(filtered.filter(s => s.status === 'ONLINE').map(s => s.id))}
-          className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('upd_online')}</button>
+          className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded-sm">{t('upd_online')}</button>
         <button onClick={() => onChange([])}
-          className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('pkg_clear')}</button>
+          className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded-sm">{t('pkg_clear')}</button>
         <span className="text-xs text-slate-500 ml-auto">{t('upd_of_selected', { sel: selected.length, total: servers.length })}</span>
       </div>
       <div className="max-h-64 overflow-y-auto divide-y divide-white/[0.04]">
@@ -178,13 +178,13 @@ const ServerSelector = ({ servers, selected, onChange }: {
           <label key={srv.id}
             className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors hover:bg-white/[0.03] ${selected.includes(srv.id) ? 'bg-blue-600/10' : ''}`}>
             <input type="checkbox" checked={selected.includes(srv.id)} onChange={() => toggle(srv.id)}
-              className="accent-blue-500 w-4 h-4 flex-shrink-0" />
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${srv.status === 'ONLINE' ? 'bg-green-400' : 'bg-slate-500'}`} />
+              className="accent-blue-500 w-4 h-4 shrink-0" />
+            <span className={`w-2 h-2 rounded-full shrink-0 ${srv.status === 'ONLINE' ? 'bg-green-400' : 'bg-slate-500'}`} />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <div className="text-sm font-medium text-white truncate">{srv.name}</div>
                 {srv.reboot_required && (
-                  <span className="flex items-center gap-1 text-[10px] bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-1.5 py-0.5 rounded-md flex-shrink-0">
+                  <span className="flex items-center gap-1 text-[10px] bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-1.5 py-0.5 rounded-md shrink-0">
                     <AlertTriangle size={10} strokeWidth={2} /> Reboot
                   </span>
                 )}
@@ -347,7 +347,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] flex-shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] shrink-0">
           <div>
             <h2 className="text-lg font-semibold text-white">{plan.name}</h2>
             <span className={`text-xs font-medium ${STATUS_COLOR[plan.status]}`}>
@@ -358,7 +358,7 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
         </div>
         <div className="flex-1 overflow-hidden flex">
           {/* Left: server list */}
-          <div className="w-64 border-r border-white/[0.06] overflow-y-auto flex-shrink-0">
+          <div className="w-64 border-r border-white/[0.06] overflow-y-auto shrink-0">
             {plan.ai_analysis && (
               <div className="p-3 border-b border-white/[0.06] bg-cyan-500/5">
                 <div className="text-xs font-semibold text-cyan-400 mb-1">{t('upd_step_ai')}</div>
@@ -407,8 +407,8 @@ const PlanDetailModal = ({ plan, onClose }: { plan: UpdatePlan; onClose: () => v
                     <div className="bg-cyber-deep rounded-xl p-3 max-h-40 overflow-y-auto space-y-0.5">
                       {sel.packages_to_update.slice(0,30).map((p,i) => (
                         <div key={i} className="flex items-center gap-2 text-xs">
-                          {p.is_security && <Lock size={12} strokeWidth={2} className="text-red-400 flex-shrink-0" />}
-                          {p.is_kernel   && <Zap size={12} strokeWidth={2} className="text-blue-400 flex-shrink-0" />}
+                          {p.is_security && <Lock size={12} strokeWidth={2} className="text-red-400 shrink-0" />}
+                          {p.is_kernel   && <Zap size={12} strokeWidth={2} className="text-blue-400 shrink-0" />}
                           <span className="text-slate-200 font-mono">{p.name}</span>
                           {p.new_version && <span className="text-slate-400">→ {p.new_version}</span>}
                         </div>
@@ -511,7 +511,7 @@ const PackageList: React.FC<{ job: UpdateJob; planId: number }> = ({ job, planId
       <div className="flex items-center justify-between bg-cyber-card/50 rounded-lg px-3 py-2">
         <span className="text-xs text-slate-500">{t('upd_pkg_list_missing')}</span>
         <button onClick={fetchPackages} disabled={loading}
-          className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-white/[0.06] rounded transition-colors disabled:opacity-40">
+          className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-white/[0.06] rounded-sm transition-colors disabled:opacity-40">
           {loading ? <><div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />{t('upd_fetching')}</> : t('upd_list_ssh')}
         </button>
       </div>
@@ -527,7 +527,7 @@ const PackageList: React.FC<{ job: UpdateJob; planId: number }> = ({ job, planId
       <div className="text-xs font-semibold text-green-300 mb-1.5">✓ {t('upd_updated_pkgs', { n: packages.length })}</div>
       <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
         {packages.map((p: any, i: number) => (
-          <span key={i} className="text-[11px] bg-green-500/10 text-green-300 border border-green-500/20 px-1.5 py-0.5 rounded font-mono">
+          <span key={i} className="text-[11px] bg-green-500/10 text-green-300 border border-green-500/20 px-1.5 py-0.5 rounded-sm font-mono">
             {p.name}{p.version ? <span className="text-green-600 ml-1">{p.version.split('-')[0]}</span> : null}
           </span>
         ))}
@@ -579,7 +579,7 @@ const LiveJobLog: React.FC<{
         </div>
         {job.status === 'failed' && (
           <button onClick={onAnalyze} disabled={analyzing}
-            className="flex items-center gap-1 px-2 py-0.5 text-xs bg-cyan-700/30 hover:bg-cyan-700/50 text-cyan-300 border border-cyan-600/30 rounded transition-colors disabled:opacity-40">
+            className="flex items-center gap-1 px-2 py-0.5 text-xs bg-cyan-700/30 hover:bg-cyan-700/50 text-cyan-300 border border-cyan-600/30 rounded-sm transition-colors disabled:opacity-40">
             {analyzing ? <><div className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />...</> : t('upd_analyze_err')}
           </button>
         )}
@@ -612,7 +612,7 @@ const LiveJobLog: React.FC<{
         </pre>
       ) : isActive ? (
         <div className="bg-cyber-deep border border-white/[0.06]/50 rounded-lg p-4 flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0" />
           <div className="text-xs text-slate-400">{t('upd_starting_log')}</div>
         </div>
       ) : null}
@@ -648,7 +648,7 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
       const title = line.replace(/^#+\s*/, '').replace(/\*\*/g, '')
       nodes.push(
         <h3 key={i} className="text-sm font-bold text-white mt-4 mb-1.5 flex items-center gap-2">
-          <span className="w-1 h-4 bg-cyan-500 rounded-full flex-shrink-0" />
+          <span className="w-1 h-4 bg-cyan-500 rounded-full shrink-0" />
           {title}
         </h3>
       )
@@ -660,7 +660,7 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
       const title = line.replace(/^##\s*/, '').replace(/^\d+\.\s+/, '').replace(/\*\*/g, '')
       nodes.push(
         <div key={i} className="flex items-center gap-2 mt-3 mb-1">
-          <span className="text-cyan-400 font-bold text-xs flex-shrink-0">
+          <span className="text-cyan-400 font-bold text-xs shrink-0">
             {line.match(/^(\d+)\./) ? line.match(/^(\d+)\./)?.[1] + '.' : '▸'}
           </span>
           <span className="text-sm font-semibold text-cyan-200">{title}</span>
@@ -693,7 +693,7 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
       const AlertIcon = meta.Icon
       nodes.push(
         <div key={i} className={`flex gap-2.5 border rounded-lg px-3 py-2 my-1 text-xs leading-relaxed ${meta.cls}`}>
-          <AlertIcon size={14} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+          <AlertIcon size={14} strokeWidth={2} className="shrink-0 mt-0.5" />
           <span>{renderInline(line.replace(alertMatch[0], '').trim())}</span>
         </div>
       )
@@ -705,7 +705,7 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
       const content = line.replace(/^[-•*]\s+/, '')
       nodes.push(
         <div key={i} className="flex gap-2 py-0.5 pl-1">
-          <span className="text-cyan-500 flex-shrink-0 mt-0.5">›</span>
+          <span className="text-cyan-500 shrink-0 mt-0.5">›</span>
           <span className="text-sm text-slate-300 leading-relaxed">{renderInline(content)}</span>
         </div>
       )
@@ -717,7 +717,7 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
     if (numMatch) {
       nodes.push(
         <div key={i} className="flex gap-2.5 py-0.5 pl-1">
-          <span className="text-cyan-500/70 font-mono text-xs flex-shrink-0 mt-0.5 w-4">{numMatch[1]}.</span>
+          <span className="text-cyan-500/70 font-mono text-xs shrink-0 mt-0.5 w-4">{numMatch[1]}.</span>
           <span className="text-sm text-slate-300 leading-relaxed">{renderInline(numMatch[2])}</span>
         </div>
       )
@@ -731,7 +731,7 @@ const AiMarkdown: React.FC<{ text: string }> = ({ text }) => {
         <p key={i} className="text-sm text-slate-300 leading-relaxed py-0.5">
           {parts.map((p, j) =>
             j % 2 === 1
-              ? <code key={j} className="bg-cyber-card border border-slate-600 text-green-300 px-1.5 py-0.5 rounded text-[11px] font-mono mx-0.5">{p}</code>
+              ? <code key={j} className="bg-cyber-card border border-slate-600 text-green-300 px-1.5 py-0.5 rounded-sm text-[11px] font-mono mx-0.5">{p}</code>
               : <span key={j}>{renderInline(p)}</span>
           )}
         </p>
@@ -838,17 +838,17 @@ const RebootPanel: React.FC<{ loadPlans: () => void }> = ({ loadPlans: _loadPlan
           <label key={j.id} className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-yellow-500/5 ${selected.has(j.id) ? 'bg-yellow-500/10' : ''}`}>
             <input type="checkbox" checked={selected.has(j.id)}
               onChange={() => setSelected(prev => { const next = new Set(prev); next.has(j.id) ? next.delete(j.id) : next.add(j.id); return next })}
-              className="accent-yellow-500 w-4 h-4 flex-shrink-0" />
+              className="accent-yellow-500 w-4 h-4 shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-white">{j.server_name}</div>
               <div className="text-xs text-slate-400">{j.server_ip} · {j.plan_name}</div>
             </div>
-            <div className="text-xs text-slate-500 flex-shrink-0">{fmtDate(j.completed_at, locale)}</div>
+            <div className="text-xs text-slate-500 shrink-0">{fmtDate(j.completed_at, locale)}</div>
           </label>
         ))}
       </div>
       <div className="flex items-start gap-1.5 px-4 py-2.5 bg-yellow-500/5 text-xs text-yellow-600">
-        <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+        <Lightbulb size={12} strokeWidth={2} className="shrink-0 mt-0.5" />
         <span>{t('upd_reboot_hint')}</span>
       </div>
     </div>
@@ -1214,7 +1214,7 @@ const SystemUpdate: React.FC = () => {
                 }
                 setShowWizard(false)
               }}
-              className="ml-4 flex-shrink-0 text-slate-400 hover:text-white hover:bg-white/[0.06] px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-1.5"
+              className="ml-4 shrink-0 text-slate-400 hover:text-white hover:bg-white/[0.06] px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-1.5"
               title={t('upd_close_wizard')}
             >
               <span className="text-lg leading-none">×</span>
@@ -1320,7 +1320,7 @@ const SystemUpdate: React.FC = () => {
                   credMode === 'stored' ? 'border-green-500 bg-green-500/10' : 'border-slate-600 bg-white/[0.02] hover:border-slate-500'
                 }`}>
                   <input type="radio" checked={credMode==='stored'} onChange={() => setCredMode('stored')}
-                    className="accent-green-500 w-4 h-4 mt-0.5 flex-shrink-0" />
+                    className="accent-green-500 w-4 h-4 mt-0.5 shrink-0" />
                   <div>
                     <div className="text-sm font-semibold text-white flex items-center gap-2">
                       {t('pkg_use_stored')}
@@ -1336,7 +1336,7 @@ const SystemUpdate: React.FC = () => {
                   credMode === 'override' ? 'border-blue-500 bg-blue-500/10' : 'border-slate-600 bg-white/[0.02] hover:border-slate-500'
                 }`}>
                   <input type="radio" checked={credMode==='override'} onChange={() => setCredMode('override')}
-                    className="accent-blue-500 w-4 h-4 mt-0.5 flex-shrink-0" />
+                    className="accent-blue-500 w-4 h-4 mt-0.5 shrink-0" />
                   <div className="flex-1">
                     <div className="text-sm font-semibold text-white flex items-center gap-2">
                       {t('pkg_use_override')}
@@ -1351,14 +1351,14 @@ const SystemUpdate: React.FC = () => {
                           <label className="text-xs text-slate-400 block mb-1">{t('pkg_username')} <span className="text-red-400">*</span></label>
                           <input value={overrideUser} onChange={e => setOverrideUser(e.target.value)}
                             placeholder={t('pkg_username_ph')}
-                            className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                            className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <div>
                             <label className="text-xs text-slate-400 block mb-1">{t('pkg_ssh_password')}</label>
                             <input type="password" value={overridePass} onChange={e => setOverridePass(e.target.value)}
                               placeholder={t('upd_ssh_ph')}
-                              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                           </div>
                           <div>
                             <label className="text-xs text-slate-400 block mb-1">
@@ -1367,11 +1367,11 @@ const SystemUpdate: React.FC = () => {
                             </label>
                             <input type="password" value={overrideSudo} onChange={e => setOverrideSudo(e.target.value)}
                               placeholder={t('upd_sudo_ph')}
-                              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                           </div>
                         </div>
                         <div className="flex items-start gap-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
-                          <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+                          <Lightbulb size={12} strokeWidth={2} className="shrink-0 mt-0.5" />
                           <span>{t('upd_root_sudo_hint2')}</span>
                         </div>
                       </div>
@@ -1410,7 +1410,7 @@ const SystemUpdate: React.FC = () => {
                 </div>
                 {privMethod === 'dzdo' && (
                     <div className="flex items-start gap-1.5 bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 text-xs text-blue-300">
-                      <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+                      <Lightbulb size={12} strokeWidth={2} className="shrink-0 mt-0.5" />
                       <span>{t('upd_dzdo_hint')}</span>
                     </div>
                   )}
@@ -1458,7 +1458,7 @@ const SystemUpdate: React.FC = () => {
                 <label className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
                   selectedRepo === null ? 'border-blue-500 bg-blue-600/10' : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                 }`}>
-                  <input type="radio" checked={selectedRepo===null} onChange={() => setSelectedRepo(null)} className="accent-blue-500 w-4 h-4 flex-shrink-0" />
+                  <input type="radio" checked={selectedRepo===null} onChange={() => setSelectedRepo(null)} className="accent-blue-500 w-4 h-4 shrink-0" />
                   <div>
                     <div className="flex items-center gap-1.5 text-sm font-semibold text-white">
                       <Globe size={14} strokeWidth={2} /> {t('upd_default_repo')}
@@ -1473,7 +1473,7 @@ const SystemUpdate: React.FC = () => {
                     <label key={repo.id} className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
                       selectedRepo===repo.id ? 'border-blue-500 bg-blue-600/10' : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                     }`}>
-                      <input type="radio" checked={selectedRepo===repo.id} onChange={() => setSelectedRepo(repo.id)} className="accent-blue-500 w-4 h-4 flex-shrink-0" />
+                      <input type="radio" checked={selectedRepo===repo.id} onChange={() => setSelectedRepo(repo.id)} className="accent-blue-500 w-4 h-4 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-semibold text-white">{repo.display_name}</div>
                         <div className="text-xs text-slate-400 mt-0.5">
@@ -1645,7 +1645,7 @@ const SystemUpdate: React.FC = () => {
                     <label className="text-xs text-slate-400 block mb-1">{t('upd_plan_name')}</label>
                     <input value={planName} onChange={e => setPlanName(e.target.value)}
                       placeholder={`${distroShort(DISTRO_LIST.find(d=>d.key===selectedDistro), t) || 'Linux'} ${utypeOf(updateType) ? t(utypeOf(updateType)!.labelKey) : ''} — ${new Date().toLocaleDateString(dateLoc(locale))}`}
-                      className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                      className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                   </div>
                 </div>
               )}
@@ -1755,7 +1755,7 @@ const SystemUpdate: React.FC = () => {
                         <div className="space-y-1 mt-2">
                           <div className="flex items-center gap-2 mb-2">
                             <input value={pkgSearch} onChange={e => setPkgSearch(e.target.value)}
-                              placeholder={t('repo_search_pkg')} className="flex-1 bg-cyber-card text-white text-xs px-2 py-1 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                              placeholder={t('repo_search_pkg')} className="flex-1 bg-cyber-card text-white text-xs px-2 py-1 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                             <button onClick={() => {
                               const allNames = data.packages.map((p: any) => p.name)
                               if (allNames.every((n: string) => selectedPkgs.has(n))) {
@@ -1763,7 +1763,7 @@ const SystemUpdate: React.FC = () => {
                               } else {
                                 setSelectedPkgs(prev => new Set([...prev, ...allNames]))
                               }
-                            }} className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-white/[0.06] rounded transition-colors">
+                            }} className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-white/[0.06] rounded-sm transition-colors">
                               {t('filter_all')}
                             </button>
                             <span className="text-xs text-slate-500">{t('selected_n', { n: selectedPkgs.size })}</span>
@@ -1772,10 +1772,10 @@ const SystemUpdate: React.FC = () => {
                             {data.packages
                               .filter((p: any) => !pkgSearch || p.name.toLowerCase().includes(pkgSearch.toLowerCase()))
                               .map((p: any, i: number) => (
-                              <label key={i} className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-white/[0.03] ${selectedPkgs.has(p.name) ? 'bg-blue-600/10' : ''}`}>
+                              <label key={i} className={`flex items-center gap-2 px-2 py-1 rounded-sm cursor-pointer hover:bg-white/[0.03] ${selectedPkgs.has(p.name) ? 'bg-blue-600/10' : ''}`}>
                                 <input type="checkbox" checked={selectedPkgs.has(p.name)}
                                   onChange={() => setSelectedPkgs(prev => { const next = new Set(prev); next.has(p.name) ? next.delete(p.name) : next.add(p.name); return next })}
-                                  className="accent-blue-500 w-3.5 h-3.5 flex-shrink-0" />
+                                  className="accent-blue-500 w-3.5 h-3.5 shrink-0" />
                                 <span className={`text-xs font-mono ${p.is_security ? 'text-red-300' : p.is_kernel ? 'text-blue-300' : 'text-slate-200'}`}>
                                   {p.is_security && <span className="text-[9px] font-bold text-red-400 mr-1">SEC</span>}{p.is_kernel && <span className="text-[9px] font-bold text-blue-400 mr-1">KRN</span>}{p.name}
                                 </span>
@@ -1788,7 +1788,7 @@ const SystemUpdate: React.FC = () => {
                         /* Normal mod: badge listesi */
                         <div className="flex flex-wrap gap-1 mt-1">
                           {data.packages.slice(0, 12).map((p: any, i: number) => (
-                            <span key={i} className={`text-[11px] px-1.5 py-0.5 rounded font-mono ${
+                            <span key={i} className={`text-[11px] px-1.5 py-0.5 rounded-sm font-mono ${
                               p.is_security ? 'bg-red-500/15 text-red-300' :
                               p.is_kernel   ? 'bg-blue-500/15 text-blue-300' :
                               'bg-white/[0.07] text-slate-300'
@@ -2007,7 +2007,7 @@ const SystemUpdate: React.FC = () => {
                       className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/[0.03] transition-colors text-left"
                       onClick={() => setExpandedJob(expandedJob === j.id ? null : j.id)}
                     >
-                      <span className={`text-xs font-medium w-20 flex-shrink-0 ${STATUS_COLOR[j.status]}`}>
+                      <span className={`text-xs font-medium w-20 shrink-0 ${STATUS_COLOR[j.status]}`}>
                         {(j.status==='running'||j.status==='pending') && <span className="inline-block w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse mr-1" />}
                         {statusT(j.status, t)}
                       </span>
@@ -2018,7 +2018,7 @@ const SystemUpdate: React.FC = () => {
                           {j.os_type && <span className="text-blue-400">{j.os_type.toUpperCase()} {j.os_version}</span>}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="flex items-center gap-2 shrink-0">
                         {j.packages_updated.length > 0 && <span className="text-xs text-green-400">{t('upd_n_pkgs', { n: j.packages_updated.length })}</span>}
                         {j.reboot_required && <span className="text-xs text-yellow-400">REBOOT</span>}
                         {j.snapshot?.status === 'active' && (
@@ -2115,7 +2115,7 @@ const SystemUpdate: React.FC = () => {
         <div className="bg-cyber-card border border-white/[0.06] rounded-[10px] overflow-hidden">
           <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">{t('upd_history')}</h2>
-            <button onClick={loadPlans} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-white/[0.06] rounded transition-colors">↻ {t('refresh_action')}</button>
+            <button onClick={loadPlans} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-white/[0.06] rounded-sm transition-colors">↻ {t('refresh_action')}</button>
           </div>
           {plans.length === 0 ? (
             <div className="py-16 text-center space-y-3">

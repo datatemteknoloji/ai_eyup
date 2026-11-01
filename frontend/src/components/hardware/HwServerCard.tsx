@@ -8,8 +8,10 @@ import { DemoStrip, HealthBadge, WarrantyText, formFactorLabel, val } from './hw
 
 /**
  * Linux/Windows çekmecesi ve host paneli için "Donanım" kartı.
- * - Entegrasyon yoksa / eşleşme yoksa / kullanıcının `hardware` modülü yoksa (403) HİÇ render edilmez.
+ * - Entegrasyon yoksa / eşleşme yoksa HİÇ render edilmez.
  * - Konsol/güç/uzaktan erişim düğmesi YOK; yalnız yönetim konsoluna (OME/OneView) bağlantı.
+ * - İki seviyeli yetki: `hardware` modülü yoksa (restricted) BMC adresi, seri/service tag ve konsol bağlantısı gelmez;
+ *   kart yalnız sağlık/model/şasi/garanti/alarm özetini gösterir.
  */
 export const HwServerCard: React.FC<{ kind: 'server' | 'esxi'; id: number }> = ({ kind, id }) => {
   const t = useT()
@@ -32,17 +34,19 @@ export const HwServerCard: React.FC<{ kind: 'server' | 'esxi'; id: number }> = (
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-medium text-white">{t('hw_card_title')}</h3>
         <div className="flex items-center gap-2">
-          {q.data.demo && <span className="text-[11px] px-1.5 rounded bg-fuchsia-500/20 text-fuchsia-300">DEMO</span>}
+          {q.data.demo && <span className="text-[11px] px-1.5 rounded-sm bg-fuchsia-500/20 text-fuchsia-300">DEMO</span>}
           <HealthBadge health={s.health} />
         </div>
       </div>
       {q.data.demo && <DemoStrip />}
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
         {([
-          [t('hw_col_bmc'), val(s.bmc_ip, t) + (s.bmc_type ? ` (${s.bmc_type})` : '')],
-          [t('hw_col_bmc_ver'), val(s.bmc_version, t)],
+          ...(s.restricted ? [] : [
+            [t('hw_col_bmc'), val(s.bmc_ip, t) + (s.bmc_type ? ` (${s.bmc_type})` : '')],
+            [t('hw_col_bmc_ver'), val(s.bmc_version, t)],
+          ]),
           [t('hw_col_model'), val(s.model, t)],
-          [t('hw_col_serial'), val(s.serial, t)],
+          ...(s.restricted ? [] : [[t('hw_col_serial'), val(s.serial, t)]]),
           [t('hw_col_form'), formFactorLabel(t, s.form_factor)],
           [t('hw_col_enclosure'), s.enclosure_name ? `${s.enclosure_name}${s.bay ? ' / ' + s.bay : ''}` : t('hw_not_measured')],
         ] as [string, string][]).map(([k, v]) => (
@@ -69,7 +73,7 @@ export const HwServerCard: React.FC<{ kind: 'server' | 'esxi'; id: number }> = (
       )}
       <div className="flex items-center justify-between text-[11px] text-slate-500">
         <span>{s.manager?.name ? `${s.manager.name}${s.manager.version ? ' ' + s.manager.version : ''} · ` : ''}{s.collected_at ? t('hw_updated', { d: new Date(s.collected_at).toLocaleString() }) : ''}</span>
-        {s.web_url && !q.data.demo && (
+        {s.web_url && !s.restricted && !q.data.demo && (
           <a href={s.web_url} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200">
             {t('hw_open_console')} <ExternalLink size={11} />
           </a>

@@ -49,7 +49,7 @@ function InfoTip({ text }: { text?: string }) {
     <span className="relative group inline-flex shrink-0 align-middle">
       <button
         type="button"
-        className="p-0.5 rounded text-slate-500 hover:text-blue-300"
+        className="p-0.5 rounded-sm text-slate-500 hover:text-blue-300"
         aria-label="Bilgi"
         tabIndex={0}
       >
@@ -148,7 +148,7 @@ function MultiPick({
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Ara…"
-              className="flex-1 bg-transparent text-xs text-white outline-none"
+              className="flex-1 bg-transparent text-xs text-white outline-hidden"
             />
             <button type="button" className="text-[10px] text-blue-400 hover:text-blue-300" onClick={toggleAllFiltered}>
               {allFilteredSelected ? 'Hiçbiri' : 'Tümü'}
@@ -157,7 +157,7 @@ function MultiPick({
           </div>
           <div className="max-h-56 overflow-y-auto p-1">
             {filtered.length > 0 && (
-              <label className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/[0.04] cursor-pointer text-xs text-slate-300 border-b border-white/[0.06] mb-0.5">
+              <label className="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-white/[0.04] cursor-pointer text-xs text-slate-300 border-b border-white/[0.06] mb-0.5">
                 <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} />
                 <span className="font-semibold">Tümü</span>
                 <span className="text-slate-500 ml-auto">{filtered.length}</span>
@@ -166,7 +166,7 @@ function MultiPick({
             {filtered.map((o) => {
               const on = selected.includes(o)
               return (
-                <label key={o} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/[0.04] cursor-pointer text-xs text-slate-200">
+                <label key={o} className="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-white/[0.04] cursor-pointer text-xs text-slate-200">
                   <input type="checkbox" checked={on} onChange={() => onChange(toggleIn(selected, o))} />
                   <span className="truncate font-mono">{o}</span>
                 </label>
@@ -235,7 +235,7 @@ function ChartCard({
           <button
             type="button"
             onClick={onExpand}
-            className="p-1 rounded text-slate-500 hover:text-white hover:bg-white/[0.06] shrink-0"
+            className="p-1 rounded-sm text-slate-500 hover:text-white hover:bg-white/[0.06] shrink-0"
             title="Büyüt"
           >
             <Maximize2 size={14} />
@@ -249,7 +249,7 @@ function ChartCard({
 
       {isTable && rows.length > 0 && (
         <div
-          className="flex-1 overflow-auto rounded border border-white/[0.04] mt-1"
+          className="flex-1 overflow-auto rounded-sm border border-white/[0.04] mt-1"
           style={{ maxHeight: Math.max(height + 40, 200) }}
         >
           <table className="w-full text-left text-[11px]">
@@ -335,7 +335,7 @@ function ChartCard({
                   className="flex items-center gap-1.5 text-[10px] text-slate-400 min-w-0"
                 >
                   <span
-                    className="w-2 h-2 rounded-sm shrink-0"
+                    className="w-2 h-2 rounded-xs shrink-0"
                     style={{ background: COLORS[i % COLORS.length] }}
                   />
                   <span className="truncate font-mono" title={s.name}>{s.name}</span>

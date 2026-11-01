@@ -26,7 +26,7 @@ const CMD_USER = `oc whoami -t`
 
 function Cmd({ children }: { children: string }) {
   return (
-    <pre className="mt-1 mb-2 whitespace-pre-wrap break-all rounded bg-black/40 border border-slate-700 px-2 py-1.5 text-[10px] leading-snug font-mono text-emerald-200 select-all">
+    <pre className="mt-1 mb-2 whitespace-pre-wrap break-all rounded-sm bg-black/40 border border-slate-700 px-2 py-1.5 text-[10px] leading-snug font-mono text-emerald-200 select-all">
       {children}
     </pre>
   )

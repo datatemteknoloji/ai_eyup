@@ -4,7 +4,7 @@
 # platformunda (ör. arm64 geliştirme makinesi) çalıştırmak, esbuild'in Go
 # runtime'ının QEMU emülasyonu altında zaman zaman çökmesini (lfstack.push
 # hatası) önler ve cross-build'i hem hızlandırır hem güvenilir hale getirir.
-FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:26-alpine AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Serve with nginx
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 
 RUN apk add --no-cache openssl \
   && mkdir -p /etc/nginx/certs

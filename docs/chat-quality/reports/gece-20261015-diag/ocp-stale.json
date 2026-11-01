@@ -1,0 +1,76 @@
+[
+ {
+  "cluster": "oVirt",
+  "last_sync": "2026-10-15 02:01:55.302438+03:00",
+  "kinds": {
+   "pod": {
+    "live": 331,
+    "db": 787,
+    "live_err": null,
+    "stale": 456,
+    "missing_in_db": 0,
+    "stale_by_updated_at": {
+     "updated_at NULL": 386,
+     ">7g": 68,
+     "1-7g": 2
+    },
+    "db_newest_updated_at": "2026-10-15 02:01:43.953596+03:00",
+    "stale_examples": [
+     "ahmet-ha-test/virt-launcher-rhel9-magenta-wildfowl-41-6kdtw",
+     "ahmet-ha-test/virt-launcher-rhel9-rose-giraffe-49-cj2gz",
+     "default/virt-launcher-rhel9-tomato-rooster-94-98x9p",
+     "openshift-virtualization-os-images/poller-centos-stream10-image-cron-a503d3e2",
+     "openshift-virtualization-os-images/poller-fedora-image-cron-82053870"
+    ]
+   },
+   "deployment": {
+    "live": 104,
+    "db": 104,
+    "live_err": null,
+    "stale": 0,
+    "missing_in_db": 0,
+    "stale_by_updated_at": {},
+    "db_newest_updated_at": "2026-10-04 15:36:57.063630+03:00",
+    "stale_examples": []
+   },
+   "service": {
+    "live": 135,
+    "db": 135,
+    "live_err": null,
+    "stale": 0,
+    "missing_in_db": 0,
+    "stale_by_updated_at": {},
+    "db_newest_updated_at": "None",
+    "stale_examples": []
+   },
+   "route": {
+    "live": 18,
+    "db": 18,
+    "live_err": null,
+    "stale": 0,
+    "missing_in_db": 0,
+    "stale_by_updated_at": {},
+    "db_newest_updated_at": "None",
+    "stale_examples": []
+   },
+   "node": {
+    "live": 3,
+    "db": 3,
+    "live_err": null,
+    "stale": 0,
+    "missing_in_db": 0
+   },
+   "project": {
+    "live": 87,
+    "db": 87,
+    "live_err": null,
+    "stale": 0,
+    "missing_in_db": 0
+   }
+  }
+ },
+ {
+  "cluster": "ZZ-FAKE-OCP",
+  "skipped": "sahte (fake) cluster"
+ }
+]

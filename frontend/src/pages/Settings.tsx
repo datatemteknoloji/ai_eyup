@@ -8,9 +8,11 @@ import { useBranding } from '../branding/BrandingContext'
 import { PlatformUpdateTab } from '../components/PlatformUpdateTab'
 import { PlatformStatusTab } from '../components/PlatformStatusTab'
 import SecuritySettings from './SecuritySettings'
+import BmcSettingsTab from '../components/hardware/BmcSettingsTab'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import OcpTokenHelp from '../components/OcpTokenHelp'
 import { exportProductGuide } from '../utils/productGuideExport'
+import { advSettingMatches, matchesQuery } from '../utils/settingsSearch'
 
 interface Credential {
   id: number
@@ -44,10 +46,10 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
 }) => {
   const t = useT()
   return (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
-        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center shrink-0 mt-0.5">
           <AlertTriangle size={16} strokeWidth={2} className="text-yellow-400" />
         </div>
         <div>
@@ -408,7 +410,7 @@ const RagTab: React.FC = () => {
             onChange={(e) => setRbQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') searchRunbook.mutate(rbQuery) }}
             placeholder={t('set_rb_search_ph')}
-            className="flex-1 min-w-[200px] bg-cyber-card border border-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/40 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500 outline-none"
+            className="flex-1 min-w-[200px] bg-cyber-card border border-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/40 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500 outline-hidden"
           />
           <button
             type="button"
@@ -537,7 +539,7 @@ const RagTab: React.FC = () => {
       {status?.vector_store && status.vector_store.ok === false && (
         <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-950/40 px-4 py-3 text-sm">
           <p className="font-medium text-amber-200">{t('set_vector_down')}</p>
-          <p className="text-xs text-amber-100/80 mt-1 break-words">
+          <p className="text-xs text-amber-100/80 mt-1 wrap-break-word">
             {status.vector_store.reason || t('set_vector_down_hint')}
           </p>
           {status.vector_store.marker_path && (
@@ -551,12 +553,12 @@ const RagTab: React.FC = () => {
       {status?.embedding && !status.embedding.ok && (
         <div className="mb-4 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-100/90">
           <p className="font-medium text-rose-200">{t('set_embed_down')}</p>
-          <p className="text-xs text-rose-100/80 mt-1 break-words">
+          <p className="text-xs text-rose-100/80 mt-1 wrap-break-word">
             {status.embedding.error || t('set_embed_noresp')}
           </p>
           <p className="text-xs text-rose-100/60 mt-2">
-            {t('set_target')} <code className="bg-cyber-card px-1 rounded">{status.embedding.base_url}</code>
-            {' · '}model: <code className="bg-cyber-card px-1 rounded">{status.embedding.model}</code>
+            {t('set_target')} <code className="bg-cyber-card px-1 rounded-sm">{status.embedding.base_url}</code>
+            {' · '}model: <code className="bg-cyber-card px-1 rounded-sm">{status.embedding.model}</code>
           </p>
           {status.embedding.hint && (
             <p className="text-[11px] text-rose-100/50 mt-2 whitespace-pre-wrap">{status.embedding.hint}</p>
@@ -725,7 +727,7 @@ const ConfigBackupTab: React.FC = () => {
           <h3 className="text-sm font-semibold text-cyan-300 mb-3">{t('set_old_env')}</h3>
           <label className="flex items-center gap-2 text-xs text-slate-400 mb-4 cursor-pointer">
             <input type="checkbox" checked={includeSecrets} onChange={e => setIncludeSecrets(e.target.checked)}
-              className="rounded border-slate-600" />
+              className="rounded-sm border-slate-600" />
             {t('set_include_keys')}
           </label>
           <button type="button" disabled={busy} onClick={downloadBackup}
@@ -988,10 +990,10 @@ const DbBackupSection: React.FC = () => {
         {migSecrets && (
           <>
             <div className="flex flex-wrap gap-2 mb-3 text-[11px]">
-              <span className={`px-2 py-1 rounded border ${migSecrets.ready_for_full_migrate ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-amber-500/40 text-amber-200 bg-amber-500/10'}`}>
+              <span className={`px-2 py-1 rounded-sm border ${migSecrets.ready_for_full_migrate ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-amber-500/40 text-amber-200 bg-amber-500/10'}`}>
                 {migSecrets.ready_for_full_migrate ? t('set_ready_migrate') : t('set_missing_req')}
               </span>
-              <span className={`px-2 py-1 rounded border ${migSecrets.bridge_match ? 'border-emerald-500/30 text-emerald-300/90' : 'border-amber-500/30 text-amber-200'}`}>
+              <span className={`px-2 py-1 rounded-sm border ${migSecrets.bridge_match ? 'border-emerald-500/30 text-emerald-300/90' : 'border-amber-500/30 text-amber-200'}`}>
                 {migSecrets.bridge_match ? t('set_bridge_ok') : t('set_bridge_bad')}
               </span>
             </div>
@@ -1035,7 +1037,7 @@ const DbBackupSection: React.FC = () => {
 
         <label className="flex items-center gap-2 text-xs text-slate-400 mb-2 cursor-pointer">
           <input type="checkbox" checked={includeDbPasswords} onChange={e => setIncludeDbPasswords(e.target.checked)}
-            className="rounded border-slate-600" />
+            className="rounded-sm border-slate-600" />
           {t('set_incl_db_pw')}
         </label>
         <input
@@ -1060,17 +1062,17 @@ const DbBackupSection: React.FC = () => {
           <h3 className="text-sm font-semibold text-cyan-300 mb-3">{t('set_export')}</h3>
           <label className="flex items-center gap-2 text-xs text-slate-400 mb-2 cursor-pointer">
             <input type="checkbox" checked={includeDropt} onChange={e => setIncludeDropt(e.target.checked)}
-              className="rounded border-slate-600" disabled={!cap?.dropt_db_present} />
+              className="rounded-sm border-slate-600" disabled={!cap?.dropt_db_present} />
             {t('set_incl_dropt')}
             {!cap?.dropt_db_present && <span className="text-slate-600">{t('set_no_container')}</span>}
           </label>
           <label className="flex items-center gap-2 text-xs text-slate-400 mb-4 cursor-pointer">
             <input type="checkbox" checked={includeSecretsInZip} onChange={e => setIncludeSecretsInZip(e.target.checked)}
-              className="rounded border-slate-600" />
+              className="rounded-sm border-slate-600" />
             {t('set_incl_secrets_zip')}
           </label>
           <button type="button" disabled={busy || !cap?.available} onClick={downloadDb}
-            className="px-4 py-2 rounded-lg text-sm bg-gradient-to-r from-blue-600 to-blue-700 text-white disabled:opacity-50">
+            className="px-4 py-2 rounded-lg text-sm bg-linear-to-r from-blue-600 to-blue-700 text-white disabled:opacity-50">
             {busy ? t('set_preparing') : t('set_dl_zip')}
           </button>
           <p className="text-[11px] text-slate-500 mt-3">
@@ -1139,7 +1141,7 @@ const DbBackupSection: React.FC = () => {
       {busy && busyPhase && (
         <div className="mb-3 rounded-[10px] border border-sky-500/30 bg-sky-500/10 p-4">
           <div className="flex items-center gap-3 mb-2">
-            <div className="w-4 h-4 border-2 border-sky-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+            <div className="w-4 h-4 border-2 border-sky-400 border-t-transparent rounded-full animate-spin shrink-0" />
             <div className="text-sm text-sky-100">{busyPhase}</div>
           </div>
           <div className="h-1.5 rounded-full bg-black/30 overflow-hidden">
@@ -1248,7 +1250,7 @@ const DangerZoneTab: React.FC = () => {
 
       <div className="bg-red-500/5 border-2 border-red-500/30 rounded-xl p-6">
         <div className="flex items-start gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-red-500/15 border border-red-500/40 flex items-center justify-center flex-shrink-0">
+          <div className="w-10 h-10 rounded-full bg-red-500/15 border border-red-500/40 flex items-center justify-center shrink-0">
             <AlertTriangle size={20} strokeWidth={2} className="text-red-400" />
           </div>
           <div>
@@ -1270,7 +1272,7 @@ const DangerZoneTab: React.FC = () => {
                     type="checkbox"
                     checked={selected.size === nonEmptyCategories.length && nonEmptyCategories.length > 0}
                     onChange={toggleAll}
-                    className="w-4 h-4 text-red-600 bg-white/[0.07] border-slate-600 rounded"
+                    className="w-4 h-4 text-red-600 bg-white/[0.07] border-slate-600 rounded-sm"
                   />
                   {t('select_all')}
                 </label>
@@ -1287,7 +1289,7 @@ const DangerZoneTab: React.FC = () => {
                         type="checkbox"
                         checked={selected.has(cat.id)}
                         onChange={() => toggleCategory(cat.id)}
-                        className="w-4 h-4 text-red-600 bg-white/[0.07] border-slate-600 rounded"
+                        className="w-4 h-4 text-red-600 bg-white/[0.07] border-slate-600 rounded-sm"
                       />
                       <span className="text-sm text-white">{cat.label}</span>
                     </span>
@@ -1314,12 +1316,12 @@ const DangerZoneTab: React.FC = () => {
                   value={confirmText}
                   onChange={e => setConfirmText(e.target.value)}
                   placeholder={WIPE_CONFIRM_PHRASE}
-                  className="flex-1 bg-cyber-deep border border-red-500/30 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-red-500 font-mono text-sm"
+                  className="flex-1 bg-cyber-deep border border-red-500/30 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-red-500 font-mono text-sm"
                 />
                 <button
                   onClick={() => wipeMutation.mutate()}
                   disabled={!canConfirm || wipeMutation.isPending}
-                  className="px-6 py-2.5 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg hover:from-red-500 hover:to-red-600 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm whitespace-nowrap"
+                  className="px-6 py-2.5 bg-linear-to-r from-red-600 to-red-700 text-white rounded-lg hover:from-red-500 hover:to-red-600 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm whitespace-nowrap"
                 >
                   {wipeMutation.isPending ? t('deleting') : t('set_del_selected', { n: selected.size })}
                 </button>
@@ -1384,17 +1386,12 @@ interface AdvancedGroup {
   settings: AdvancedSettingItem[]
 }
 
-const AdvancedSettingsTab: React.FC = () => {
+/** Gelişmiş ayar listesi (Gelişmiş sekmesi + kenar çubuğu araması aynı önbelleği paylaşır). */
+function useAdvancedSettingsQuery(enabled: boolean = true) {
   const t = useT()
-  const { user } = useAuth()
-  const isAdmin = user?.role === 'admin'
-  const queryClient = useQueryClient()
-  const [draft, setDraft] = useState<Record<string, string>>({})
-  const [saveMsg, setSaveMsg] = useState<string | null>(null)
-  const [llmHealth, setLlmHealth] = useState<AdvLlmHealth | null>(null)
-
-  const { data, isLoading, error } = useQuery<{ groups: AdvancedGroup[]; settings: AdvancedSettingItem[] }>({
+  return useQuery<{ groups: AdvancedGroup[]; settings: AdvancedSettingItem[] }>({
     queryKey: ['advanced-settings'],
+    enabled,
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/settings/advanced`)
       if (!res.ok) {
@@ -1408,6 +1405,28 @@ const AdvancedSettingsTab: React.FC = () => {
       return res.json()
     },
   })
+}
+
+const AdvancedSettingsTab: React.FC<{ query: string; onQueryChange: (q: string) => void }> = ({ query, onQueryChange }) => {
+  const t = useT()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
+  const queryClient = useQueryClient()
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [llmHealth, setLlmHealth] = useState<AdvLlmHealth | null>(null)
+
+  const { data, isLoading, error } = useAdvancedSettingsQuery()
+
+  // Arama: yalnız GÖRÜNÜMÜ süzer; kayıt (onSave) ve taslak (draft) tüm ayarları kapsamaya devam eder.
+  const hasQuery = query.trim().length > 0
+  const visibleGroups = React.useMemo(
+    () => (data?.groups || [])
+      .map(g => ({ ...g, settings: g.settings.filter(s => !hasQuery || advSettingMatches({ ...s, group_label: g.label }, query)) }))
+      .filter(g => g.settings.length > 0),
+    [data, query, hasQuery],
+  )
+  const visibleCount = visibleGroups.reduce((n, g) => n + g.settings.length, 0)
 
   React.useEffect(() => {
     if (!data?.settings) return
@@ -1574,8 +1593,37 @@ const AdvancedSettingsTab: React.FC = () => {
         </div>
       )}
 
+      <div className="mb-4 relative">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+        <input
+          type="search"
+          data-testid="adv-search"
+          value={query}
+          onChange={e => onQueryChange(e.target.value)}
+          placeholder={t('set_adv_search_ph')}
+          aria-label={t('set_adv_search_ph')}
+          className="w-full bg-cyber-card border border-slate-600 rounded-lg pl-9 pr-9 py-2 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-hidden focus:border-blue-500"
+        />
+        {hasQuery && (
+          <button
+            type="button"
+            onClick={() => onQueryChange('')}
+            aria-label={t('set_search_clear')}
+            title={t('set_search_clear')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-sm text-slate-400 hover:text-white"
+          >
+            <X size={14} />
+          </button>
+        )}
+        {hasQuery && (
+          <p className="text-xs text-slate-500 mt-1" data-testid="adv-search-count">
+            {visibleCount > 0 ? t('set_search_found', { n: visibleCount }) : t('set_search_adv_none')}
+          </p>
+        )}
+      </div>
+
       <div className="space-y-6">
-        {(data?.groups || []).map(group => (
+        {visibleGroups.map(group => (
           <div key={group.id} className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-5">
             <h3 className="text-sm font-semibold text-blue-400 mb-4 uppercase tracking-wide">{group.label}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1584,7 +1632,7 @@ const AdvancedSettingsTab: React.FC = () => {
                   <label className="block text-sm text-slate-300 mb-1 flex flex-wrap items-center gap-2">
                     <span>{s.label}</span>
                     {s.requires_restart ? (
-                      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-sm bg-amber-500/15 text-amber-300 border border-amber-500/30">
                         recreate{s.restart_target ? `: ${s.restart_target}` : ''}
                       </span>
                     ) : null}
@@ -1594,7 +1642,7 @@ const AdvancedSettingsTab: React.FC = () => {
                       value={['1', 'true', 'yes', 'on'].includes(String(draft[s.key] ?? '').toLowerCase()) ? 'true' : 'false'}
                       disabled={!isAdmin}
                       onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
-                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-hidden focus:border-blue-500 disabled:opacity-60"
                     >
                       <option value="true">{t('enabled')}</option>
                       <option value="false">{t('disabled')}</option>
@@ -1604,7 +1652,7 @@ const AdvancedSettingsTab: React.FC = () => {
                       value={draft[s.key] ?? ''}
                       disabled={!isAdmin}
                       onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
-                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-hidden focus:border-blue-500 disabled:opacity-60"
                     >
                       {s.choices.map(c => (
                         <option key={c} value={c}>{c}</option>
@@ -1616,7 +1664,7 @@ const AdvancedSettingsTab: React.FC = () => {
                       value={draft[s.key] ?? ''}
                       disabled={!isAdmin}
                       onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
-                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-hidden focus:border-blue-500 disabled:opacity-60"
                     />
                   ) : (
                     <input
@@ -1627,7 +1675,7 @@ const AdvancedSettingsTab: React.FC = () => {
                       value={draft[s.key] ?? ''}
                       disabled={!isAdmin}
                       onChange={e => setDraft(prev => ({ ...prev, [s.key]: e.target.value }))}
-                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                      className="w-full bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-hidden focus:border-blue-500 disabled:opacity-60"
                     />
                   )}
                   <p className="text-xs text-slate-500 mt-1">
@@ -1662,6 +1710,10 @@ const Settings: React.FC = () => {
   const [guideErr, setGuideErr] = useState('')
   const [guideLang, setGuideLang] = useState<'tr' | 'en'>(locale === 'en' ? 'en' : 'tr')
   const [activeTab, setActiveTab] = useState('credentials')
+  // Ayarlar araması: kenar çubuğu (sekme + gelişmiş ayar eşleşmeleri) ve Gelişmiş sekmesi aynı sorguyu paylaşır
+  const [settingsQuery, setSettingsQuery] = useState('')
+  const settingsQueryActive = settingsQuery.trim().length >= 2
+  const { data: advSearchData } = useAdvancedSettingsQuery(settingsQueryActive)
   const { data: coverageMisses } = useQuery<{
     ok: boolean
     count: number
@@ -1679,7 +1731,7 @@ const Settings: React.FC = () => {
       if (!r.ok) return { ok: false, count: 0, misses: [] }
       return r.json()
     },
-    enabled: isAdmin && activeTab === 'about',
+    enabled: isAdmin && activeTab === 'chat-metrics',
     staleTime: 30000,
   })
   const [chatPerfId, setChatPerfId] = useState<string | null>(null)
@@ -1703,7 +1755,7 @@ const Settings: React.FC = () => {
       if (!r.ok) return { ok: false, count: 0, items: [] }
       return r.json()
     },
-    enabled: isAdmin && activeTab === 'about',
+    enabled: isAdmin && activeTab === 'chat-metrics',
     staleTime: 15000,
   })
   const { data: chatPerfDetail } = useQuery<{ ok: boolean; item?: Record<string, unknown> }>({
@@ -1713,7 +1765,7 @@ const Settings: React.FC = () => {
       if (!r.ok) return { ok: false }
       return r.json()
     },
-    enabled: isAdmin && activeTab === 'about' && !!chatPerfId,
+    enabled: isAdmin && activeTab === 'chat-metrics' && !!chatPerfId,
   })
   const [showForm, setShowForm] = useState(false)
   const [editingCred, setEditingCred] = useState<Credential | null>(null)
@@ -2137,14 +2189,24 @@ const Settings: React.FC = () => {
   }
 
   // Kurumsal Kimlik (marka adı + logo)
-  const { appName, logoUrl, version, refreshBranding } = useBranding()
+  const { appName, logoUrl, version, companyName, tagline, footerText, heroTitle, heroText, refreshBranding } = useBranding()
   const [brandingName, setBrandingName] = useState('')
+  const [brandingCompany, setBrandingCompany] = useState('')
+  const [brandingTagline, setBrandingTagline] = useState('')
+  const [brandingFooter, setBrandingFooter] = useState('')
+  const [brandingHeroTitle, setBrandingHeroTitle] = useState('')
+  const [brandingHeroText, setBrandingHeroText] = useState('')
   const [brandingNameSaving, setBrandingNameSaving] = useState(false)
   const [brandingNameSaved, setBrandingNameSaved] = useState(false)
   const [brandingError, setBrandingError] = useState('')
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoUploading, setLogoUploading] = useState(false)
   React.useEffect(() => { setBrandingName(appName) }, [appName])
+  React.useEffect(() => { setBrandingCompany(companyName) }, [companyName])
+  React.useEffect(() => { setBrandingTagline(tagline) }, [tagline])
+  React.useEffect(() => { setBrandingFooter(footerText) }, [footerText])
+  React.useEffect(() => { setBrandingHeroTitle(heroTitle) }, [heroTitle])
+  React.useEffect(() => { setBrandingHeroText(heroText) }, [heroText])
 
   const saveBrandingName = async () => {
     setBrandingError('')
@@ -2153,7 +2215,14 @@ const Settings: React.FC = () => {
       const res = await fetch(`${API_BASE_URL}/settings/branding`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_name: brandingName.trim() }),
+        body: JSON.stringify({
+          app_name: brandingName.trim(),
+          company_name: brandingCompany.trim(),
+          tagline: brandingTagline.trim(),
+          footer_text: brandingFooter.trim(),
+          hero_title: brandingHeroTitle.trim(),
+          hero_text: brandingHeroText.trim(),
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Kaydedilemedi')
@@ -2503,9 +2572,11 @@ const Settings: React.FC = () => {
     { id: 'rag', name: t('set_tab_rag') },
     { id: 'monitoring', name: t('set_tab_monitoring') },
     { id: 'security', name: t('set_tab_security') },
+    ...(isAdmin ? [{ id: 'bmc', name: t('set_tab_bmc') }] : []),
     { id: 'advanced', name: t('set_tab_advanced') },
     { id: 'about', name: t('set_tab_about') },
     ...(isAdmin ? [
+      { id: 'chat-metrics', name: t('set_tab_chat_metrics') },
       { id: 'platform-status', name: t('set_tab_platform') },
       { id: 'config-backup', name: t('set_tab_backup') },
       { id: 'platform-update', name: t('set_tab_update') },
@@ -2513,24 +2584,90 @@ const Settings: React.FC = () => {
     ] : []),
   ]
 
+  // Arama: sekme adı eşleşmesi + Gelişmiş ayar eşleşmeleri (ad/anahtar/açıklama)
+  const visibleTabs = settingsQuery.trim() ? tabs.filter(tb => matchesQuery([tb.name, tb.id], settingsQuery)) : tabs
+  const advSidebarAll = settingsQueryActive
+    ? (advSearchData?.groups || []).flatMap(g =>
+        g.settings.filter(s => advSettingMatches({ ...s, group_label: g.label }, settingsQuery))
+          .map(s => ({ key: s.key, label: s.label, group: g.label })))
+    : []
+  const ADV_SIDEBAR_MAX = 8
+  const advSidebarMatches = advSidebarAll.slice(0, ADV_SIDEBAR_MAX)
+
   return (
     <div className="flex gap-6 h-[calc(100vh-140px)]">
       {/* Sol Menu */}
-      <div className="w-64 bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden flex-shrink-0">
+      <div className="w-64 bg-cyber-card rounded-[10px] border border-white/[0.06] overflow-hidden shrink-0">
         <div className="p-4 border-b border-white/[0.06]">
-          <h2 className="text-lg font-semibold text-[var(--text-primary)]">{t('set_title')}</h2>
+          <h2 className="text-lg font-semibold text-(--text-primary)">{t('set_title')}</h2>
         </div>
-        <nav className="p-3">
-          {tabs.map(tab => (
+        <div className="px-3 pt-3"><div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+          <input
+            type="search"
+            data-testid="settings-search"
+            value={settingsQuery}
+            onChange={e => setSettingsQuery(e.target.value)}
+            placeholder={t('set_search_ph')}
+            aria-label={t('set_search_ph')}
+            className="w-full bg-cyber-deep/60 border border-slate-600 rounded-lg pl-8 pr-8 py-2 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-hidden focus:border-blue-500"
+          />
+          {settingsQuery && (
+            <button
+              type="button"
+              onClick={() => setSettingsQuery('')}
+              aria-label={t('set_search_clear')}
+              title={t('set_search_clear')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-sm text-slate-400 hover:text-white"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div></div>
+        <nav className="p-3 overflow-y-auto max-h-[calc(100vh-260px)]">
+          {settingsQuery.trim() && visibleTabs.length === 0 && advSidebarMatches.length === 0
+            && (!settingsQueryActive || advSearchData) && (
+            <p className="px-2 py-3 text-xs text-slate-500" data-testid="settings-search-none">
+              {t('set_search_none')}
+            </p>
+          )}
+          {visibleTabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               className={`w-full flex items-center px-4 py-2.5 rounded-lg text-left transition-all text-sm ${
                 activeTab === tab.id
                   ? (tab.id === 'danger' ? 'bg-red-600/20 text-red-400 border border-red-500/30' : 'bg-blue-600/20 text-blue-400 border border-blue-500/30')
-                  : (tab.id === 'danger' ? 'text-red-400/70 hover:text-red-400 hover:bg-red-500/10' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]')
+                  : (tab.id === 'danger' ? 'text-red-400/70 hover:text-red-400 hover:bg-red-500/10' : 'text-(--text-muted) hover:text-(--text-primary) hover:bg-(--bg-hover)')
               }`}>
               <span className="font-medium">{tab.name}</span>
             </button>
           ))}
+          {advSidebarMatches.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-white/[0.06]" data-testid="settings-search-adv">
+              <div className="px-2 pb-1 text-[10px] uppercase tracking-wide text-slate-500">{t('set_search_adv_results')}</div>
+              {advSidebarMatches.map(m => (
+                <button
+                  key={m.key}
+                  type="button"
+                  data-testid="settings-search-adv-item"
+                  onClick={() => setActiveTab('advanced')}
+                  title={m.key}
+                  className="w-full text-left px-3 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-(--bg-hover) hover:text-white"
+                >
+                  <div className="truncate">{m.label}</div>
+                  <div className="truncate text-[10px] text-slate-500">{m.group}</div>
+                </button>
+              ))}
+              {advSidebarAll.length > ADV_SIDEBAR_MAX && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('advanced')}
+                  className="w-full text-left px-3 py-1.5 text-xs text-blue-400 hover:text-blue-300"
+                >
+                  {t('set_search_more', { n: advSidebarAll.length - ADV_SIDEBAR_MAX })}
+                </button>
+              )}
+            </div>
+          )}
         </nav>
       </div>
 
@@ -2553,11 +2690,11 @@ const Settings: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   <button onClick={startSshTest}
                     disabled={sshTestRunning}
-                    className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
+                    className="px-3 py-2 bg-linear-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
                     {sshTestRunning ? t('set_testing_btn') : t('set_ssh_test_upd')}
                   </button>
                   <button onClick={() => { setShowForm(!showForm); setEditingCred(null); setForm({ name: '', username: '', password: '', private_key: '', sudo_password: '', port: 22 }) }}
-                    className="px-3 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm whitespace-nowrap">
+                    className="px-3 py-2 bg-linear-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm whitespace-nowrap">
                     {showForm ? t('set_cancel_x') : t('set_new_cred')}
                   </button>
                 </div>
@@ -2576,7 +2713,7 @@ const Settings: React.FC = () => {
                   <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden border border-white/[0.06]">
                     <div
                       className={`h-full transition-all duration-500 ease-out ${
-                        sshTest.status === 'error' ? 'bg-red-500' : 'bg-gradient-to-r from-emerald-500 to-emerald-400'
+                        sshTest.status === 'error' ? 'bg-red-500' : 'bg-linear-to-r from-emerald-500 to-emerald-400'
                       }`}
                       style={{ width: `${Math.max(sshTestRunning && sshTest.percent === 0 ? 2 : 0, Math.min(100, sshTest.percent))}%` }}
                     />
@@ -2606,35 +2743,35 @@ const Settings: React.FC = () => {
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">{t('name_star')}</label>
                         <input type="text" required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder={t('set_name_ph')} />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500" placeholder={t('set_name_ph')} />
                       </div>
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">{t('username_star')}</label>
                         <input type="text" required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="root" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500" placeholder="root" />
                       </div>
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">{t('set_ssh_port')}</label>
                         <input type="number" value={form.port} onChange={e => setForm({ ...form, port: parseInt(e.target.value) || 22 })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">{editingCred ? `${t('password_label')} ${t('empty_keep')}` : t('password_star')}</label>
                         <input type="password" required={!editingCred} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500" placeholder="••••••••" />
                       </div>
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">{t('set_sudo_opt')}</label>
                         <input type="password" value={form.sudo_password} onChange={e => setForm({ ...form, sudo_password: e.target.value })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder={t('optional')} />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500" placeholder={t('optional')} />
                       </div>
                     </div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-1.5">{t('set_pk_opt')}</label>
                       <textarea value={form.private_key} onChange={e => setForm({ ...form, private_key: e.target.value })}
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-mono text-xs"
                         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" rows={3} />
                     </div>
                     <div className="flex justify-between items-center pt-2">
@@ -2644,7 +2781,7 @@ const Settings: React.FC = () => {
                       <div className="flex gap-3 ml-auto">
                         <button type="button" onClick={resetForm} className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">{t('cancel')}</button>
                         <button type="submit" disabled={createCred.isPending || updateCred.isPending}
-                          className="px-6 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-sm">
+                          className="px-6 py-2 bg-linear-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-sm">
                           {(createCred.isPending || updateCred.isPending) ? t('saving') : t('save')}
                         </button>
                       </div>
@@ -2668,7 +2805,7 @@ const Settings: React.FC = () => {
                     <div key={cred.id} className={`rounded-xl border p-4 ${cred.is_default ? 'bg-blue-500/5 border-blue-500/30' : 'bg-cyber-deep/50 border-white/[0.06]'}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-4">
-                          <div className={`w-11 h-11 rounded-lg flex items-center justify-center ${cred.is_default ? 'bg-gradient-to-br from-blue-500 to-blue-600' : 'bg-gradient-to-br from-yellow-500 to-orange-500'}`}>
+                          <div className={`w-11 h-11 rounded-lg flex items-center justify-center ${cred.is_default ? 'bg-linear-to-br from-blue-500 to-blue-600' : 'bg-linear-to-br from-yellow-500 to-orange-500'}`}>
                             <span className="text-xs font-bold text-blue-400">KEY</span>
                           </div>
                           <div className="min-w-0">
@@ -2721,7 +2858,7 @@ const Settings: React.FC = () => {
                       <select
                         value={selectedModel}
                         onChange={e => setSelectedModel(e.target.value)}
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-blue-500"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 focus:outline-hidden focus:border-blue-500"
                       >
                         {availableModels.length === 0 && (
                           <option value={selectedModel}>{selectedModel}</option>
@@ -2818,7 +2955,7 @@ const Settings: React.FC = () => {
                         checked={remoteLlmForm.enabled}
                         onChange={e => setRemoteLlmForm(f => ({ ...f, enabled: e.target.checked }))}
                       />
-                      <div className="w-11 h-6 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+                      <div className="w-11 h-6 bg-slate-600 peer-focus:outline-hidden rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
                     </label>
                   </div>
                   <p className="text-xs text-slate-500 mb-4">{t('set_remote_hint')}</p>
@@ -2830,7 +2967,7 @@ const Settings: React.FC = () => {
                         value={remoteLlmForm.url}
                         onChange={e => setRemoteLlmForm(f => ({ ...f, url: e.target.value }))}
                         placeholder="https://llm-gateway.ornek-sirket.com"
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-hidden focus:border-blue-500"
                       />
                       <p className="text-xs text-slate-500 mt-1">{t('set_root_url')}</p>
                     </div>
@@ -2841,7 +2978,7 @@ const Settings: React.FC = () => {
                         value={remoteLlmForm.model}
                         onChange={e => setRemoteLlmForm(f => ({ ...f, model: e.target.value }))}
                         placeholder="vllm-gpt-oss/openai/gpt-oss-120b"
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-hidden focus:border-blue-500"
                       />
                     </div>
                     <div>
@@ -2857,7 +2994,7 @@ const Settings: React.FC = () => {
                             ? t('set_stored_change', { masked: generalSettings.remote_llm.virtual_key_masked || '••••' })
                             : 'sk-bf-… → x-bf-vk'
                         }
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-hidden focus:border-blue-500"
                       />
                       <p className="text-xs text-slate-500 mt-1">{t('set_vk_hint')}</p>
                       {generalSettings?.remote_llm?.virtual_key_set && (
@@ -2870,7 +3007,7 @@ const Settings: React.FC = () => {
                               clear_virtual_key: e.target.checked,
                               virtual_key: e.target.checked ? '' : f.virtual_key,
                             }))}
-                            className="rounded border-slate-600"
+                            className="rounded-sm border-slate-600"
                           />
                           {t('set_clear_vk')}
                         </label>
@@ -2885,7 +3022,7 @@ const Settings: React.FC = () => {
                         value={remoteLlmForm.api_key}
                         onChange={e => setRemoteLlmForm(f => ({ ...f, api_key: e.target.value }))}
                         placeholder={generalSettings?.remote_llm?.api_key_set ? t('set_stored_change', { masked: generalSettings.remote_llm.api_key_masked }) : t('set_auth_no_bearer')}
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-hidden focus:border-blue-500"
                       />
                       <p className="text-xs text-slate-500 mt-1">{t('set_gw_key_hint')}</p>
                     </div>
@@ -2900,7 +3037,7 @@ const Settings: React.FC = () => {
                             checked={remoteLlmForm.verify_ssl}
                             onChange={e => setRemoteLlmForm(f => ({ ...f, verify_ssl: e.target.checked }))}
                           />
-                          <div className="w-11 h-6 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+                          <div className="w-11 h-6 bg-slate-600 peer-focus:outline-hidden rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
                         </label>
                       </div>
                       <p className="text-xs text-slate-500 mb-3">{t('set_ssl_hint')}</p>
@@ -2910,7 +3047,7 @@ const Settings: React.FC = () => {
                         value={remoteLlmForm.ca_bundle}
                         onChange={e => setRemoteLlmForm(f => ({ ...f, ca_bundle: e.target.value }))}
                         placeholder="/app/certs/remote-llm-ca.pem"
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-hidden focus:border-blue-500"
                       />
                       <p className="text-xs text-slate-500 mt-1">{t('set_ca_hint')}</p>
                     </div>
@@ -2961,31 +3098,102 @@ const Settings: React.FC = () => {
               <p className="text-slate-400 text-sm mb-6">{t('set_brand_intro')}</p>
               <div className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-6 max-w-2xl">
                 <div className="space-y-5">
-                  <div>
-                    <label className="block text-sm text-slate-300 mb-2">{t('set_app_name')}</label>
-                    <div className="flex items-center gap-3">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_app_name')}</label>
                       <input
                         type="text"
                         value={brandingName}
                         onChange={e => setBrandingName(e.target.value)}
                         maxLength={64}
-                        placeholder="datatem AI"
-                        className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-none focus:border-blue-500"
+                        placeholder="ainew"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-hidden focus:border-blue-500"
                       />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_company_name')}</label>
+                      <input
+                        type="text"
+                        value={brandingCompany}
+                        onChange={e => setBrandingCompany(e.target.value)}
+                        maxLength={64}
+                        placeholder={t('login_default_company')}
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-hidden focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">{t('set_company_name_hint')}</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_tagline')}</label>
+                      <input
+                        type="text"
+                        value={brandingTagline}
+                        onChange={e => setBrandingTagline(e.target.value)}
+                        maxLength={80}
+                        placeholder={t('login_eyebrow')}
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-hidden focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">{t('set_tagline_hint')}</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_hero_title')}</label>
+                      <input
+                        type="text"
+                        data-testid="set-hero-title"
+                        value={brandingHeroTitle}
+                        onChange={e => setBrandingHeroTitle(e.target.value)}
+                        maxLength={120}
+                        placeholder={t('login_hero_title')}
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-hidden focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">{t('set_hero_title_hint')}</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_hero_text')}</label>
+                      <textarea
+                        data-testid="set-hero-text"
+                        value={brandingHeroText}
+                        onChange={e => setBrandingHeroText(e.target.value)}
+                        maxLength={320}
+                        rows={3}
+                        placeholder={t('login_hero_text')}
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-hidden focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">{t('set_hero_text_hint')}</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">{t('set_footer_text')}</label>
+                      <input
+                        type="text"
+                        value={brandingFooter}
+                        onChange={e => setBrandingFooter(e.target.value)}
+                        maxLength={160}
+                        placeholder={t('login_default_footer', { year: new Date().getFullYear() })}
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm focus:outline-hidden focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">{t('set_footer_text_hint')}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
                       <button
                         onClick={saveBrandingName}
                         disabled={brandingNameSaving || !brandingName.trim()}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap">
                         {brandingNameSaving ? t('saving') : t('save')}
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => { setBrandingCompany(''); setBrandingTagline(''); setBrandingFooter('') }}
+                        className="px-4 py-2 bg-white/[0.07] hover:bg-slate-600 border border-slate-600 text-slate-300 text-sm font-medium rounded-lg transition-colors whitespace-nowrap">
+                        {t('set_brand_reset')}
+                      </button>
+                      {brandingNameSaved && <span className="text-green-400 text-sm">{t('saved')}</span>}
                     </div>
-                    {brandingNameSaved && <p className="text-green-400 text-sm mt-2">{t('saved')}</p>}
+                    <p className="text-xs text-slate-500">{t('set_brand_login_preview')}</p>
                   </div>
 
                   <div>
                     <label className="block text-sm text-slate-300 mb-2">{t('set_logo')}</label>
                     <div className="flex items-center gap-4">
-                      <div className="w-28 h-28 rounded-xl bg-cyber-card border border-slate-600 flex items-center justify-center overflow-hidden flex-shrink-0 p-2">
+                      <div className="w-28 h-28 rounded-xl bg-cyber-card border border-slate-600 flex items-center justify-center overflow-hidden shrink-0 p-2">
                         {logoUrl ? (
                           <img src={logoUrl} alt={appName} className="w-full h-full object-contain" />
                         ) : (
@@ -3038,7 +3246,7 @@ const Settings: React.FC = () => {
                       <button
                         onClick={() => applyWinrm.mutate()}
                         disabled={applyWinrm.isPending}
-                        className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
+                        className="px-3 py-2 bg-linear-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-500 hover:to-emerald-600 transition-all text-sm disabled:opacity-50 whitespace-nowrap">
                         {applyWinrm.isPending ? t('applying') : <span className="inline-flex items-center gap-1.5"><Monitor size={14} strokeWidth={2} /> {t('set_apply_all')}</span>}
                       </button>
                     )}
@@ -3048,7 +3256,7 @@ const Settings: React.FC = () => {
                         setWinrmEditing(true)
                         setWinrmApplyResult(null)
                       }}
-                      className="px-3 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm whitespace-nowrap">
+                      className="px-3 py-2 bg-linear-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all text-sm whitespace-nowrap">
                       {winrmCred?.configured ? t('set_edit_pencil') : t('set_add_cred_plus')}
                     </button>
                   </div>
@@ -3067,27 +3275,27 @@ const Settings: React.FC = () => {
                         <label className="block text-sm text-slate-300 mb-1.5">{t('username_star')}</label>
                         <input type="text" required value={winrmForm.username}
                           onChange={e => setWinrmForm({ ...winrmForm, username: e.target.value })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                           placeholder={t('set_winrm_user_ph')} />
                       </div>
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">{winrmCred?.configured ? `${t('password_label')} ${t('empty_keep')}` : t('password_star')}</label>
                         <input type="password" value={winrmForm.password}
                           onChange={e => setWinrmForm({ ...winrmForm, password: e.target.value })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                           placeholder="••••••••" />
                       </div>
                       <div>
                         <label className="block text-sm text-slate-300 mb-1.5">{t('set_winrm_port')}</label>
                         <input type="number" value={winrmForm.port}
                           onChange={e => setWinrmForm({ ...winrmForm, port: parseInt(e.target.value) || 5985 })}
-                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                          className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <input type="checkbox" id="winrm-https" checked={winrmForm.use_https}
                         onChange={e => setWinrmForm({ ...winrmForm, use_https: e.target.checked })}
-                        className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
+                        className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded-sm" />
                       <label htmlFor="winrm-https" className="text-sm text-slate-300 cursor-pointer">
                         {t('set_use_https')} <span className="text-slate-500">{t('set_https_need')}</span>
                       </label>
@@ -3102,7 +3310,7 @@ const Settings: React.FC = () => {
                         <button
                           onClick={() => saveWinrm.mutate(winrmForm)}
                           disabled={saveWinrm.isPending || !winrmForm.username || (!winrmForm.password && !winrmCred?.configured)}
-                          className="px-6 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-sm">
+                          className="px-6 py-2 bg-linear-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 text-sm">
                           {saveWinrm.isPending ? t('saving') : t('save')}
                         </button>
                       </div>
@@ -3135,7 +3343,7 @@ const Settings: React.FC = () => {
                   <div className="rounded-xl border bg-blue-500/5 border-blue-500/30 p-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-4">
-                        <div className="w-11 h-11 rounded-lg flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-600">
+                        <div className="w-11 h-11 rounded-lg flex items-center justify-center bg-linear-to-br from-blue-500 to-blue-600">
                           <span className="text-xs font-bold text-white">WIN</span>
                         </div>
                         <div className="min-w-0">
@@ -3205,7 +3413,7 @@ const Settings: React.FC = () => {
                         value={promForm.prometheus_url}
                         onChange={e => setPromForm(f => ({ ...f, prometheus_url: e.target.value }))}
                         placeholder="http://prometheus:9090"
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-hidden focus:border-blue-500"
                       />
                     </div>
                     <div>
@@ -3218,7 +3426,7 @@ const Settings: React.FC = () => {
                         value={promForm.pushgateway_url}
                         onChange={e => setPromForm(f => ({ ...f, pushgateway_url: e.target.value }))}
                         placeholder="http://pushgateway:9091"
-                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                        className="w-full bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-hidden focus:border-blue-500"
                       />
                       <p className="text-xs text-slate-500 mt-1">{t('set_pg_hint')}</p>
                     </div>
@@ -3268,7 +3476,7 @@ const Settings: React.FC = () => {
                             }
                           }}
                           placeholder={t('set_job_ph')}
-                          className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                          className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-hidden focus:border-blue-500"
                         />
                         <button
                           type="button"
@@ -3334,7 +3542,7 @@ const Settings: React.FC = () => {
                             }
                           }}
                           placeholder={t('set_job_ph')}
-                          className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-none focus:border-blue-500"
+                          className="flex-1 bg-cyber-card border border-slate-600 rounded-lg px-4 py-2 text-slate-200 text-sm font-mono focus:outline-hidden focus:border-blue-500"
                         />
                         <button
                           type="button"
@@ -3415,7 +3623,7 @@ const Settings: React.FC = () => {
                               <input
                                 value={s.label}
                                 onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))}
-                                className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
+                                className="w-full bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm text-slate-200"
                               />
                             </div>
                             <div className="md:col-span-2">
@@ -3431,7 +3639,7 @@ const Settings: React.FC = () => {
                                     ? false
                                     : (x.binding === 'openshift' || x.binding === 'virtualization') ? true : x.verify_ssl,
                                 } : x))}
-                                className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
+                                className="w-full bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm text-slate-200"
                               >
                                 <option value="windows">Windows</option>
                                 <option value="openshift">OpenShift</option>
@@ -3445,7 +3653,7 @@ const Settings: React.FC = () => {
                                 <select
                                   value={s.collector_type}
                                   onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, collector_type: e.target.value } : x))}
-                                  className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
+                                  className="w-full bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm text-slate-200"
                                 >
                                   <option value="prometheus">Prometheus</option>
                                   <option value="telegraf">Telegraf</option>
@@ -3461,7 +3669,7 @@ const Settings: React.FC = () => {
                               <input
                                 value={s.url}
                                 onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, url: e.target.value } : x))}
-                                className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                className="w-full bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm font-mono text-slate-200"
                                 placeholder={isZabbix ? 'https://zabbix.example/api_jsonrpc.php' : 'https://prometheus.example:9090'}
                               />
                             </div>
@@ -3503,7 +3711,7 @@ const Settings: React.FC = () => {
                                   type="password"
                                   value={s.token}
                                   onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, token: e.target.value } : x))}
-                                  className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                  className="w-full bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm font-mono text-slate-200"
                                   placeholder="••••••••"
                                 />
                               </div>
@@ -3515,7 +3723,7 @@ const Settings: React.FC = () => {
                                   <input
                                     value={s.username}
                                     onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, username: e.target.value } : x))}
-                                    className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200"
+                                    className="w-full bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm text-slate-200"
                                     placeholder="Admin"
                                   />
                                 </div>
@@ -3527,7 +3735,7 @@ const Settings: React.FC = () => {
                                     type="password"
                                     value={s.password}
                                     onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, password: e.target.value } : x))}
-                                    className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                    className="w-full bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm font-mono text-slate-200"
                                     placeholder="••••••••"
                                   />
                                 </div>
@@ -3539,7 +3747,7 @@ const Settings: React.FC = () => {
                                     type="password"
                                     value={s.token}
                                     onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, token: e.target.value } : x))}
-                                    className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                    className="w-full bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm font-mono text-slate-200"
                                     placeholder={t('set_mon_zabbix_token_ph')}
                                   />
                                 </div>
@@ -3551,7 +3759,7 @@ const Settings: React.FC = () => {
                                 type="checkbox"
                                 checked={s.verify_ssl}
                                 onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, verify_ssl: e.target.checked } : x))}
-                                className="rounded border-slate-600"
+                                className="rounded-sm border-slate-600"
                               />
                               <label htmlFor={`verify-ssl-${key}`} className="text-[10px] text-slate-400">
                                 {t('set_mon_verify_ssl')}
@@ -3604,7 +3812,7 @@ const Settings: React.FC = () => {
                                       }
                                     }}
                                     placeholder={t('set_mon_job_ph')}
-                                    className="flex-1 bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                    className="flex-1 bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm font-mono text-slate-200"
                                   />
                                   <button
                                     type="button"
@@ -3618,7 +3826,7 @@ const Settings: React.FC = () => {
                                         } : x))
                                       }
                                     }}
-                                    className="px-2 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-white"
+                                    className="px-2 py-1.5 text-xs rounded-sm bg-slate-700 hover:bg-slate-600 text-white"
                                   >
                                     {t('add')}
                                   </button>
@@ -3630,7 +3838,7 @@ const Settings: React.FC = () => {
                                   value={s.extra_selectors}
                                   onChange={(e) => setExtraSources((arr) => arr.map((x, i) => i === idx ? { ...x, extra_selectors: e.target.value } : x))}
                                   placeholder={t('set_mon_extra_sel_ph')}
-                                  className="w-full bg-cyber-deep border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200"
+                                  className="w-full bg-cyber-deep border border-slate-600 rounded-sm px-2 py-1.5 text-sm font-mono text-slate-200"
                                 />
                                 <p className="text-[10px] text-slate-600 mt-0.5">{t('set_mon_extra_sel_hint')}</p>
                               </div>
@@ -3684,7 +3892,7 @@ const Settings: React.FC = () => {
                           defaultValue={generalSettings?.management_server_ip || ''}
                           id="mgmt-ip-input"
                           placeholder={generalSettings?.detected_management_ip || '192.168.1.x'}
-                          className="bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 w-48 font-mono"
+                          className="bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-hidden focus:border-blue-500 w-48 font-mono"
                         />
                         <button
                           onClick={async () => {
@@ -3711,7 +3919,7 @@ const Settings: React.FC = () => {
                         <select
                           value={metricRetentionDays}
                           onChange={e => setMetricRetentionDays(Number(e.target.value))}
-                          className="bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500"
+                          className="bg-cyber-card border border-slate-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-hidden focus:border-blue-500"
                         >
                           <option value={7}>{t('days_n', { n: 7 })}</option>
                           <option value={15}>{t('days_n', { n: 15 })}</option>
@@ -3744,7 +3952,7 @@ const Settings: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <a href={`${window.location.protocol}//${window.location.hostname}:9090`} target="_blank" rel="noopener noreferrer" className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
-                    <div className="w-8 h-8 rounded bg-orange-500/20 flex items-center justify-center flex-shrink-0"></div><div><p className="text-white font-medium">Prometheus</p><p className="text-slate-400 text-sm">{t('set_metrics_queries')}</p></div>
+                    <div className="w-8 h-8 rounded-sm bg-orange-500/20 flex items-center justify-center shrink-0"></div><div><p className="text-white font-medium">Prometheus</p><p className="text-slate-400 text-sm">{t('set_metrics_queries')}</p></div>
                   </a>
                   <a href={`${window.location.protocol}//${window.location.hostname}:9091`} target="_blank" rel="noopener noreferrer" className="bg-cyber-deep/50 rounded-[10px] border border-white/[0.06] p-4 hover:border-slate-600 transition-colors flex items-center space-x-3">
                     <BarChart3 size={24} strokeWidth={1.8} className="text-slate-300" /><div><p className="text-white font-medium">Pushgateway</p><p className="text-slate-400 text-sm">{t('set_push_metrics')}</p></div>
@@ -3759,9 +3967,12 @@ const Settings: React.FC = () => {
             <SecuritySettings />
           )}
 
+          {/* ═══ BMC kimlikleri (global / Dell / HPE) — yalnız admin ═══ */}
+          {activeTab === 'bmc' && isAdmin && <BmcSettingsTab />}
+
           {/* ═══ Gelişmiş Ayarlar ═══ */}
           {activeTab === 'advanced' && (
-            <AdvancedSettingsTab />
+            <AdvancedSettingsTab query={settingsQuery} onQueryChange={setSettingsQuery} />
           )}
 
           {/* ═══ Platform Durumu / Yedek / Update ═══ */}
@@ -3786,7 +3997,7 @@ const Settings: React.FC = () => {
                   {logoUrl ? (
                     <img src={logoUrl} alt={appName} className="w-16 h-16 rounded-2xl object-contain shadow-lg bg-cyber-card border border-white/[0.06]" />
                   ) : (
-                    <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
+                    <div className="w-16 h-16 bg-linear-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
                       <span className="text-white font-bold text-2xl">SM</span>
                     </div>
                   )}
@@ -3814,14 +4025,14 @@ const Settings: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setGuideLang('tr')}
-                        className={`px-2.5 py-1 rounded text-xs font-medium border ${guideLang === 'tr' ? 'bg-blue-600/30 text-blue-200 border-blue-500/50' : 'border-white/10 text-slate-400'}`}
+                        className={`px-2.5 py-1 rounded-sm text-xs font-medium border ${guideLang === 'tr' ? 'bg-blue-600/30 text-blue-200 border-blue-500/50' : 'border-white/10 text-slate-400'}`}
                       >
                         TR
                       </button>
                       <button
                         type="button"
                         onClick={() => setGuideLang('en')}
-                        className={`px-2.5 py-1 rounded text-xs font-medium border ${guideLang === 'en' ? 'bg-blue-600/30 text-blue-200 border-blue-500/50' : 'border-white/10 text-slate-400'}`}
+                        className={`px-2.5 py-1 rounded-sm text-xs font-medium border ${guideLang === 'en' ? 'bg-blue-600/30 text-blue-200 border-blue-500/50' : 'border-white/10 text-slate-400'}`}
                       >
                         EN
                       </button>
@@ -3879,7 +4090,19 @@ const Settings: React.FC = () => {
                       ))}
                     </div>
                     {guideErr && <p className="text-xs text-red-400 mt-2">{guideErr}</p>}
-                    <div className="mt-6 pt-5 border-t border-white/[0.06]">
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ═══ Sohbet Ölçümü (önceden Hakkında altındaydı; operasyonel veri) ═══ */}
+          {activeTab === 'chat-metrics' && isAdmin && (
+            <div>
+              <h2 className="text-xl font-semibold text-white mb-1">{t('set_chat_perf_title')}</h2>
+              <p className="text-sm text-slate-400 mb-3">{t('set_chat_perf_desc')}</p>
+              <p className="text-xs text-slate-500 mb-4">{t('set_chat_perf_worker_note')}</p>
+              <div className="pt-2">
                       <p className="text-sm font-medium text-slate-200">{t('set_chat_perf_title')}</p>
                       <p className="text-xs text-slate-400 mt-1 mb-3">{t('set_chat_perf_desc')}</p>
                       {(chatPerfList?.count || 0) === 0 ? (
@@ -3959,9 +4182,6 @@ const Settings: React.FC = () => {
                           </table>
                         </div>
                       )}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -3975,7 +4195,7 @@ const Settings: React.FC = () => {
 
       {/* ═══ Apply Modal (Linux SSH only) ═══ */}
       {applyModal.open && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50">
           <div className="bg-cyber-card rounded-[10px] border border-white/[0.06] p-6 w-full max-w-2xl shadow-2xl max-h-[80vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -4009,10 +4229,10 @@ const Settings: React.FC = () => {
                   <label key={s.id} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-white/[0.06]/50 border-b border-white/[0.04] last:border-b-0 ${selectedServerIds.includes(s.id) ? 'bg-blue-500/10' : ''}`}>
                     <input type="checkbox" checked={selectedServerIds.includes(s.id)}
                       onChange={() => setSelectedServerIds(prev => prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id])}
-                      className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
+                      className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded-sm" />
                     <span className="text-sm text-white">{s.name}</span>
                     <span className="text-xs text-slate-500 font-mono">{s.ip_address}</span>
-                    {s.ai_ready && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 ml-auto">AI</span>}
+                    {s.ai_ready && <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-blue-500/20 text-blue-400 border border-blue-500/30 ml-auto">AI</span>}
                   </label>
                 ))}
                 {linuxServers.length === 0 && (
@@ -4023,7 +4243,7 @@ const Settings: React.FC = () => {
 
             <div className="flex items-center gap-2 mb-2">
               <input type="checkbox" checked={setAiReady} onChange={e => setSetAiReady(e.target.checked)}
-                className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded" />
+                className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded-sm" />
               <span className="text-sm text-slate-300">{t('set_mark_ai')}</span>
             </div>
             {setAiReady && (
@@ -4042,7 +4262,7 @@ const Settings: React.FC = () => {
                 aiReady: setAiReady,
               })}
                 disabled={applyCred.isPending || linuxServers.length === 0 || (applyMode === 'select' && selectedServerIds.length === 0)}
-                className="px-6 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 font-medium text-sm">
+                className="px-6 py-2.5 bg-linear-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 disabled:opacity-50 font-medium text-sm">
                 {applyCred.isPending ? t('applying') : t('set_apply_n_linux', { n: applyMode === 'all' ? linuxServers.length : selectedServerIds.length })}
               </button>
             </div>

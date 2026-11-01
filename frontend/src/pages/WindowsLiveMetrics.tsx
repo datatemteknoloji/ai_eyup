@@ -47,7 +47,7 @@ const MetricBar: React.FC<{ value: number | null }> = ({ value }) => {
 
 const SummaryCard: React.FC<{ icon: React.ReactNode; label: string; value: string | number; accent: string }> = ({ icon, label, value, accent }) => (
   <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-center gap-3">
-    <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${accent}20`, color: accent }}>
+    <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${accent}20`, color: accent }}>
       {icon}
     </div>
     <div>
@@ -159,7 +159,7 @@ const WindowsLiveMetrics: React.FC<{ embedded?: boolean }> = ({ embedded = false
                   <tr key={srv.id} className="hover:bg-slate-700/30 transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${hasData ? 'bg-green-400 animate-pulse' : 'bg-slate-600'}`} />
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${hasData ? 'bg-green-400 animate-pulse' : 'bg-slate-600'}`} />
                         <div>
                           <div className="text-sm font-semibold text-white">{srv.name}</div>
                           <div className="text-xs text-slate-500 font-mono">{srv.ip_address || '—'}</div>

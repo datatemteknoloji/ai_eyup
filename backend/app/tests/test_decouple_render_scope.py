@@ -51,7 +51,7 @@ def _patch_agent_tools(monkeypatch):
 def _run(question, tool_names):
     steps = {"n": 0}
 
-    def _fake_chat_with_tools(model, messages, tools, timeout=90):
+    def _fake_chat_with_tools(model, messages, tools, timeout=90, **kw):
         steps["n"] += 1
         if steps["n"] == 1:
             return {

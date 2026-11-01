@@ -16,9 +16,9 @@ export function OpsLockedServer({
     ? `${s.hostname}${s.ip ? ` · ${s.ip}` : ""}`
     : serverId || "—";
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--theme-inset,var(--bg-deep))] px-3 py-2">
-      <p className="text-[11px] text-[var(--color-muted-foreground)]">{t("server")}</p>
-      <p className="mt-0.5 font-mono text-sm text-[var(--color-foreground)]">{line}</p>
+    <div className="rounded-lg border border-(--color-border) bg-(--theme-inset,var(--bg-deep)) px-3 py-2">
+      <p className="text-[11px] text-(--color-muted-foreground)">{t("server")}</p>
+      <p className="mt-0.5 font-mono text-sm text-(--color-foreground)">{line}</p>
     </div>
   );
 }

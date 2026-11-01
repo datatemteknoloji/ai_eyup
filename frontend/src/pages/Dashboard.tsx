@@ -12,7 +12,9 @@ import { ServerDetailDrawer } from './Servers'
 import { useAuth } from '../auth/AuthContext'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import type { TranslationKey } from '../i18n/messages'
-import { virtHostIpHint, virtHostTitle } from '../lib/virtHostLabel'
+import { useCapabilities } from '../hooks/useCapabilities'
+import { HostsPanel, HwAlarmPanel, HypervisorTree } from '../components/dashboard/HostHierarchy'
+import { EnvStatusBreakdown, HoverTip, HypervisorNamesTip, inventoryTip, TotalCapacityCard, useCapacityOverview, type CapacityOverview } from '../components/dashboard/CapacityBreakdown'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface DashboardServer {
@@ -23,18 +25,6 @@ interface DashboardServer {
   created_at?: string
 }
 interface Hypervisor { id: number; name: string; type: string; ip_address: string }
-interface EsxHost {
-  host_name: string; host_ref?: string; last_updated?: string
-  display_name?: string | null; ip_address?: string | null; roles?: string[]
-  cpu_usage_pct: number | null; cpu_usage_mhz: number | null; cpu_total_mhz: number | null
-  cpu_cores: number | null; mem_used_mb: number | null; mem_total_mb: number | null
-  mem_usage_pct: number | null; ds_used_gb: number | null; ds_total_gb: number | null
-  ds_usage_pct: number | null; vms_running: number | null; vms_total: number | null
-  connection_state: string | null; power_state: string | null; maintenance_mode: number | null
-}
-interface EsxHostMetricsResponse {
-  hypervisor_id: number; hypervisor_name: string; host_count: number; hosts: EsxHost[]
-}
 interface EventStats {
   total: number; unresolved: number; critical: number; warning: number
   emergency: number; acknowledged: number; known: number
@@ -72,6 +62,18 @@ function isWindowsOs(s: DashboardServer) {
   return (s.os_type || '').toLowerCase().includes('windows')
 }
 
+function hypervisorTypeLabel(
+  tp: string,
+  t: (key: TranslationKey, vars?: Record<string, string | number>) => string,
+): string {
+  if (tp === 'vmware') return t('dash_hv_vmware')
+  if (tp === 'kvm') return t('dash_hv_olvm')
+  if (tp === 'openshift_virt') return t('dash_hv_ocp_virt')
+  if (tp === 'proxmox') return 'Proxmox'
+  if (tp === 'hyperv') return 'Hyper-V'
+  return tp
+}
+
 function hypervisorTypeBreakdown(
   hypervisors: { type?: string }[],
   t: (key: TranslationKey, vars?: Record<string, string | number>) => string,
@@ -81,14 +83,7 @@ function hypervisorTypeBreakdown(
     const tp = (h.type || '').toLowerCase() || 'other'
     counts.set(tp, (counts.get(tp) || 0) + 1)
   }
-  const labelFor = (tp: string) => {
-    if (tp === 'vmware') return t('dash_hv_vmware')
-    if (tp === 'kvm') return t('dash_hv_olvm')
-    if (tp === 'openshift_virt') return t('dash_hv_ocp_virt')
-    if (tp === 'proxmox') return 'Proxmox'
-    if (tp === 'hyperv') return 'Hyper-V'
-    return tp
-  }
+  const labelFor = (tp: string) => hypervisorTypeLabel(tp, t)
   const preferred = ['vmware', 'kvm', 'openshift_virt', 'proxmox', 'hyperv']
   const keys = [
     ...preferred.filter((k) => counts.has(k)),
@@ -141,7 +136,7 @@ function StatCard({
           {sub && <p className="text-xs mt-1.5" style={{ color: `${accent}99` }}>{sub}</p>}
         </div>
         <div
-          className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+          className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
           style={{ background: `rgba(${hexToRgb(accent)}, 0.12)`, color: accent }}
         >
           {icon ?? <DonutGauge pct={Math.min(100, typeof value === 'number' ? value : 50)} color={accent} size={36} strokeWidth={4} />}
@@ -171,7 +166,7 @@ function DonutGauge({
   const getColor = (p: number) => p >= 90 ? NEON.red : p >= 75 ? NEON.orange : color
 
   return (
-    <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
         {/* Track */}
         <circle
@@ -205,176 +200,10 @@ function DonutGauge({
   )
 }
 
-// ── ESX Host Card ──────────────────────────────────────────────────────────
-function EsxHostCard({ hvName, host }: { hvName: string; host: EsxHost }) {
-  const t = useT()
-  const { locale } = useLocale()
-  const dateLoc = locale === 'en' ? 'en-GB' : 'tr-TR'
-  const inMaint = host.maintenance_mode === 1
-  const disconnected = host.connection_state === 'disconnected' || host.connection_state === 'notResponding'
-  const shortName = virtHostTitle(host)
-  const ipHint = virtHostIpHint(host)
-  const cpuPct = host.cpu_usage_pct ?? (host.cpu_usage_mhz && host.cpu_total_mhz ? (host.cpu_usage_mhz / host.cpu_total_mhz) * 100 : 0)
-  const ramPct = host.mem_usage_pct ?? (host.mem_used_mb && host.mem_total_mb ? (host.mem_used_mb / host.mem_total_mb) * 100 : 0)
-  const dskPct = host.ds_usage_pct ?? (host.ds_used_gb && host.ds_total_gb ? (host.ds_used_gb / host.ds_total_gb) * 100 : 0)
-
-  return (
-    <div
-      className="cyber-card p-4 animate-fade-in"
-      style={{ opacity: disconnected ? 0.6 : 1 }}
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div
-            className="w-2 h-2 rounded-full"
-            style={{
-              background: disconnected ? NEON.red : inMaint ? NEON.orange : NEON.green,
-              boxShadow: `0 0 6px ${disconnected ? NEON.red : inMaint ? NEON.orange : NEON.green}`,
-            }}
-          />
-          <span className="font-semibold text-white text-sm">{shortName}</span>
-          <span className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>
-            {ipHint ? `${ipHint} · ${hvName}` : hvName}
-          </span>
-          {(host.roles || []).map((role) => (
-            <span
-              key={role}
-              className="px-1.5 py-0.5 rounded text-[10px] font-medium"
-              style={{ background: 'rgba(244,63,94,0.12)', color: '#fb7185', border: '1px solid rgba(244,63,94,0.28)' }}
-            >
-              {role === 'master' ? t('dash_role_master') : role === 'infra' ? t('dash_role_infra') : role === 'worker' ? t('dash_role_worker') : role}
-            </span>
-          ))}
-          {inMaint && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium"
-              style={{ background: 'rgba(245,158,11,0.15)', color: NEON.orange, border: '1px solid rgba(245,158,11,0.3)' }}>
-              {t('dash_maint')}
-            </span>
-          )}
-        </div>
-        {host.vms_running != null && (
-          <span className="text-xs font-medium px-2 py-0.5 rounded"
-            style={{ background: 'rgba(34,211,238,0.08)', color: NEON.cyan, border: '1px solid rgba(34,211,238,0.2)' }}>
-            {host.vms_running}/{host.vms_total ?? '?'} VM
-          </span>
-        )}
-      </div>
-
-      {/* Gauges row */}
-      <div className="flex items-center justify-around">
-        <div className="flex flex-col items-center gap-1.5">
-          <DonutGauge pct={cpuPct} color={NEON.blue} size={68} strokeWidth={6} />
-          <span className="text-[10px] text-slate-500 font-medium">CPU</span>
-          {host.cpu_total_mhz != null && (
-            <span className="text-[9px] text-slate-600">
-              {host.cpu_total_mhz >= 1000 ? `${(host.cpu_total_mhz/1000).toFixed(1)}G` : `${host.cpu_total_mhz}M`}
-            </span>
-          )}
-        </div>
-        <div className="flex flex-col items-center gap-1.5">
-          <DonutGauge pct={ramPct} color={NEON.blue} size={68} strokeWidth={6} />
-          <span className="text-[10px] text-slate-500 font-medium">Memory</span>
-          {host.mem_total_mb != null && (
-            <span className="text-[9px] text-slate-600">{(host.mem_total_mb/1024).toFixed(0)}GB</span>
-          )}
-        </div>
-        <div className="flex flex-col items-center gap-1.5">
-          <DonutGauge pct={dskPct} color={NEON.green} size={68} strokeWidth={6} />
-          <span className="text-[10px] text-slate-500 font-medium">Disk</span>
-          {host.ds_total_gb != null && (
-            <span className="text-[9px] text-slate-600">
-              {host.ds_total_gb >= 1024 ? `${(host.ds_total_gb/1024).toFixed(1)}T` : `${host.ds_total_gb.toFixed(0)}G`}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Last updated */}
-      {host.last_updated && (
-        <p className="text-[10px] text-slate-600 text-center mt-3">
-          {t('dash_updated_at', { time: new Date(host.last_updated).toLocaleTimeString(dateLoc, { hour: '2-digit', minute: '2-digit' }) })}
-        </p>
-      )}
-    </div>
-  )
-}
-
-// ── ESX Panel ──────────────────────────────────────────────────────────────
-function EsxResourcePanel({ hypervisors }: { hypervisors: Hypervisor[] }) {
-  const t = useT()
-  const virtHvs = hypervisors.filter(hv => {
-    const tp = hv.type?.toLowerCase() || ''
-    return tp === 'vmware' || tp === 'kvm' || tp === 'openshift_virt'
-  })
-  const [allHosts, setAllHosts] = useState<{ hvName: string; host: EsxHost }[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-
-  const load = () => {
-    if (virtHvs.length === 0) { setIsLoading(false); return }
-    fetch(`${API_BASE_URL}/hypervisors/host-metrics`)
-      .then(r => r.ok ? r.json() : null)
-      .then((data: { hosts?: { hvName: string; host: EsxHost }[] } | null) => {
-        setAllHosts((data?.hosts || []).map(row => ({ hvName: row.hvName, host: row.host })))
-        setIsLoading(false)
-      })
-      .catch(() => { setAllHosts([]); setIsLoading(false) })
-  }
-
-  useEffect(() => {
-    load()
-    const t = setInterval(load, 15 * 60 * 1000)
-    return () => clearInterval(t)
-  }, [hypervisors.map(h => h.id).join(',')])
-
-  if (virtHvs.length === 0) return null
-
-  return (
-    <div className="cyber-card">
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
-        <div className="flex items-center gap-3">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{ background: 'rgba(59,130,246,0.15)', color: NEON.blue }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-4 h-4">
-              <rect x="2" y="3" width="20" height="5" rx="1"/><rect x="2" y="10" width="20" height="5" rx="1"/>
-              <rect x="2" y="17" width="20" height="5" rx="1"/>
-            </svg>
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold text-white">{t('dash_esx_title')}</h2>
-            <p className="text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('dash_esx_sub')}</p>
-          </div>
-        </div>
-        {isLoading && (
-          <div className="flex items-center gap-2 text-xs" style={{ color: 'rgba(148,163,184,0.5)' }}>
-            <div className="animate-spin rounded-full h-3 w-3 border border-b-cyan-400 border-white/[0.06]" />
-            {t('loading')}
-          </div>
-        )}
-      </div>
-
-      {!allHosts.length && !isLoading ? (
-        <div className="px-5 py-10 text-center" style={{ color: 'rgba(148,163,184,0.4)' }}>
-          <p className="text-sm">{t('dash_esx_empty')}</p>
-          <p className="text-xs mt-1" style={{ color: 'rgba(148,163,184,0.25)' }}>{t('dash_esx_empty_hint')}</p>
-        </div>
-      ) : (
-        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          {allHosts.map(({ hvName, host }) => (
-            <EsxHostCard key={`${hvName}-${host.host_name}`} hvName={hvName} host={host} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Server Status Donut ────────────────────────────────────────────────────
 function ServerStatusChart({
-  online, offline, warning
-}: { online: number; offline: number; warning: number }) {
+  online, offline, warning, envData
+}: { online: number; offline: number; warning: number; envData?: CapacityOverview }) {
   const t = useT()
   const total = online + offline + warning
   if (total === 0) return null
@@ -454,6 +283,8 @@ function ServerStatusChart({
           ))}
         </div>
       </div>
+      {/* Ortam (hypervisor / hypervisor dışı) başına açık-kapalı dökümü */}
+      <EnvStatusBreakdown data={envData} />
     </div>
   )
 }
@@ -500,9 +331,9 @@ function OsDistChart({ servers, byOs }: { servers?: DashboardServer[]; byOs?: Re
           return (
             <div key={d.name} className="flex items-center gap-3">
               <span className="text-xs text-slate-400 w-16 truncate capitalize">{d.name}</span>
-              <div className="flex-1 h-5 rounded" style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <div className="flex-1 h-5 rounded-sm" style={{ background: 'rgba(255,255,255,0.04)' }}>
                 <div
-                  className="h-full rounded flex items-center pl-2 transition-all duration-700"
+                  className="h-full rounded-sm flex items-center pl-2 transition-all duration-700"
                   style={{
                     width: `${(d.count / maxCount) * 100}%`,
                     background: `linear-gradient(90deg, rgba(${hexToRgb(d.color)},0.3), rgba(${hexToRgb(d.color)},0.15))`,
@@ -617,11 +448,11 @@ function DashboardHero({
 
       <div className="relative flex flex-col lg:flex-row lg:items-center gap-8">
         <div className="flex-1">
-          <p className="text-xs uppercase tracking-[0.2em] mb-2 text-[var(--text-muted)]">
+          <p className="text-xs uppercase tracking-[0.2em] mb-2 text-(--text-muted)">
             {heroTitle}
           </p>
           <h1 className="text-2xl md:text-3xl font-bold mb-2" style={{ color: accent }}>{systemStatus}</h1>
-          <p className="text-sm max-w-xl text-[var(--text-secondary)]">
+          <p className="text-sm max-w-xl text-(--text-secondary)">
             {showFleet && t('dash_fleet_online', { total: totalServers, online: onlineServers })}
             {showOps && unresolvedEvents > 0 && ` ${t('dash_open_events', { n: unresolvedEvents.toLocaleString(dateLoc) })}`}
             {showOps && openIncidents > 0 && `, ${t('dash_active_incidents', { n: openIncidents.toLocaleString(dateLoc) })}`}
@@ -632,13 +463,13 @@ function DashboardHero({
               <div key={chip.label} className="px-3 py-1.5 rounded-lg text-xs font-medium"
                 style={{ background: `rgba(${hexToRgb(chip.color)},0.1)`, border: `1px solid rgba(${hexToRgb(chip.color)},0.25)`, color: chip.color }}>
                 <span className="opacity-70 mr-1.5">{chip.label}</span>
-                <span className="font-bold text-[var(--text-primary)]">{chip.value}</span>
+                <span className="font-bold text-(--text-primary)">{chip.value}</span>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="flex-shrink-0 flex flex-col items-center">
+        <div className="shrink-0 flex flex-col items-center">
           <div className="relative" style={{ width: 140, height: 140 }}>
             <ResponsiveContainer width="100%" height="100%">
               <RadialBarChart cx="50%" cy="50%" innerRadius="72%" outerRadius="100%" barSize={10}
@@ -648,11 +479,11 @@ function DashboardHero({
               </RadialBarChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-3xl font-bold text-[var(--text-primary)]">{healthScore}</span>
-              <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Health</span>
+              <span className="text-3xl font-bold text-(--text-primary)">{healthScore}</span>
+              <span className="text-[10px] uppercase tracking-wider text-(--text-muted)">Health</span>
             </div>
           </div>
-          <p className="text-[10px] text-[var(--text-muted)] mt-2">{t('dash_updated', { time: lastRefresh })}</p>
+          <p className="text-[10px] text-(--text-muted) mt-2">{t('dash_updated', { time: lastRefresh })}</p>
         </div>
       </div>
     </div>
@@ -741,21 +572,21 @@ function ResourceUsageChart({
       {(sum?.avg_cpu != null || sum?.avg_memory != null || sum?.avg_disk != null) && (
         <div className="flex flex-wrap gap-3 mb-3 text-[11px] text-slate-400">
           {sum.avg_cpu != null && (
-            <span className="px-2 py-0.5 rounded border border-white/[0.06] bg-white/[0.02]">
+            <span className="px-2 py-0.5 rounded-sm border border-white/[0.06] bg-white/[0.02]">
               {t('dash_avg_short', { label: 'CPU', pct: sum.avg_cpu })}
             </span>
           )}
           {sum.avg_memory != null && (
-            <span className="px-2 py-0.5 rounded border border-white/[0.06] bg-white/[0.02]">
+            <span className="px-2 py-0.5 rounded-sm border border-white/[0.06] bg-white/[0.02]">
               {t('dash_avg_short', { label: 'RAM', pct: sum.avg_memory })}
             </span>
           )}
           {sum.avg_disk != null && (
-            <span className="px-2 py-0.5 rounded border border-white/[0.06] bg-white/[0.02]">
+            <span className="px-2 py-0.5 rounded-sm border border-white/[0.06] bg-white/[0.02]">
               {t('dash_avg_short', { label: 'Disk /', pct: sum.avg_disk })}
             </span>
           )}
-          <span className="px-2 py-0.5 rounded border border-white/[0.06] bg-white/[0.02] text-slate-500">
+          <span className="px-2 py-0.5 rounded-sm border border-white/[0.06] bg-white/[0.02] text-slate-500">
             {t('dash_with_metrics_n', { n: sum.with_metrics ?? rows.length })}
           </span>
         </div>
@@ -774,7 +605,7 @@ function ResourceUsageChart({
       <div className="flex justify-center gap-4 mt-2">
         {[{ c: NEON.blue, l: 'CPU' }, { c: '#38bdf8', l: 'Memory' }, { c: NEON.green, l: 'Disk /' }].map(x => (
           <div key={x.l} className="flex items-center gap-1.5 text-[10px] text-slate-500">
-            <div className="w-2 h-2 rounded-sm" style={{ background: x.c }} />{x.l}
+            <div className="w-2 h-2 rounded-xs" style={{ background: x.c }} />{x.l}
           </div>
         ))}
       </div>
@@ -804,7 +635,7 @@ function ModuleBreakdownPanel({
               <p className="text-sm font-medium text-white truncate">{tile.label}</p>
               <p className="text-[11px] text-slate-500 truncate">{tile.sub}</p>
             </div>
-            <div className="text-right flex-shrink-0">
+            <div className="text-right shrink-0">
               <p className="text-xl font-semibold tabular-nums leading-none" style={{ color: tile.accent }}>{tile.value}</p>
             </div>
           </Link>
@@ -896,14 +727,14 @@ function ActivityFeed({ events, eventsPath = '/linux/events' }: { events: FeedEv
           const st = sevStyle[ev.severity] || sevStyle.info
           return (
             <div key={ev.id} className="px-5 py-3 flex gap-3" style={{ borderBottom: i < events.length - 1 ? '1px solid rgba(30,41,59,0.5)' : undefined }}>
-              <div className="w-1 rounded-full flex-shrink-0 self-stretch" style={{ background: st.color, boxShadow: `0 0 6px ${st.color}` }} />
+              <div className="w-1 rounded-full shrink-0 self-stretch" style={{ background: st.color, boxShadow: `0 0 6px ${st.color}` }} />
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-white truncate">{ev.title}</p>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   {ev.server_name || t('dash_system')} · {formatRelativeTime(ev.created_at, t)}
                 </p>
               </div>
-              <span className="text-[9px] px-1.5 py-0.5 rounded uppercase font-bold flex-shrink-0 h-fit"
+              <span className="text-[9px] px-1.5 py-0.5 rounded-sm uppercase font-bold shrink-0 h-fit"
                 style={{ color: st.color, background: st.bg }}>{ev.severity}</span>
             </div>
           )
@@ -989,7 +820,7 @@ function DigestCard({ digest }: {
             {digest.top_metrics.slice(0, 5).map((m, i) => (
               <div key={i} className="flex items-center justify-between">
                 <span className="text-xs text-gray-300 truncate max-w-[160px]">{m.metric}</span>
-                <span className="text-xs text-gray-500 bg-gray-700/50 px-1.5 py-0.5 rounded">{m.count}</span>
+                <span className="text-xs text-gray-500 bg-gray-700/50 px-1.5 py-0.5 rounded-sm">{m.count}</span>
               </div>
             ))}
           </div>
@@ -1125,7 +956,7 @@ function RecentServers({
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
               {/* Status dot */}
-              <div className="relative flex-shrink-0">
+              <div className="relative shrink-0">
                 <div className="w-2 h-2 rounded-full" style={{ background: sc.color, boxShadow: `0 0 6px ${sc.color}` }} />
                 {server.status === 'ONLINE' && (
                   <div className="absolute inset-0 w-2 h-2 rounded-full animate-ping" style={{ background: sc.color, opacity: 0.4 }} />
@@ -1136,7 +967,7 @@ function RecentServers({
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-white truncate">{server.name}</p>
                   {server.ai_ready && server.status === 'ONLINE' && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0"
+                    <span className="px-1.5 py-0.5 rounded-sm text-[9px] font-medium shrink-0"
                       style={{ background: 'rgba(56,189,248,0.10)', color: NEON.cyan, border: '1px solid rgba(56,189,248,0.22)' }}>
                       AI
                     </span>
@@ -1145,7 +976,7 @@ function RecentServers({
                 <p className="text-xs truncate" style={{ color: 'rgba(148,163,184,0.5)' }}>{server.ip_address || server.hostname}</p>
               </div>
 
-              <div className="flex items-center gap-3 flex-shrink-0">
+              <div className="flex items-center gap-3 shrink-0">
                 {server.cpu_cores > 0 && (
                   <span className="text-xs" style={{ color: 'rgba(148,163,184,0.4)' }}>
                     {server.cpu_cores}C
@@ -1157,7 +988,7 @@ function RecentServers({
                   </span>
                 )}
                 <span
-                  className="px-2 py-0.5 rounded text-[10px] font-medium"
+                  className="px-2 py-0.5 rounded-sm text-[10px] font-medium"
                   style={{
                     background: `rgba(${hexToRgb(sc.color)}, 0.12)`,
                     color: sc.color,
@@ -1213,7 +1044,7 @@ function RecentWindowsServers({
               onMouseEnter={e => (e.currentTarget.style.background = 'rgba(34,211,238,0.03)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
-              <div className="relative flex-shrink-0">
+              <div className="relative shrink-0">
                 <div className="w-2 h-2 rounded-full" style={{ background: sc.color, boxShadow: `0 0 6px ${sc.color}` }} />
                 {server.status === 'ONLINE' && (
                   <div className="absolute inset-0 w-2 h-2 rounded-full animate-ping" style={{ background: sc.color, opacity: 0.4 }} />
@@ -1224,7 +1055,7 @@ function RecentWindowsServers({
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-white truncate">{server.name}</p>
                   {server.ai_ready && server.status === 'ONLINE' && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0"
+                    <span className="px-1.5 py-0.5 rounded-sm text-[9px] font-medium shrink-0"
                       style={{ background: 'rgba(56,189,248,0.10)', color: NEON.cyan, border: '1px solid rgba(56,189,248,0.22)' }}>
                       WinRM
                     </span>
@@ -1233,7 +1064,7 @@ function RecentWindowsServers({
                 <p className="text-xs truncate" style={{ color: 'rgba(148,163,184,0.5)' }}>{server.ip_address || server.hostname}</p>
               </div>
 
-              <div className="flex items-center gap-3 flex-shrink-0">
+              <div className="flex items-center gap-3 shrink-0">
                 {(server.cpu_cores ?? 0) > 0 && (
                   <span className="text-xs" style={{ color: 'rgba(148,163,184,0.4)' }}>{server.cpu_cores}C</span>
                 )}
@@ -1241,7 +1072,7 @@ function RecentWindowsServers({
                   <span className="text-xs" style={{ color: 'rgba(148,163,184,0.4)' }}>{server.memory_gb}G</span>
                 )}
                 <span
-                  className="px-2 py-0.5 rounded text-[10px] font-medium"
+                  className="px-2 py-0.5 rounded-sm text-[10px] font-medium"
                   style={{
                     background: `rgba(${hexToRgb(sc.color)}, 0.12)`,
                     color: sc.color,
@@ -1263,68 +1094,6 @@ function RecentWindowsServers({
   )
 }
 
-// ── Hypervisor Cards ───────────────────────────────────────────────────────
-function HypervisorCards({ hypervisors }: { hypervisors: Hypervisor[] }) {
-  const t = useT()
-  if (hypervisors.length === 0) return null
-  return (
-    <div className="cyber-card animate-fade-in">
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-4 rounded-full" style={{ background: NEON.blue }} />
-          <h2 className="text-sm font-semibold text-white">{t('dash_hypervisors')}</h2>
-        </div>
-        <Link
-          to="/hypervisors"
-          className="text-xs font-medium"
-          style={{ color: 'var(--accent)' }}
-        >
-          {t('view_all')}
-        </Link>
-      </div>
-      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {hypervisors.map(hv => {
-          const isVmware = hv.type?.toLowerCase() === 'vmware'
-          const isOvirt  = hv.type?.toLowerCase() === 'kvm' || hv.type?.toLowerCase().includes('ovirt') || hv.type?.toLowerCase().includes('olvm')
-          const accent   = isVmware ? NEON.blue : isOvirt ? NEON.orange : NEON.cyan
-          return (
-            <div
-              key={hv.id}
-              className="flex items-center gap-3 p-3 rounded-lg transition-all"
-              style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: `1px solid rgba(${hexToRgb(accent)},0.15)`,
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.borderColor = `rgba(${hexToRgb(accent)},0.4)`
-                e.currentTarget.style.background = `rgba(${hexToRgb(accent)},0.05)`
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.borderColor = `rgba(${hexToRgb(accent)},0.15)`
-                e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
-              }}
-            >
-              <div
-                className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold"
-                style={{ background: `rgba(${hexToRgb(accent)},0.12)`, color: accent, letterSpacing: '0.05em' }}
-              >
-                {isVmware ? 'VM' : isOvirt ? 'OV' : 'HV'}
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-white truncate">{hv.name}</p>
-                <p className="text-xs truncate" style={{ color: accent + '80' }}>
-                  {hv.type.toUpperCase()} • {hv.ip_address}
-                </p>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-
 // ── Main Dashboard ─────────────────────────────────────────────────────────
 const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) => {
   const t = useT()
@@ -1344,6 +1113,8 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       ? hasModule('windows')
       : (isAdminScope && hasModule('linux'))
   const showAiAutomation = isAdminScope && hasModule('ai_automation')
+  const { hasHw } = useCapabilities()
+  const showHwAlarms = isAdminScope && hasHw && hasModule('hardware')
 
   const aiopsPlatform = isLinuxScope ? 'linux' : isWindowsScope ? 'windows' : undefined
   const eventsPath = isLinuxScope ? '/linux/events' : isWindowsScope ? '/windows/aiops/events' : '/linux/events'
@@ -1446,6 +1217,14 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
     staleTime: 60_000,
     refetchInterval: 120_000,
   })
+
+  const hasVirtHosts = showVirt && hypervisors.some(hv => {
+    const tp = hv.type?.toLowerCase() || ''
+    return tp === 'vmware' || tp === 'kvm' || tp === 'openshift_virt'
+  })
+
+  // «Toplam CPU/Bellek nereden geliyor?» + fiziksel kapasite (kaynak bazında)
+  const { data: capacity } = useCapacityOverview(isAdminScope && (showLinux || showVirt))
 
   const { data: eventStats } = useQuery<EventStats>({
     queryKey: ['event-stats', aiopsPlatform ?? 'all'],
@@ -1615,10 +1394,13 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
       sub: hypervisorTypeBreakdown(hypervisors, t),
       accent: NEON.blue,
       pct: hypervisors.length > 0 ? 100 : 0,
+      tip: <HypervisorNamesTip hypervisors={hypervisors} data={capacity} typeLabel={(tp) => hypervisorTypeLabel(tp, t)} />,
     }] : []),
     ...(showLinux || isWindowsScope ? [
-      { label: t('dash_total_cpu'), value: totalCpu, sub: t('cores'), accent: NEON.orange, pct: Math.min(100, totalCpu * 2) },
-      { label: t('dash_total_mem'), value: `${totalRam} GB`, sub: t('dash_inventory'), accent: NEON.green, pct: Math.min(100, totalRam / 2) },
+      { label: t('dash_total_cpu'), value: totalCpu, sub: t('cores'), accent: NEON.orange, pct: Math.min(100, totalCpu * 2),
+        tip: isAdminScope ? inventoryTip(capacity, 'cpu') : null },
+      { label: t('dash_total_mem'), value: `${totalRam} GB`, sub: t('dash_inventory'), accent: NEON.green, pct: Math.min(100, totalRam / 2),
+        tip: isAdminScope ? inventoryTip(capacity, 'memory') : null },
     ] : []),
     ...(isWindowsScope ? [
       { label: t('dash_winrm_ready'), value: windowsSummary?.winrm_configured ?? windowsServers.filter(s => s.winrm_configured).length, sub: t('dash_servers_n', { n: totalServers }), accent: NEON.cyan, pct: totalServers > 0 ? ((windowsSummary?.winrm_configured ?? windowsServers.filter(s => s.winrm_configured).length) / totalServers) * 100 : 0 },
@@ -1713,7 +1495,9 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
 
         {(showLinux || isWindowsScope) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-            <HeroKpi label={isWindowsScope ? t('dash_win_server') : t('dash_total_servers')} value={totalServers} sub={t('dash_online_n', { n: onlineServers })} accent={NEON.blue} pct={onlinePct} delay={0} />
+            <HoverTip testId="dash-tip-servers" tip={isAdminScope && !isWindowsScope ? inventoryTip(capacity, 'servers') : null}>
+              <HeroKpi label={isWindowsScope ? t('dash_win_server') : t('dash_total_servers')} value={totalServers} sub={t('dash_online_n', { n: onlineServers })} accent={NEON.blue} pct={onlinePct} delay={0} />
+            </HoverTip>
             {!isWindowsScope && (
               <HeroKpi label="AI Ready" value={aiReadyServers} sub={t('dash_coverage', { pct: aiReadyPct.toFixed(0) })} accent={NEON.blue} pct={aiReadyPct} delay={50} />
             )}
@@ -1728,8 +1512,17 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
         {secondaryStats.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {secondaryStats.map((s, i) => (
-              <StatCard key={s.label} label={s.label} value={s.value} sub={s.sub} accent={s.accent} delay={200 + i * 40} />
+              <HoverTip key={s.label} testId={`dash-tip-${i}`} align={i % 4 >= 2 ? 'right' : 'left'} tip={(s as { tip?: React.ReactNode }).tip}>
+                <StatCard label={s.label} value={s.value} sub={s.sub} accent={s.accent} delay={200 + i * 40} />
+              </HoverTip>
             ))}
+          </div>
+        )}
+
+        {isAdminScope && capacity && (showLinux || showVirt) && (
+          <div data-testid="dash-capacity-sources">
+            {/* Tek kart: ortam başına fiziksel kapasite/kullanım + dağıtılan vCPU/RAM (eski «Toplam CPU/Bellek kaynağa göre» kartları birleşti) */}
+            <TotalCapacityCard data={capacity} physical={showVirt} free={showLinux} />
           </div>
         )}
 
@@ -1764,7 +1557,7 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
 
         {(showLinux || isWindowsScope) && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <ServerStatusChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} />
+            <ServerStatusChart online={onlineServers} offline={offlineServers} warning={warningServers + criticalServers} envData={isAdminScope ? capacity : undefined} />
             {isAdminScope && moduleTiles.length > 0 ? (
               <ModuleBreakdownPanel tiles={moduleTiles} />
             ) : (
@@ -1794,12 +1587,13 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
           </div>
         )}
 
-        {showVirt && hypervisors.some(hv => {
-          const tp = hv.type?.toLowerCase() || ''
-          return tp === 'vmware' || tp === 'kvm' || tp === 'openshift_virt'
-        }) && (
-          <EsxResourcePanel hypervisors={hypervisors} />
+        {showVirt && hypervisors.length > 0 && (
+          <HypervisorTree hypervisors={hypervisors} hostsEnabled={hasVirtHosts} />
         )}
+
+        {showVirt && hasVirtHosts && <HostsPanel enabled />}
+
+        {showHwAlarms && <HwAlarmPanel enabled />}
 
         {showAiops && digest && (
           <DigestCard digest={digest} />
@@ -1814,13 +1608,12 @@ const Dashboard: React.FC<{ scope?: DashboardScope }> = ({ scope = 'admin' }) =>
           <QuickActionsPanel scope={scope} />
         </div>
 
-        {(showLinux || showVirt || isWindowsScope) && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {(showLinux || isWindowsScope) && (
+          <div className="grid grid-cols-1 gap-4">
             {showLinux && <RecentServers servers={(isAdminScope ? allServersRaw : servers).filter(s => s.status === 'ONLINE')} onSelect={setSelectedServer} />}
             {isWindowsScope && (
               <RecentWindowsServers servers={windowsServers.filter(s => s.status === 'ONLINE')} />
             )}
-            {showVirt && <HypervisorCards hypervisors={hypervisors} />}
           </div>
         )}
 

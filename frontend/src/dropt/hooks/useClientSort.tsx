@@ -60,8 +60,8 @@ export function SortHeader({
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1 font-medium hover:text-[var(--color-foreground)]",
-        active ? "text-[var(--color-foreground)]" : "text-[var(--color-muted-foreground)]",
+        "inline-flex items-center gap-1 font-medium hover:text-(--color-foreground)",
+        active ? "text-(--color-foreground)" : "text-(--color-muted-foreground)",
         className,
       )}
     >

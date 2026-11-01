@@ -47,8 +47,9 @@ def test_host_metrics_cpu_pct():
     }
     stats = {"cpu.current.user": 10.0, "cpu.current.system": 5.0, "memory.total": 16 * 1024**3, "memory.used": 8 * 1024**3}
     row = host_metrics_from_stats(host, stats)
-    assert row["host_name"] == "192.168.1.180"
+    assert row["host_name"] == "kvm01"            # kayıt adı = oVirt host adı (IP değil)
     assert row["short_name"] == "kvm01"
+    assert row["address"] == "192.168.1.180"      # IP ayrı alanda
     assert row["vnics"][0]["ip_address"] == "192.168.1.180"
     assert row["cpu_usage_pct"] == 15.0
     assert row["mem_usage_pct"] == 50.0
@@ -198,3 +199,30 @@ def test_virt_monitoring_includes_kvm_ids():
 def test_platform_scope_has_ovirt_event():
     from app.services.platform_scope import _VIRT_SOURCES
     assert "ovirt_event" in _VIRT_SOURCES
+
+
+def test_host_name_is_name_not_ip_and_ip_kept_separately():
+    from app.services.ovirt.ovirt_parse import host_canonical_name, host_inventory_fields
+    host = {"name": "dtkvm01", "id": "h1", "address": "192.168.1.112", "status": "up"}
+    assert host_canonical_name(host) == "dtkvm01"
+    inv = host_inventory_fields(host)
+    assert inv["host_name"] == "dtkvm01"
+    assert inv["address"] == "192.168.1.112"
+    assert inv["dns"] == {"host_name": "dtkvm01", "address": "192.168.1.112"}
+    assert inv["vnics"][0]["ip_address"] == "192.168.1.112"
+
+
+def test_host_name_falls_back_to_address_then_unknown():
+    from app.services.ovirt.ovirt_parse import host_canonical_name
+    assert host_canonical_name({"name": "", "address": "10.0.0.5"}) == "10.0.0.5"
+    assert host_canonical_name({"address": {"address": "10.0.0.6"}}) == "10.0.0.6"
+    assert host_canonical_name({}) == "unknown"
+    assert host_canonical_name({"name": "  kvm02  ", "address": "10.0.0.7"}) == "kvm02"
+
+
+def test_vm_host_name_matches_host_record_name():
+    """VM'in oVirt'ten gelen `vm_host_name` (ad) ↔ host kaydı adı: artık eşleşir (eskiden IP ile ayrışıyordu)."""
+    from app.services.ovirt.ovirt_parse import host_metrics_from_stats, nested_name
+    host = {"name": "dtkvm01", "id": "h1", "address": "192.168.1.112", "status": "up"}
+    vm_host = nested_name({"name": "dtkvm01", "id": "h1"})
+    assert host_metrics_from_stats(host, {})["host_name"] == vm_host

@@ -105,23 +105,23 @@ export function HostnamePage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold tracking-tight">{t("wizard_hostname")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">
         Kısa ad / domain değiştir · Talep ID ve önizleme zorunlu
       </p>
 
       <div className="mt-5 flex w-full flex-col gap-4">
-        <div className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-subtle)] px-3.5 py-2.5">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-secondary)]">Yeni FQDN</p>
-          <p className="mt-0.5 font-mono text-sm font-medium text-[var(--text-primary)]">{displayNewFqdn}</p>
+        <div className="rounded-xl border border-(--accent)/25 bg-(--accent-subtle) px-3.5 py-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-(--text-secondary)">Yeni FQDN</p>
+          <p className="mt-0.5 font-mono text-sm font-medium text-(--text-primary)">{displayNewFqdn}</p>
         </div>
 
         <form
           onSubmit={onSubmit}
-          className="space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 md:p-5"
+          className="space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-4 md:p-5"
         >
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Talep ID</label>
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Talep ID</label>
               <Input
                 className="h-9"
                 value={talepId}
@@ -131,8 +131,8 @@ export function HostnamePage() {
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Mevcut FQDN</label>
-              <div className="flex h-9 items-center rounded-lg border border-[var(--color-border)] bg-[var(--theme-inset)] px-3 font-mono text-xs text-[var(--color-foreground)]">
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Mevcut FQDN</label>
+              <div className="flex h-9 items-center rounded-lg border border-(--color-border) bg-(--theme-inset) px-3 font-mono text-xs text-(--color-foreground)">
                 {oldFqdn}
               </div>
             </div>
@@ -148,9 +148,9 @@ export function HostnamePage() {
           />
 
           {loading ? (
-            <p className="text-sm text-[var(--color-muted-foreground)]">Mevcut durum okunuyor…</p>
+            <p className="text-sm text-(--color-muted-foreground)">Mevcut durum okunuyor…</p>
           ) : state ? (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--theme-inset)] px-3 py-2.5 text-xs">
+            <div className="rounded-lg border border-(--color-border) bg-(--theme-inset) px-3 py-2.5 text-xs">
               <p>
                 Kısa / domain:{" "}
                 <span className="font-mono">
@@ -167,7 +167,7 @@ export function HostnamePage() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Yeni kısa ad</label>
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Yeni kısa ad</label>
               <Input
                 className="h-9 font-mono"
                 value={shortName}
@@ -176,7 +176,7 @@ export function HostnamePage() {
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Domain</label>
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Domain</label>
               <Input
                 className="h-9 font-mono"
                 value={domain}
@@ -186,21 +186,21 @@ export function HostnamePage() {
             </div>
           </div>
 
-          {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+          {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
 
-          <div className="flex justify-end border-t border-[var(--color-border)] pt-3">
+          <div className="flex justify-end border-t border-(--color-border) pt-3">
             <Button type="submit" size="sm" className="h-9 px-4" disabled={busy || loading}>
               {busy ? "Önizleme hazırlanıyor…" : "Değişiklikleri Önizle"}
             </Button>
           </div>
         </form>
 
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 text-sm">
-          <p className="font-semibold text-[var(--color-foreground)]">{t("ops_success_checklist")}</p>
-          <p className="mt-1 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
+        <div className="rounded-xl border border-(--color-border) bg-(--color-card) p-4 text-sm">
+          <p className="font-semibold text-(--color-foreground)">{t("ops_success_checklist")}</p>
+          <p className="mt-1 text-xs leading-relaxed text-(--color-muted-foreground)">
             {t("ops_success_checklist_hint")}
           </p>
-          <ol className="mt-3 list-decimal space-y-2.5 pl-5 leading-relaxed text-[var(--color-foreground)]">
+          <ol className="mt-3 list-decimal space-y-2.5 pl-5 leading-relaxed text-(--color-foreground)">
             {successChecklist.map((item, idx) => (
               <li key={idx} className="whitespace-pre-wrap text-[13px]">
                 {item}

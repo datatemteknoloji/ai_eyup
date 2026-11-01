@@ -172,7 +172,7 @@ export default function OcpResourceList({
           <div className="relative max-w-sm">
             <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
             <input
-              className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/60 pl-8 pr-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-rose-500/40"
+              className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/60 pl-8 pr-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-hidden focus:border-rose-500/40"
               placeholder={t('ocp_search_name')}
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -206,8 +206,8 @@ export default function OcpResourceList({
                     <p className="text-sm text-slate-100 font-mono truncate group-hover:text-white">{it.name}</p>
                     {it.info && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{it.info}</p>}
                   </div>
-                  <span className="text-[11px] text-slate-600 flex-shrink-0 tabular-nums">{it.age}</span>
-                  <div className="flex items-center gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <span className="text-[11px] text-slate-600 shrink-0 tabular-nums">{it.age}</span>
+                  <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                     {canWrite && RESTARTABLE.includes(kind) && (
                       acting === it.name ? (
                         <RefreshCw size={14} className="animate-spin text-slate-500 mx-1" />

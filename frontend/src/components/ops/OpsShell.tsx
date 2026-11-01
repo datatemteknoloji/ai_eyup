@@ -6,7 +6,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Activity, BellOff, RefreshCw, ScanSearch, ShieldAlert, Siren, AlertTriangle, CheckCircle2,
+  Gauge, Recycle, ShieldCheck, GitCompare, MessageSquare, Wrench, HeartPulse,
 } from 'lucide-react'
+import { useAuth } from '../../auth/AuthContext'
 import {
   PLATFORM_AIOPS_LABEL_KEY,
   PLATFORM_AIOPS_PREFIX,
@@ -23,10 +25,10 @@ export function OpsPlatformBanner({
 }) {
   const t = useT()
   return (
-    <div className="mb-0 px-4 py-2 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-strong)] text-sm text-[var(--text-secondary)]">
-      <span className="text-[var(--text-muted)]">{t('platform')}:</span>{' '}
-      <span className="font-medium text-[var(--text-primary)]">{t(PLATFORM_AIOPS_LABEL_KEY[platform])}</span>
-      <span className="text-[var(--text-muted)] ml-2">
+    <div className="mb-0 px-4 py-2 rounded-xl bg-(--bg-elevated) border border-(--border-strong) text-sm text-(--text-secondary)">
+      <span className="text-(--text-muted)">{t('platform')}:</span>{' '}
+      <span className="font-medium text-(--text-primary)">{t(PLATFORM_AIOPS_LABEL_KEY[platform])}</span>
+      <span className="text-(--text-muted) ml-2">
         — {hint || t('ops_banner_hint')}
       </span>
     </div>
@@ -71,8 +73,8 @@ export function OpsHealthRing({
         </div>
       </div>
       <div>
-        <div className="text-sm font-semibold text-[var(--text-primary)]">{label}</div>
-        <div className="text-xs text-[var(--text-muted)] mt-0.5">{subtitle || t('ops_health')}</div>
+        <div className="text-sm font-semibold text-(--text-primary)">{label}</div>
+        <div className="text-xs text-(--text-muted) mt-0.5">{subtitle || t('ops_health')}</div>
       </div>
     </div>
   )
@@ -171,7 +173,7 @@ export function OpsRefreshCountdown({
         setRemaining(interval)
         onRefresh()
       }}
-      className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-700 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-slate-500 transition-colors group"
+      className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-700 text-(--text-muted) hover:text-(--text-primary) hover:border-slate-500 transition-colors group"
       title={t('ops_refresh_now')}
     >
       <div className="relative w-5 h-5">
@@ -197,13 +199,24 @@ export function OpsRefreshCountdown({
 
 export function OpsBottomNav({ platform }: { platform: PlatformKey }) {
   const t = useT()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin' || !!user?.is_admin
   const base = PLATFORM_AIOPS_PREFIX[platform]
   const items = platform === 'openshift'
     ? [
         { to: `${base}/events`, icon: <Activity size={13} />, label: t('nav_events') },
         { to: `${base}/incidents`, icon: <Siren size={13} />, label: t('nav_incidents') },
-        { to: `${base}?tab=risks`, icon: <BellOff size={13} />, label: t('ops_nav_risks') },
+        { to: `${base}?section=riskler`, icon: <BellOff size={13} />, label: t('ops_nav_risks') },
         { to: `${base}/vms`, icon: <ScanSearch size={13} />, label: 'VMs' },
+        { to: `${base}/monitoring`, icon: <HeartPulse size={13} />, label: t('nav_ocp_monitoring') },
+        { to: `${base}/chat`, icon: <MessageSquare size={13} />, label: t('nav_nl_assistant') },
+        { to: `${base}/analysis`, icon: <Wrench size={13} />, label: t('nav_cluster_analysis') },
+        ...(isAdmin ? [
+          { to: `${base}/capacity`, icon: <Gauge size={13} />, label: t('nav_ocp_capacity') },
+          { to: `${base}/reclaim`, icon: <Recycle size={13} />, label: t('nav_ocp_reclaim') },
+          { to: `${base}/health`, icon: <ShieldCheck size={13} />, label: t('nav_ocp_health') },
+          { to: `${base}/changes`, icon: <GitCompare size={13} />, label: t('nav_ocp_changes') },
+        ] : []),
       ]
     : [
         { to: `${base}/events`, icon: <Activity size={13} />, label: t('nav_events') },
@@ -212,14 +225,14 @@ export function OpsBottomNav({ platform }: { platform: PlatformKey }) {
         { to: `${base}/analysis?tab=rca`, icon: <ScanSearch size={13} />, label: t('ops_nav_rca') },
       ]
   return (
-    <div className="grid grid-cols-4 gap-2 pt-4 border-t border-slate-800/60">
+    <div className={`grid gap-2 pt-4 border-t border-slate-800/60 ${platform === 'openshift' ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4' : 'grid-cols-4'}`}>
       {items.map(({ to, icon, label }) => (
         <Link
           key={to}
           to={to}
-          className="flex items-center justify-center gap-1.5 text-xs py-2.5 rounded-xl border border-slate-800 text-slate-500 hover:bg-slate-800 hover:text-slate-300 hover:border-slate-700 transition-colors"
+          className="flex items-center justify-center gap-1.5 text-xs py-2.5 px-2 rounded-xl border border-slate-800 text-slate-500 hover:bg-slate-800 hover:text-slate-300 hover:border-slate-700 transition-colors text-center"
         >
-          {icon} {label}
+          {icon} <span className="truncate">{label}</span>
         </Link>
       ))}
     </div>
@@ -278,12 +291,12 @@ export function OpsShell({
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-[var(--bg-base)]">
+    <div className="flex flex-col h-full min-h-0 bg-(--bg-base)">
       <div className="flex-none px-4 sm:px-6 pt-3 pb-2">
         <OpsPlatformBanner platform={platform} />
       </div>
 
-      <div className="flex-none px-4 sm:px-6 py-3 border-b border-[var(--border)] bg-[var(--bg-surface)]">
+      <div className="flex-none px-4 sm:px-6 py-3 border-b border-(--border) bg-(--bg-surface)">
         <div className="flex items-center gap-4 flex-wrap">
           {health && (
             <OpsHealthRing

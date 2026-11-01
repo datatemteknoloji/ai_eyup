@@ -120,8 +120,8 @@ export const MonitoringArchitectureHint: React.FC<{ className?: string }> = ({ c
   )
 
   const flowNote = (
-    <div className="mt-3 space-y-1.5 text-[11px] text-[var(--text-muted)] leading-relaxed border-t border-white/[0.06] pt-3">
-      <p className="font-medium text-[var(--text-secondary)]">{t('mon_arch_flow_title')}</p>
+    <div className="mt-3 space-y-1.5 text-[11px] text-(--text-muted) leading-relaxed border-t border-white/[0.06] pt-3">
+      <p className="font-medium text-(--text-secondary)">{t('mon_arch_flow_title')}</p>
       <p>{t('mon_arch_flow')}</p>
       <p className="text-[10px] text-slate-500">{t('mon_arch_linux_note')}</p>
     </div>
@@ -136,7 +136,7 @@ export const MonitoringArchitectureHint: React.FC<{ className?: string }> = ({ c
     >
       <button
         type="button"
-        className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent-subtle)] transition-colors"
+        className="p-1.5 rounded-lg text-(--text-muted) hover:text-(--accent) hover:bg-(--accent-subtle) transition-colors"
         aria-label={t('mon_arch_aria')}
         aria-expanded={open || expanded}
         aria-describedby={open ? descId : undefined}
@@ -152,10 +152,10 @@ export const MonitoringArchitectureHint: React.FC<{ className?: string }> = ({ c
         <div
           id={descId}
           role="tooltip"
-          className="absolute left-0 top-full z-50 mt-2 w-[min(96vw,1200px)] max-h-[min(78vh,860px)] overflow-auto rounded-xl border border-white/[0.1] bg-[var(--bg-surface)] shadow-xl p-4"
+          className="absolute left-0 top-full z-50 mt-2 w-[min(96vw,1200px)] max-h-[min(78vh,860px)] overflow-auto rounded-xl border border-white/[0.1] bg-(--bg-surface) shadow-xl p-4"
         >
           <div className="flex items-center justify-between mb-3 gap-2">
-            <div className="text-sm font-semibold text-[var(--text-primary)]">{t('mon_arch_title')}</div>
+            <div className="text-sm font-semibold text-(--text-primary)">{t('mon_arch_title')}</div>
             <button
               type="button"
               className="inline-flex items-center gap-1 text-xs text-blue-300 hover:text-white px-2 py-1 rounded-md hover:bg-white/[0.06]"
@@ -176,18 +176,18 @@ export const MonitoringArchitectureHint: React.FC<{ className?: string }> = ({ c
       )}
       {expanded && createPortal(
         <div
-          className="fixed inset-0 z-[80] bg-black/80 flex items-stretch justify-center p-3 md:p-6"
+          className="fixed inset-0 z-80 bg-black/80 flex items-stretch justify-center p-3 md:p-6"
           onClick={() => setExpanded(false)}
           role="dialog"
           aria-modal="true"
           aria-label={t('mon_arch_title')}
         >
           <div
-            className="bg-[var(--bg-surface)] border border-white/[0.12] rounded-2xl w-full max-w-[96vw] max-h-[96vh] flex flex-col shadow-2xl"
+            className="bg-(--bg-surface) border border-white/[0.12] rounded-2xl w-full max-w-[96vw] max-h-[96vh] flex flex-col shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3 p-4 md:p-5 border-b border-white/[0.08] shrink-0">
-              <h2 className="text-lg font-bold text-[var(--text-primary)]">{t('mon_arch_title')}</h2>
+              <h2 className="text-lg font-bold text-(--text-primary)">{t('mon_arch_title')}</h2>
               <div className="flex items-center gap-1">
                 <button
                   type="button"

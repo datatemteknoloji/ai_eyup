@@ -108,7 +108,7 @@ const UpgradeOverlay: React.FC<{
   }, [expectedVersion, onDone, onFail, t])
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md">
+    <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/80 backdrop-blur-md">
       <div className="bg-cyber-card border border-white/[0.08] rounded-2xl p-8 max-w-md w-full mx-4 text-center shadow-2xl">
         <div className="w-12 h-12 mx-auto mb-4 rounded-full border-2 border-blue-500/40 border-t-blue-400 animate-spin" />
         <h3 className="text-lg font-semibold text-white mb-2">{t('pu_overlay_title')}</h3>
@@ -253,7 +253,7 @@ export const PlatformUpdateTab: React.FC = () => {
       <h2 className="text-xl font-semibold text-white mb-2">{t('set_tab_update')}</h2>
       <p className="text-slate-400 text-sm mb-6">
         {t('pu_subtitle_pre')}{' '}
-        <code className="text-slate-300 bg-cyber-deep px-1 rounded">$DATA_DIR/updates/</code>
+        <code className="text-slate-300 bg-cyber-deep px-1 rounded-sm">$DATA_DIR/updates/</code>
         {' '}{t('pu_subtitle_post')}
       </p>
 

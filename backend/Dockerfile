@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 ARG APP_VERSION=0.0.0
 ENV APP_VERSION=${APP_VERSION}
@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # kütüphaneleri indirilmez, image küçük kalır. Model yüklenemezse (offline vb.)
 # reranker.py sessizce devre dışı kalır, RAG akışı bundan etkilenmez.
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install --no-cache-dir sentence-transformers==5.6.1 "numpy<2"
+    && pip install --no-cache-dir sentence-transformers==6.2.0
 
 COPY . .
 

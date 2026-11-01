@@ -118,7 +118,7 @@ function ResourceBar({ label, pct, icon }: { label: string; pct: number; icon: R
     <div className="min-w-0 w-full">
       <div className="flex items-center justify-between text-xs mb-1 gap-2">
         <span className="text-slate-400 flex items-center gap-1 truncate">{icon}<span className="truncate">{label}</span></span>
-        <span className="text-slate-300 font-medium flex-shrink-0">%{safe.toFixed(0)}</span>
+        <span className="text-slate-300 font-medium shrink-0">%{safe.toFixed(0)}</span>
       </div>
       <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden w-full">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${safe}%` }} />
@@ -131,10 +131,10 @@ function PlatformManagerCard({ p }: { p: PlatformCard }) {
   const t = useT()
   const style = PLATFORM_COLOR[p.type] || 'from-slate-600/20 to-slate-700/10 border-slate-600/30'
   return (
-    <div className={`rounded-xl border bg-gradient-to-br p-4 w-[min(100%,320px)] min-w-[280px] flex-shrink-0 ${style}`}>
+    <div className={`rounded-xl border bg-linear-to-br p-4 w-[min(100%,320px)] min-w-[280px] shrink-0 ${style}`}>
       <div className="flex items-start justify-between mb-3 gap-2">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-lg bg-slate-900/60 border border-white/10 flex items-center justify-center flex-shrink-0">
+          <div className="w-10 h-10 rounded-lg bg-slate-900/60 border border-white/10 flex items-center justify-center shrink-0">
             <PlatformTypeIcon type={p.type} />
           </div>
           <div className="min-w-0">
@@ -142,7 +142,7 @@ function PlatformManagerCard({ p }: { p: PlatformCard }) {
             <div className="text-xs text-slate-400 truncate">{p.platform} · {p.ip_address}:{p.port}</div>
           </div>
         </div>
-        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold uppercase flex-shrink-0 ${SEV_BADGE[p.status] || SEV_BADGE.ok}`}>
+        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold uppercase shrink-0 ${SEV_BADGE[p.status] || SEV_BADGE.ok}`}>
           {p.status === 'ok' ? 'OK' : p.status}
         </span>
       </div>
@@ -172,7 +172,7 @@ function PlatformManagerCard({ p }: { p: PlatformCard }) {
         <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
           {p.issues.slice(0, 2).map((i, idx) => (
             <div key={idx} className="text-xs text-amber-300 flex items-center gap-1.5 min-w-0">
-              <AlertTriangle size={11} className="flex-shrink-0" /> <span className="truncate">{i.title}</span>
+              <AlertTriangle size={11} className="shrink-0" /> <span className="truncate">{i.title}</span>
             </div>
           ))}
         </div>
@@ -256,7 +256,7 @@ function LogTimeline({ logs }: { logs: PlatformLog[] }) {
             log.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'
           }`} />
           <div className="min-w-0 flex-1">
-            <div className="text-sm text-slate-200 leading-snug break-words">{log.title}</div>
+            <div className="text-sm text-slate-200 leading-snug wrap-break-word">{log.title}</div>
             <div className="flex flex-wrap gap-2 mt-1 text-[10px] text-slate-500">
               <span>{
                 log.source_label
@@ -392,7 +392,7 @@ export default function VirtOpsCenter() {
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={t('virt_search')}
-                className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-8 py-2 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50"
               />
               {search && (
                 <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
@@ -417,7 +417,7 @@ export default function VirtOpsCenter() {
         sideRail={(
           <div className="h-full min-h-0 overflow-y-auto px-4 py-4 bg-slate-900/30">
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2 sticky top-0 bg-slate-900/95 py-2 -mt-2 z-10">
-              <ScrollText size={13} className="flex-shrink-0" />
+              <ScrollText size={13} className="shrink-0" />
               <span className="truncate">{t('virt_logs_24h')}</span>
             </h2>
             <LogTimeline logs={filteredLogs} />
@@ -429,7 +429,7 @@ export default function VirtOpsCenter() {
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
               <Cloud size={13} /> {t('virt_platforms')}
             </h2>
-            <div className="flex gap-4 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
+            <div className="flex gap-4 overflow-x-auto pb-1 -mx-1 px-1">
               {data.platforms.map(p => <PlatformManagerCard key={p.id} p={p} />)}
             </div>
           </section>
@@ -477,7 +477,7 @@ export default function VirtOpsCenter() {
             <div className="space-y-2 mb-4">
               {selectedHost.issues.map((i, idx) => (
                 <div key={idx} className="flex items-center gap-2 text-sm min-w-0">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 ${SEV_BADGE[i.severity]}`}>{i.severity}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-sm border shrink-0 ${SEV_BADGE[i.severity]}`}>{i.severity}</span>
                   <span className="text-slate-300 truncate">{i.title}</span>
                 </div>
               ))}

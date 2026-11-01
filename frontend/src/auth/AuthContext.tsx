@@ -36,6 +36,8 @@ interface AuthContextValue {
   loading: boolean
   login: (username: string, password: string) => Promise<LoginResult>
   completeMfaLogin: (mfaToken: string, code: string, enroll: boolean) => Promise<void>
+  /** SSO dönüşünde gelen tek kullanımlık kodu oturuma çevirir. */
+  completeSsoLogin: (code: string) => Promise<void>
   logout: () => void
   refresh: () => Promise<void>
   hasModule: (moduleId: string) => boolean
@@ -131,6 +133,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [fetchMe])
 
+  const completeSsoLogin = useCallback(async (code: string) => {
+    setLoading(true)
+    try {
+      const r = await fetch(`${API_BASE_URL}/auth/sso/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        throw new Error(typeof err.detail === 'string' ? err.detail : 'SSO girişi başarısız')
+      }
+      const data = await r.json()
+      setToken(data.access_token)
+      if (data.user) setUser(applyUser(data.user))
+      else await fetchMe()
+    } finally {
+      setLoading(false)
+    }
+  }, [fetchMe])
+
   const logout = useCallback(async () => {
     const token = getToken()
     if (token) {
@@ -174,7 +197,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   return (
     <AuthContext.Provider value={{
-      user, loading, login, completeMfaLogin, logout, refresh: fetchMe, hasModule, patchPreferences,
+      user, loading, login, completeMfaLogin, completeSsoLogin, logout, refresh: fetchMe, hasModule, patchPreferences,
     }}>
       {children}
     </AuthContext.Provider>

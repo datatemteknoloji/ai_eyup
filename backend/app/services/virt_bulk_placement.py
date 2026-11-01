@@ -89,7 +89,7 @@ def bulk_place(db: Session, *, profiles: List[Dict[str, Any]], hypervisor_id: Op
     profiles = normalize_profiles(profiles)
     vms = expand(profiles)
     util = min(1.0, max(0.05, float(cpu_util_assumption or DEFAULT_CPU_ASSUMPTION)))
-    cap = build_capacity(db, hypervisor_id=hypervisor_id, with_forecast=False)
+    cap = build_capacity(db, hypervisor_id=hypervisor_id, with_forecast=False, with_reclaim=False)
     if clusters:
         cap["clusters"] = [c for c in cap["clusters"] if c["cluster"] in set(clusters)]
     if datacenter:

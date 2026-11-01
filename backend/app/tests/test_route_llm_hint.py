@@ -1,4 +1,6 @@
 """Düşük güven routing LLM — birleşim kuralları, ezme yok."""
+import pytest
+
 from app.services.module_orchestrator import ModulePlan, plan_modules, plan_with_modules
 from app.services.route_llm_hint import (
     apply_route_llm_hint,
@@ -7,6 +9,14 @@ from app.services.route_llm_hint import (
     should_ask_route_hint,
 )
 from app.services.unified_intent_router import route_unified
+
+
+@pytest.fixture(autouse=True)
+def _clear_hint_cache():
+    from app.services import route_llm_hint as _rh
+    _rh.clear_cache()
+    yield
+    _rh.clear_cache()
 
 
 def test_parse_modules_json_and_aliases():

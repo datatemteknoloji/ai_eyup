@@ -147,10 +147,10 @@ export default function AutomationExecutions() {
         actions={d && d.total > PAGE ? (
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <button type="button" disabled={offset === 0} onClick={() => set({ offset: String(Math.max(0, offset - PAGE)) })}
-              className="rounded border border-slate-700 p-1 disabled:opacity-40"><ChevronLeft size={14} /></button>
+              className="rounded-sm border border-slate-700 p-1 disabled:opacity-40"><ChevronLeft size={14} /></button>
             <span>{offset + 1}–{Math.min(offset + PAGE, d.total)} / {fmtNumber(d.total)}</span>
             <button type="button" disabled={offset + PAGE >= d.total} onClick={() => set({ offset: String(offset + PAGE) })}
-              className="rounded border border-slate-700 p-1 disabled:opacity-40"><ChevronRight size={14} /></button>
+              className="rounded-sm border border-slate-700 p-1 disabled:opacity-40"><ChevronRight size={14} /></button>
           </div>
         ) : null}
       >

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
@@ -22,26 +23,27 @@ def _external_key(log: Dict[str, Any]) -> str:
 
 def _upsert_virt_event(db: Session, log: Dict[str, Any], event_type: str, now: datetime) -> bool:
     ext_key = _external_key(log)
-    since = datetime.utcnow() - timedelta(hours=48)
+    since = utc_now() - timedelta(hours=48)
 
-    existing = (
+    # Adım 11: tüm satırları ORM nesnesi olarak yükleyip Python'da taramak yerine SQL tarafında ara (GIL tutmaz)
+    ev = (
         db.query(SystemEvent)
         .filter(
             SystemEvent.event_type == event_type,
             SystemEvent.source.in_(["virt_collector", "virt_resource"]),
             SystemEvent.created_at >= since,
+            SystemEvent.raw_data["external_key"].as_string() == ext_key,
         )
-        .all()
+        .order_by(SystemEvent.id)
+        .first()
     )
-    for ev in existing:
-        raw = ev.raw_data or {}
-        if raw.get("external_key") == ext_key:
-            ev.last_seen = now
-            ev.occurrence_count = (ev.occurrence_count or 1) + 1
-            ev.severity = log.get("severity") or ev.severity
-            if not ev.resolved and log.get("severity") in ("critical", "emergency"):
-                ev.resolved = False
-            return False
+    if ev is not None:
+        ev.last_seen = now
+        ev.occurrence_count = (ev.occurrence_count or 1) + 1
+        ev.severity = log.get("severity") or ev.severity
+        if not ev.resolved and log.get("severity") in ("critical", "emergency"):
+            ev.resolved = False
+        return False
 
     title = log.get("title") or log.get("action") or "Sanallaştırma olayı"
     sev = log.get("severity") or "warning"
@@ -137,7 +139,7 @@ def sync_virt_logs_to_db(db: Session) -> Dict[str, Any]:
         logger.warning("OpenShift Virtualization event sync atlandı: %s", exc)
         openshift_virt_result = {"success": False, "total_saved": 0, "errors": [str(exc)]}
     data = build_virt_command_center(db)
-    now = datetime.utcnow()
+    now = utc_now()
     saved = 0
 
     for host in data.get("critical_hosts", []) + data.get("warning_hosts", []):
@@ -164,7 +166,7 @@ def sync_virt_logs_to_db(db: Session) -> Dict[str, Any]:
     db.commit()
 
     if saved > 0:
-        since_batch = datetime.utcnow() - timedelta(seconds=5)
+        since_batch = utc_now() - timedelta(seconds=5)
         new_events = db.query(SystemEvent).filter(
             SystemEvent.source.in_(["virt_collector", "virt_resource"]),
             SystemEvent.created_at >= since_batch,

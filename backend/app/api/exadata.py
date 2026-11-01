@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from app.core.timeutil import utc_now
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -324,7 +325,7 @@ async def exadata_ops_summary(db: Session = Depends(get_db)):
 
     from app.services.event_grouping import unique_events
 
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    since = utc_now() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     events = unique_events(_active_events(db, since, platform="exadata"))
     critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
     warning = sum(1 for e in events if e.severity == "warning")

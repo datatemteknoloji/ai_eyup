@@ -17,6 +17,7 @@ from app.services.platform_scope import (
 )
 from app.services.event_filters import LOG_ENTRY_ACTIONABLE, apply_hide_routine_virt
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 import statistics
 
 router = APIRouter()
@@ -104,7 +105,7 @@ async def aiops_status(db: Session = Depends(get_db)):
     from app.models.event import SystemEvent, Incident
     from app.services.event_grouping import unique_events, unique_incidents
 
-    since = datetime.utcnow() - timedelta(hours=24)
+    since = utc_now() - timedelta(hours=24)
     metric_rows = (
         db.query(SystemEvent)
         .filter(

@@ -88,6 +88,7 @@ def test_endpoints_match_api_sources_doc():
     for pat in ep.all_documented_paths():
         s = pat.strip("^$").replace("\\(\\d+\\)", "|")
         s = s.replace("\\('deviceSoftware'\\)", "|deviceSoftware").replace("\\('deviceLocation'\\)", "|deviceLocation")
+        s = s.replace("[0-9A-Za-z_-]+", "{id}")
         for frag in [f for f in s.split("|") if f]:
             if frag.strip("/") not in text:
                 missing.append((pat, frag))
@@ -414,8 +415,11 @@ def test_demo_data_never_produces_findings(db, monkeypatch):
 
 def test_hw_routes_require_hardware_module():
     from app.core.module_policy import decide
+    # İki seviyeli yetki: by-target yalnız platform sayfalarına ÖZET olarak açıktır (BMC/seri `hardware` olmadan dönmez;
+    # bkz. test_hw_events.py). Filo ekranı uçları yalnız `hardware` modülünde.
     for p in ("/api/v1/hw/summary", "/api/v1/hw/servers", "/api/v1/hw/servers/by-target"):
-        assert not decide(role="operator", modules=("linux", "windows", "integrations"), method="GET", path=p, query={}).allowed
+        if not p.endswith("by-target"):
+            assert not decide(role="operator", modules=("linux", "windows", "integrations"), method="GET", path=p, query={}).allowed
         assert decide(role="operator", modules=("hardware",), method="GET", path=p, query={}).allowed
         assert decide(role="admin", modules=(), method="GET", path=p, query={}).allowed
 

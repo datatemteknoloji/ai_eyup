@@ -4,6 +4,7 @@ import { useT } from '../i18n/LocaleProvider'
 import OpsCenter from './OpsCenter'
 import VirtOpsCenter from './VirtOpsCenter'
 import OpenShiftOpsCenter from './OpenShiftOpsCenter'
+import OpenShiftAnalysisHub from './OpenShiftAnalysisHub'
 import EventsHub from './EventsHub'
 import AnalysisHub from './AnalysisHub'
 import Incidents from './Incidents'
@@ -21,10 +22,10 @@ const CHAT_HINT: Record<PlatformKey, 'chat_hint_linux' | 'chat_hint_windows' | '
   openshift: 'chat_hint_openshift',
 }
 
-function PlatformBanner({ platform, hint }: { platform: PlatformKey; hint?: string }) {
+function PlatformBanner({ platform, hint, slim }: { platform: PlatformKey; hint?: string; slim?: boolean }) {
   const t = useT()
   return (
-    <div className="px-3 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700/50 text-xs text-slate-400">
+    <div className={slim ? 'text-[11px] text-slate-400 truncate' : 'px-3 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700/50 text-xs text-slate-400'}>
       <span className="text-slate-500">{t('platform')}:</span>{' '}
       <span className="font-medium text-slate-200">{t(PLATFORM_AIOPS_LABEL_KEY[platform])}</span>
       <span className="text-slate-500 ml-2">— {hint || t('ops_nl_hint')}</span>
@@ -41,9 +42,9 @@ function PlatformChatShell({
 }) {
   const t = useT()
   return (
-    <div className="-m-5 flex flex-col h-[calc(100vh-3.5rem)] min-h-0 overflow-hidden bg-slate-900">
-      <div className="flex-none px-4 pt-3 pb-2 border-b border-slate-700/50">
-        <PlatformBanner platform={platform} hint={t(CHAT_HINT[platform])} />
+    <div className="-m-5 flex flex-col flex-1 min-h-0 overflow-hidden bg-slate-900">
+      <div className="flex-none px-3 py-1 border-b border-slate-700/50">
+        <PlatformBanner platform={platform} hint={t(CHAT_HINT[platform])} slim />
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
         {children}
@@ -85,6 +86,7 @@ export const ExadataAnalysisPage = () => <AnalysisHub platform="exadata" />
 export const OpenShiftOpsPage = () => <OpenShiftOpsCenter />
 export const OpenShiftEventsPage = () => <EventsHub platform="openshift" />
 export const OpenShiftIncidentsPage = withPlatformPage('openshift', Incidents)
+export const OpenShiftAnalysisPage = () => <OpenShiftAnalysisHub />
 
 export const LinuxChatPage = () => (
   <PlatformChatShell platform="linux">

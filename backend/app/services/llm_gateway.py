@@ -13,6 +13,7 @@ değişiklikle bu modülü kullanabilir.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -29,6 +30,32 @@ from app.services import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Orkestratör, tur boyunca açık DB işlemini LLM çağrısından hemen önce bırakmak için kanca bağlar
+# (senkron ask/araç yolları thread içinde bloklayarak LLM bekler; olay akışı olmadığından
+# run_turn'ün periyodik bırakması orada devreye girmez → "idle in transaction").
+_release_hook: "contextvars.ContextVar[Any]" = contextvars.ContextVar("llm_release_hook", default=None)
+
+
+def bind_release_hook(fn):
+    return _release_hook.set(fn)
+
+
+def unbind_release_hook(token) -> None:
+    try:
+        _release_hook.reset(token)
+    except Exception:
+        pass
+
+
+def _before_llm_call() -> None:
+    fn = _release_hook.get()
+    if fn is not None:
+        try:
+            fn()
+        except Exception:
+            pass
 
 
 def _payload_chars(messages: List[Dict[str, Any]]) -> int:
@@ -59,28 +86,65 @@ def _remote_chat_url() -> str:
 
 
 def _requests_timeout(timeout: Optional[float]) -> Any:
-    """(connect, read) — bağlanamayan gateway'de uzun beklemeyi keser."""
-    read = 120.0 if timeout is None else float(timeout)
+    """(connect, read) — bağlanamayan gateway'de uzun beklemeyi keser.
+
+    Açık `timeout` önceliklidir; `None` → çağrı sınıfı varsayılanı (alt sınır 120 sn; llm_timeouts)."""
+    read = _default_read("background", 120.0) if timeout is None else float(timeout)
     return (llm_availability.CONNECT_TIMEOUT_SEC, read)
 
 
 def _httpx_timeout(timeout: Optional[float]) -> httpx.Timeout:
-    read = 180.0 if timeout is None else float(timeout)
+    read = _default_read("final_answer", 180.0) if timeout is None else float(timeout)
     return httpx.Timeout(read, connect=llm_availability.CONNECT_TIMEOUT_SEC)
+
+
+def _default_read(cls: str, floor: float) -> float:
+    """Açık timeout verilmeyen çağrıların okuma zaman aşımı: sınıf dinamik değeri (alt sınır = eski sabit)."""
+    try:
+        from app.services import llm_timeouts
+        return float(llm_timeouts.timeout_for(cls, floor=floor))
+    except Exception:
+        return floor
 
 
 # Gateway `stream_options` (usage) alanını reddettiyse bir daha gönderilmez.
 _stream_usage_supported = True
 
 
-def _note_remote_status(status_code: int, body: str = "") -> None:
-    """Uzak yanıtın devre kesiciye etkisi (4xx istek hatası sayılmaz)."""
+def _note_remote_status(status_code: int, body: str = "", *, best_effort: bool = False) -> None:
+    """Uzak yanıtın devre kesiciye etkisi (4xx istek hatası sayılmaz).
+
+    `best_effort=True` (isteğe bağlı yan çağrı): hata devre kesiciyi BESLEMEZ; başarı sayılır.
+    """
     if status_code == 200:
         llm_availability.record_success()
+    elif best_effort:
+        return
     elif status_code == 500 and "error parsing tool call" in (body or "").lower():
         return      # model çıktısı (bozuk tool-call JSON) hatası: sunucu arızası değil, devre kesiciyi açmasın
     elif llm_availability.is_retryable_status(status_code):
         llm_availability.record_failure(f"HTTP {status_code}: {(body or '')[:200]}")
+
+
+_BEST_EFFORT_OPEN_ERROR = "Uzak model şu an devre dışı (isteğe bağlı çağrı atlandı)"
+
+
+def _best_effort_open_result() -> Dict[str, Any]:
+    """Devre açıkken isteğe bağlı çağrı: ağ beklemeden, kullanıcıya dönük metin üretmeden döner."""
+    return {"response": "", "done": True, "error": _BEST_EFFORT_OPEN_ERROR, "remote_unavailable": True}
+
+
+def _remote_failure_result(e: Exception, best_effort: bool) -> Dict[str, Any]:
+    """Uzak istek istisnası: normal çağrı devre kesiciyi besler + kibar mesaj; best_effort ikisini de yapmaz."""
+    if best_effort:
+        return {"response": "", "done": True, "error": f"{type(e).__name__}: {e}"[:300],
+                "remote_unavailable": True}
+    llm_availability.record_failure(f"{type(e).__name__}: {e}")
+    return {
+        "response": "", "done": True,
+        "error": llm_availability.friendly_error(str(e)),
+        "remote_unavailable": True,
+    }
 
 
 def _remote_headers(
@@ -366,7 +430,10 @@ def chat_sync(
 ) -> _SyncChatResult:
     """Etkinlik kaydı (llm_activity) ile sarılmış chat_sync."""
     from app.services import llm_activity, llm_scheduler
-    with llm_scheduler.slot("chat_sync") as _lease, llm_activity.track("chat_sync", model, lease=_lease):
+    _before_llm_call()
+    with llm_scheduler.slot("chat_sync") as _lease, llm_activity.track(
+        "chat_sync", model, lease=_lease, timeout=timeout,
+    ):
         return _chat_sync_impl(
             model, messages, tools=tools, options=options, timeout=timeout,
             ai_source=ai_source, think=think,
@@ -496,6 +563,7 @@ def chat_stream_iter(
     `chat_sync` sonucu tek `content` + `done` olarak üretilir (davranış aynı kalır).
     """
     from app.services import llm_activity, llm_scheduler
+    _before_llm_call()
     with llm_scheduler.slot("chat_stream") as _lease, llm_activity.track("chat_stream", model, lease=_lease):
         yield from _chat_stream_iter_impl(
             model, messages, tools=tools, options=options, timeout=timeout,
@@ -638,13 +706,16 @@ async def generate_async(
     options: Optional[Dict[str, Any]] = None,
     timeout: Optional[float] = None,
     ai_source: Any = None,
+    best_effort: bool = False,
 ) -> Dict[str, Any]:
+    """`best_effort=True`: isteğe bağlı yan çağrı — başarısızlık uzak devre kesiciyi beslemez."""
     from app.services import llm_activity, llm_scheduler
+    _before_llm_call()
     async with llm_scheduler.aslot("generate_async") as _lease:
       with llm_activity.track("generate_async", model, lease=_lease):
         return await _generate_async_impl(
             client, model=model, prompt=prompt, system=system, options=options,
-            timeout=timeout, ai_source=ai_source,
+            timeout=timeout, ai_source=ai_source, best_effort=best_effort,
         )
 
 
@@ -657,6 +728,7 @@ async def _generate_async_impl(
     options: Optional[Dict[str, Any]] = None,
     timeout: Optional[float] = None,
     ai_source: Any = None,
+    best_effort: bool = False,
 ) -> Dict[str, Any]:
     """
     Ollama /api/generate (stream=False) ile aynı sözleşmeye sahip async çağrı.
@@ -702,6 +774,8 @@ async def _generate_async_impl(
 
     if remote_llm_enabled() and not is_remote_ollama(ai_source=src):
         if llm_availability.is_open():
+            if best_effort:
+                return _best_effort_open_result()
             return {
                 "response": "", "done": True,
                 "error": llm_availability.friendly_error(),
@@ -723,13 +797,8 @@ async def _generate_async_impl(
                 )
         except Exception as e:
             logger.error("[LLMGateway] uzak generate hatası: %s", e)
-            llm_availability.record_failure(f"{type(e).__name__}: {e}")
-            return {
-                "response": "", "done": True,
-                "error": llm_availability.friendly_error(str(e)),
-                "remote_unavailable": True,
-            }
-        _note_remote_status(resp.status_code, resp.text)
+            return _remote_failure_result(e, best_effort)
+        _note_remote_status(resp.status_code, resp.text, best_effort=best_effort)
         if resp.status_code != 200:
             return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
         data = resp.json()
@@ -743,6 +812,8 @@ async def _generate_async_impl(
 
     remote_native = remote_llm_enabled() and is_remote_ollama(ai_source=src)
     if remote_native and llm_availability.is_open():
+        if best_effort:
+            return _best_effort_open_result()
         return {
             "response": "", "done": True,
             "error": llm_availability.friendly_error(),
@@ -774,15 +845,10 @@ async def _generate_async_impl(
     except Exception as e:
         logger.error("[LLMGateway] Ollama generate hatası: %s", e)
         if remote_native:
-            llm_availability.record_failure(f"{type(e).__name__}: {e}")
-            return {
-                "response": "", "done": True,
-                "error": llm_availability.friendly_error(str(e)),
-                "remote_unavailable": True,
-            }
+            return _remote_failure_result(e, best_effort)
         return {"response": "", "done": True, "error": str(e)}
     if remote_native:
-        _note_remote_status(resp.status_code, resp.text)
+        _note_remote_status(resp.status_code, resp.text, best_effort=best_effort)
     if resp.status_code != 200:
         return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
     data = resp.json()
@@ -798,12 +864,38 @@ def generate_sync(
     options: Optional[Dict[str, Any]] = None,
     timeout: Optional[float] = None,
     ai_source: Any = None,
+    best_effort: bool = False,
+    think: Optional[str] = None,
+    skip_if_busy: bool = False,
 ) -> Dict[str, Any]:
+    """`best_effort=True`: isteğe bağlı yan çağrı — başarısızlık uzak devre kesiciyi beslemez.
+
+    `think`: yalnız native Ollama + gpt-oss (low|medium|high); diğer yollarda yok sayılır.
+    `skip_if_busy=True`: LLM slotu meşgulse (veya bu bağlamda zaten tutuluyorsa) çağrı HİÇ yapılmaz;
+    `{"skipped": "slot_busy", ...}` döner ve sayaç artar. Varsayılan davranış (bekle) değişmez.
+    """
     from app.services import llm_activity, llm_scheduler
-    with llm_scheduler.slot("generate_sync") as _lease, llm_activity.track("generate_sync", model, lease=_lease):
+    _before_llm_call()
+    if skip_if_busy:
+        with llm_scheduler.try_slot("generate_sync") as _lease:
+            if _lease is None:
+                llm_activity.note_skipped("generate_sync", "slot_busy", label="route_hint" if best_effort else "")
+                return {"response": "", "done": True, "error": "slot_busy", "skipped": "slot_busy"}
+            with llm_activity.track(
+                "generate_sync", model, lease=_lease, label="route_hint" if best_effort else "",
+                timeout=timeout if timeout is not None else _requests_timeout(None)[1],
+            ):
+                return _generate_sync_impl(
+                    model=model, prompt=prompt, system=system, options=options,
+                    timeout=timeout, ai_source=ai_source, best_effort=best_effort, think=think,
+                )
+    with llm_scheduler.slot("generate_sync") as _lease, llm_activity.track(
+        "generate_sync", model, lease=_lease, label="route_hint" if best_effort else "",
+        timeout=timeout if timeout is not None else _requests_timeout(None)[1],
+    ):
         return _generate_sync_impl(
             model=model, prompt=prompt, system=system, options=options,
-            timeout=timeout, ai_source=ai_source,
+            timeout=timeout, ai_source=ai_source, best_effort=best_effort, think=think,
         )
 
 
@@ -815,6 +907,8 @@ def _generate_sync_impl(
     options: Optional[Dict[str, Any]] = None,
     timeout: Optional[float] = None,
     ai_source: Any = None,
+    best_effort: bool = False,
+    think: Optional[str] = None,
 ) -> Dict[str, Any]:
     """generate_async'in senkron (requests tabanlı) eşleniği.
 
@@ -857,6 +951,8 @@ def _generate_sync_impl(
 
     if remote_llm_enabled() and not is_remote_ollama(ai_source=src):
         if llm_availability.is_open():
+            if best_effort:
+                return _best_effort_open_result()
             return {
                 "response": "", "done": True,
                 "error": llm_availability.friendly_error(),
@@ -878,13 +974,8 @@ def _generate_sync_impl(
             )
         except Exception as e:
             logger.error("[LLMGateway] uzak generate_sync hatası: %s", e)
-            llm_availability.record_failure(f"{type(e).__name__}: {e}")
-            return {
-                "response": "", "done": True,
-                "error": llm_availability.friendly_error(str(e)),
-                "remote_unavailable": True,
-            }
-        _note_remote_status(resp.status_code, resp.text)
+            return _remote_failure_result(e, best_effort)
+        _note_remote_status(resp.status_code, resp.text, best_effort=best_effort)
         if resp.status_code != 200:
             return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
         data = resp.json()
@@ -898,6 +989,8 @@ def _generate_sync_impl(
 
     remote_native = remote_llm_enabled() and is_remote_ollama(ai_source=src)
     if remote_native and llm_availability.is_open():
+        if best_effort:
+            return _best_effort_open_result()
         return {
             "response": "", "done": True,
             "error": llm_availability.friendly_error(),
@@ -914,6 +1007,10 @@ def _generate_sync_impl(
         payload["system"] = system
     if options:
         payload["options"] = options
+    if think:
+        from app.services.llm_chat_policy import supports_think_level
+        if supports_think_level(payload.get("model")):
+            payload["think"] = think
     payload = apply_ollama_payload(payload, include_num_ctx=True, ai_source=src)
     verify = remote_llm_ssl_verify() if remote_native else True
     try:
@@ -925,15 +1022,10 @@ def _generate_sync_impl(
     except Exception as e:
         logger.error("[LLMGateway] Ollama generate_sync hatası: %s", e)
         if remote_native:
-            llm_availability.record_failure(f"{type(e).__name__}: {e}")
-            return {
-                "response": "", "done": True,
-                "error": llm_availability.friendly_error(str(e)),
-                "remote_unavailable": True,
-            }
+            return _remote_failure_result(e, best_effort)
         return {"response": "", "done": True, "error": str(e)}
     if remote_native:
-        _note_remote_status(resp.status_code, resp.text)
+        _note_remote_status(resp.status_code, resp.text, best_effort=best_effort)
     if resp.status_code != 200:
         return {"response": "", "done": True, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
     data = resp.json()
@@ -957,6 +1049,7 @@ async def stream_generate(
     think: Optional[str] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     from app.services import llm_activity, llm_scheduler
+    _before_llm_call()
     async with llm_scheduler.aslot("stream_generate") as _lease:
       with llm_activity.track("stream_generate", model, lease=_lease):
         async for chunk in _stream_generate_impl(

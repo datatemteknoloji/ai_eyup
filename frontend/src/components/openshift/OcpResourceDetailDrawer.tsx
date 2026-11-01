@@ -47,7 +47,7 @@ function condDot(status?: string) {
 function Kv({ label, value }: { label: string; value?: ReactNode }) {
   return (
     <div className="flex justify-between gap-3 py-1.5 border-b border-white/[0.04] text-xs">
-      <span className="text-slate-500 flex-shrink-0">{label}</span>
+      <span className="text-slate-500 shrink-0">{label}</span>
       <span className="text-slate-100 text-right break-all min-w-0">{value ?? '—'}</span>
     </div>
   )
@@ -160,7 +160,7 @@ function PodExecTerminal({
   return (
     <div className="rounded-lg border border-white/[0.08] overflow-hidden flex flex-col h-[30rem]">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06] flex-wrap">
-        <TerminalIcon className="w-4 h-4 text-rose-400 flex-shrink-0" />
+        <TerminalIcon className="w-4 h-4 text-rose-400 shrink-0" />
         <span className="text-xs text-slate-200 font-mono truncate">{pod}</span>
         <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
           state === 'open' ? 'bg-emerald-500/15 text-emerald-300'
@@ -171,7 +171,7 @@ function PodExecTerminal({
         </span>
         {containers.length > 1 && (
           <select
-            className="text-[11px] bg-cyber-deep border border-white/[0.08] rounded px-2 py-1 text-slate-200 w-40"
+            className="text-[11px] bg-cyber-deep border border-white/[0.08] rounded-sm px-2 py-1 text-slate-200 w-40"
             value={container}
             onChange={(e) => setContainer(e.target.value)}
           >
@@ -318,7 +318,7 @@ function LogsPanel({
               setCopied(true)
               setTimeout(() => setCopied(false), 1500)
             }}
-            className="text-[11px] px-2 py-1 rounded border border-white/[0.08] text-slate-300 flex items-center gap-1"
+            className="text-[11px] px-2 py-1 rounded-sm border border-white/[0.08] text-slate-300 flex items-center gap-1"
           >
             {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
             Kopyala
@@ -326,14 +326,14 @@ function LogsPanel({
           <button
             type="button"
             onClick={download}
-            className="text-[11px] px-2 py-1 rounded border border-white/[0.08] text-slate-300 flex items-center gap-1"
+            className="text-[11px] px-2 py-1 rounded-sm border border-white/[0.08] text-slate-300 flex items-center gap-1"
           >
             <Download className="w-3 h-3" /> İndir
           </button>
           <button
             type="button"
             onClick={pull}
-            className="text-[11px] px-2 py-1 rounded border border-white/[0.08] text-rose-300 flex items-center gap-1"
+            className="text-[11px] px-2 py-1 rounded-sm border border-white/[0.08] text-rose-300 flex items-center gap-1"
           >
             <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Yenile
           </button>
@@ -469,12 +469,12 @@ export default function OcpResourceDetailDrawer({
   const maxW = isPod ? 'max-w-5xl' : 'max-w-4xl'
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs" onClick={onClose}>
       <div
         className={`w-full ${maxW} h-full bg-cyber-card border-l border-white/[0.08] flex flex-col shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex-shrink-0 px-5 pt-3 pb-0 border-b border-white/[0.06]">
+        <div className="shrink-0 px-5 pt-3 pb-0 border-b border-white/[0.06]">
           <div className="flex items-start gap-3">
             <div className="min-w-0">
               <p className="text-[11px] text-slate-500 truncate">
@@ -494,7 +494,7 @@ export default function OcpResourceDetailDrawer({
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
+            <div className="flex items-center gap-1 shrink-0 ml-auto">
               <button
                 type="button"
                 title={t('refresh_action')}
@@ -622,7 +622,7 @@ export default function OcpResourceDetailDrawer({
                         key={`${c.type}-${i}`}
                         className="flex items-start gap-2 text-xs rounded-lg border border-white/[0.06] bg-cyber-deep/40 px-3 py-2"
                       >
-                        <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${condDot(c.status)}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${condDot(c.status)}`} />
                         <div className="min-w-0">
                           <p className="text-slate-200">
                             {c.type} <span className="text-slate-500">= {c.status}</span>
@@ -766,11 +766,11 @@ export default function OcpResourceDetailDrawer({
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${
                       p.healthy || (p.phase || '').toLowerCase() === 'running' ? 'bg-emerald-400' : 'bg-red-400'
                     }`} />
                     <span className="text-xs text-white font-mono truncate">{p.name}</span>
-                    <span className="text-[11px] text-slate-500 ml-auto flex-shrink-0">{p.age}</span>
+                    <span className="text-[11px] text-slate-500 ml-auto shrink-0">{p.age}</span>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1">
                     {p.phase} · {p.ready} hazır
@@ -803,7 +803,7 @@ export default function OcpResourceDetailDrawer({
                             i % 2 ? 'bg-cyber-deep/40' : 'bg-cyber-deep/20'
                           }`}
                         >
-                          <span className="text-slate-300 font-mono flex-shrink-0 w-1/3 truncate">{e.name}</span>
+                          <span className="text-slate-300 font-mono shrink-0 w-1/3 truncate">{e.name}</span>
                           {e.secret ? (
                             <span className="text-amber-400/80 flex items-center gap-1">
                               <Lock className="w-3 h-3" /> Secret ·{' '}
@@ -848,13 +848,13 @@ export default function OcpResourceDetailDrawer({
                   <div className="flex items-center gap-2 flex-wrap mb-2">
                     <span className="text-sm text-white font-medium">{c.name}</span>
                     {c.init && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-slate-400">init</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-white/[0.06] text-slate-400">init</span>
                     )}
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${stateCls(c.state || '')}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${stateCls(c.state || '')}`}>
                       {c.state}
                     </span>
                     {!c.ready && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-amber-500/15 text-amber-300">
                         hazır değil
                       </span>
                     )}
@@ -1045,7 +1045,7 @@ export default function OcpResourceDetailDrawer({
                     }`}
                   >
                     <div className="flex items-center gap-2 flex-wrap text-xs">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${
                         e.warning || e.type === 'Warning'
                           ? 'bg-amber-500/15 text-amber-300'
                           : 'bg-white/[0.06] text-slate-400'
@@ -1064,7 +1064,7 @@ export default function OcpResourceDetailDrawer({
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-400 mt-1 break-words">{e.message}</p>
+                    <p className="text-[11px] text-slate-400 mt-1 wrap-break-word">{e.message}</p>
                   </div>
                 ))
               )}

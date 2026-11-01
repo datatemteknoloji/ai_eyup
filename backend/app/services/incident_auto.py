@@ -25,7 +25,12 @@ def auto_create_or_link_incident(db: Session, event: SystemEvent) -> Optional[in
 
     server_id = event.server_id
     event_type = event.event_type
-    key = event_problem_key(event)
+    raw_ev = event.raw_data or {}
+    if (event_type or "").startswith("hw_") and raw_ev.get("hw_server_key"):
+        # Donanım: aynı fiziksel sunucu = TEK incident (sağlık + farklı alarmlar aynı incident'a bağlanır)
+        key = f"hw|{raw_ev['hw_server_key']}"
+    else:
+        key = event_problem_key(event)
 
     matched: Optional[Incident] = (
         db.query(Incident)

@@ -116,19 +116,29 @@ UI: AnomalyDetection → Events → Incidents
 User message
     │
     ▼
-/api/v1/chat/stream (SSE)
+/api/v1/{chat | unified-chat | windows-chat | hypervisors/.../chat}/stream (SSE)
+    │   http_bridge → chat_orchestrator.create_turn (turn_id, Postgres + Redis)
+    ▼
+run_turn  ── global AI gate (Redis, eşzamanlı ≤ 3; sıra bilgisi `queued` olayı)
     │
-    ├──► Postgres pgvector similarity search (top-k chunks)
-    │    (runbooks, metric descriptions, incident history)
-    │
-    ├──► Server context fetch (selected servers' live metrics)
-    │
-    └──► Ollama chat completion (streaming)
-         model + system prompt + RAG context + server context
+    ├──► kapılar: eylem niyeti · varlık çözümleyici · sayım kuralları · QA kuralları
+    ├──► cevap önbelleği (yalnız kavramsal + tam eşleşme; RBAC imzalı)
+    ├──► kaynak planlayıcı: RAG (pgvector + lexical, modül filtreli, alaka eşiği)
+    │                       · Prometheus (yalnız PromQL) · araçlar (inventory, vcenter, oc …)
+    ├──► LLM (Ollama / REMOTE_LLM_*; devre kesici, dinamik zaman aşımı)
+    └──► doğrulayıcı (veriye dayalılık, geri tutma tamponu) → StreamGuard
               │
               ▼
-         SSE stream → browser (react-markdown render)
+   Redis akışı ainew:chat:evt:{turn_id}  (start · queued · progress · tool_* · token · done)
+              │
+              ▼
+   subscribe_sse → SSE → browser (chatStreamStore, react-markdown)
 ```
+
+Senkron işler (LLM, SQL, Redis SCAN, HTTP) event döngüsünü tıkamaması için ayrı
+`chat_io` iş parçacığı havuzunda koşar (`core/chat_executor.py`); ayrıntı ve
+ölçümler için [Scale & Performance](scale-and-performance.md#sohbet-ssesi-ve-event-döngüsü-adım-11-2026-10),
+yaşam döngüsü için `docs/guides/*/modules/ai-architecture.md`.
 
 ---
 

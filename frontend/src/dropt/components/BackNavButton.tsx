@@ -4,13 +4,13 @@ import { cn } from "@dropt/lib/utils";
 
 const baseClass = cn(
   "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px]",
-  "border border-white/[0.08] bg-[var(--bg-elevated,var(--color-secondary))]",
-  "text-[var(--text-secondary,var(--color-muted-foreground))]",
+  "border border-white/[0.08] bg-(--bg-elevated,var(--color-secondary))",
+  "text-(--text-secondary,var(--color-muted-foreground))",
   "shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors",
-  "hover:border-[var(--accent,var(--color-primary))]/40",
-  "hover:bg-[var(--accent-subtle,rgba(59,130,246,0.12))]",
-  "hover:text-[var(--accent,var(--color-primary))]",
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40",
+  "hover:border-(--accent,var(--color-primary))/40",
+  "hover:bg-(--accent-subtle,rgba(59,130,246,0.12))",
+  "hover:text-(--accent,var(--color-primary))",
+  "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-(--accent)/40",
   "disabled:pointer-events-none disabled:opacity-40",
 );
 

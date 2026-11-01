@@ -161,7 +161,7 @@ const TaskCard = ({ task, onRefresh }: { task: Task; onRefresh: () => void }) =>
         onClick={() => setExpanded(!expanded)}
       >
         {/* Icon + spinner */}
-        <div className="relative mt-0.5 flex-shrink-0">
+        <div className="relative mt-0.5 shrink-0">
           <span className="text-lg">{meta.icon}</span>
           {isPending && (
             <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-yellow-400 animate-ping" />
@@ -174,12 +174,12 @@ const TaskCard = ({ task, onRefresh }: { task: Task; onRefresh: () => void }) =>
             <span className={`text-xs font-semibold uppercase tracking-wider ${meta.color}`}>{typeLabel(task.type, t)}</span>
             <StatusBadge status={task.status} />
             {task.platform && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-slate-400 border border-white/[0.06]">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-white/[0.06] text-slate-400 border border-white/[0.06]">
                 {task.platform.toUpperCase()}
               </span>
             )}
             {task.risk_level && task.risk_level !== 'read_only' && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded border ${task.risk_level === 'mutating' ? 'bg-orange-500/10 text-orange-300 border-orange-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-sm border ${task.risk_level === 'mutating' ? 'bg-orange-500/10 text-orange-300 border-orange-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
                 {task.risk_level}
               </span>
             )}
@@ -226,7 +226,7 @@ const TaskCard = ({ task, onRefresh }: { task: Task; onRefresh: () => void }) =>
                 await fetch(`${API_BASE_URL}/snapshots/${task.raw_id}`, { method: 'DELETE' })
                 onRefresh()
               }}
-              className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-red-500/10 border border-red-500/20"
+              className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded-sm hover:bg-red-500/10 border border-red-500/20"
             >
               {t('audit_del_snap')}
             </button>

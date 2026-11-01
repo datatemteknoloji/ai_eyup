@@ -21,11 +21,21 @@ def _rt_sec(key: str, default: int) -> int:
         return default
 
 
+def _hw_logs_any_enabled() -> bool:
+    """Host log bayraklarından (3a / ipmitool in-band / BMC Redfish) biri açık mı? Hepsi kapalıysa iş kuyruğa girmez."""
+    try:
+        from app.services.hw.host_logs import any_enabled
+        return bool(any_enabled())
+    except Exception:
+        return False
+
+
 async def _enqueue_or_run(task_name: str, local_callable, *, label: str) -> None:
     """Önce Celery; worker yoksa local (executor / await)."""
     try:
         from app.worker import enqueue_fleet_job
-        if enqueue_fleet_job(task_name):
+        # Adım 11: enqueue_fleet_job Celery ping'i (senkron, ~1–2 sn) yapar — event döngüsünü tıkamasın
+        if await asyncio.to_thread(enqueue_fleet_job, task_name):
             logger.info("%s → Celery", label)
             return
     except Exception as exc:
@@ -93,6 +103,7 @@ class BackgroundTaskManager:
         self.tasks.append(asyncio.create_task(self._periodic_virt_insights()))
         self.tasks.append(asyncio.create_task(self._periodic_backup_sync()))
         self.tasks.append(asyncio.create_task(self._periodic_hw_sync()))
+        self.tasks.append(asyncio.create_task(self._periodic_hw_host_logs()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_reindex()))
         self.tasks.append(asyncio.create_task(self._periodic_rag_maintenance()))
         self.tasks.append(asyncio.create_task(self._periodic_snapshot_cleanup()))
@@ -256,7 +267,7 @@ class BackgroundTaskManager:
                             result.get("vcenter_saved", 0),
                         )
                         from app.services import qa_cache
-                        qa_cache.invalidate_all()
+                        await asyncio.to_thread(qa_cache.invalidate_all)  # Adım 11: Redis SCAN event döngüsünü bloklamasın
                 except Exception as e:
                     logger.error(f"Virt log sync error: {e}")
                 finally:
@@ -350,6 +361,12 @@ class BackgroundTaskManager:
                         except Exception as mon_exc:
                             logger.warning("OCP monitoring metric sync: %s", mon_exc)
                             mon = {}
+                        try:
+                            # Hazır raporlar › MTV Migrasyon: Plan/Migration anlık görüntüsü (salt-okunur GET)
+                            from app.services.openshift.mtv_history import sync_all_mtv_history
+                            await loop.run_in_executor(None, sync_all_mtv_history, db)
+                        except Exception as mtv_exc:
+                            logger.warning("MTV geçmiş anlık görüntüsü: %s", mtv_exc)
                         logger.info(
                             "OpenShift sync: %s cluster, %s yeni olay, monitoring rows=%s",
                             inv_result.get("total_clusters", 0),
@@ -357,7 +374,7 @@ class BackgroundTaskManager:
                             mon.get("rows", 0),
                         )
                         from app.services import qa_cache
-                        qa_cache.invalidate_all()
+                        await asyncio.to_thread(qa_cache.invalidate_all)  # Adım 11: Redis SCAN event döngüsünü bloklamasın
                 except Exception as e:
                     logger.error(f"OpenShift sync error: {e}", exc_info=True)
                 finally:
@@ -461,6 +478,28 @@ class BackgroundTaskManager:
                 break
             except Exception as e:
                 logger.error(f"Hardware sync task unexpected error: {e}")
+                await asyncio.sleep(300)
+
+    async def _periodic_hw_host_logs(self):
+        """Faz 3a: host donanım logları. `hw_host_logs_enabled` KAPALIyken (varsayılan) iş kuyruğa HİÇ girmez;
+        tick yalnız ayar okumasıdır."""
+        logger.info("Host hardware logs scheduler started (yalnız ayar açıkken iş üretir)")
+        await asyncio.sleep(240)
+
+        while self.running:
+            try:
+                from app.services.runtime_settings import get_bool
+                if await asyncio.to_thread(_hw_logs_any_enabled):
+                    from app.services.fleet_jobs import run_hw_host_logs
+                    await _enqueue_or_run("fleet.hw_host_logs", run_hw_host_logs, label="hw_host_logs")
+                    await asyncio.sleep(_rt_sec("hw_host_logs_interval_sec", 3600))
+                else:
+                    await asyncio.sleep(300)
+            except asyncio.CancelledError:
+                logger.info("Host hardware logs task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Host hardware logs task unexpected error: {e}")
                 await asyncio.sleep(300)
 
     async def _periodic_rag_reindex(self):
@@ -674,7 +713,7 @@ class BackgroundTaskManager:
                         None, _run_vm_sync_batch, db
                     )
                     from app.services import qa_cache
-                    qa_cache.invalidate_all()
+                    await asyncio.to_thread(qa_cache.invalidate_all)  # Adım 11: Redis SCAN event döngüsünü bloklamasın
                 except Exception as e:
                     logger.error(f"VM auto-sync error: {e}", exc_info=True)
                 finally:
@@ -775,60 +814,124 @@ class BackgroundTaskManager:
                 logger.error(f"Windows live-metrics task error: {e}", exc_info=True)
                 await asyncio.sleep(60)
 
+# hypervisor_id → time.monotonic() değeri; bu zamana kadar toplu VM sync o hypervisor'ı atlar
+# (erişilemeyen vCenter/oVirt için her sunucuda 10 sn bağlantı zaman aşımı yaşanmasın).
+_VM_SYNC_BACKOFF: dict = {}
+
+
 def _run_vm_sync_batch(db) -> None:
     """
     Blocking işlev — thread pool'da çalışır.
     1. hypervisor_id var, hypervisor_vm_id yok → hemen sync et
     2. hypervisor_vm_id var ama vm_last_sync > 24 saat önce → yenile
     """
+    import time as _time
+    from collections import OrderedDict
     from datetime import datetime, timezone, timedelta
+    from sqlalchemy import or_
+    from app.core.database import SessionLocal
     from app.models.server import Server
     from app.services.snapshot_service import search_and_sync_vm_details
 
     now = datetime.now(timezone.utc)
     stale_cutoff = now - timedelta(hours=24)
 
-    # Henüz VM ID'si bilinmeyen sunucular
-    missing = (
-        db.query(Server)
+    # Hedef listesi: yalnız (id, hypervisor_id) — ORM nesnesi tutulmaz. Eksik VM ID'si
+    # VEYA son senkronizasyon 24 saatten eski olanlar.
+    rows = (
+        db.query(Server.id, Server.hypervisor_id)
         .filter(
             Server.hypervisor_id.isnot(None),
-            Server.hypervisor_vm_id.is_(None),
+            or_(
+                Server.hypervisor_vm_id.is_(None),
+                Server.vm_last_sync.is_(None),
+                Server.vm_last_sync < stale_cutoff,
+            ),
         )
+        .order_by(Server.hypervisor_id, Server.id)
         .all()
     )
+    # Listeyi aldıktan sonra işlemi KAPAT: aksi halde tüm tur boyunca (saatlerce) açık kalıp
+    # TimescaleDB retention'ın AccessExclusive kilidini engeller → uygulama kilitlenir.
+    try:
+        db.rollback()
+    except Exception:
+        pass
 
-    # VM ID'si var ama son senkronizasyon 24 saatten eski
-    stale = (
-        db.query(Server)
-        .filter(
-            Server.hypervisor_id.isnot(None),
-            Server.hypervisor_vm_id.isnot(None),
-            (Server.vm_last_sync.is_(None)) | (Server.vm_last_sync < stale_cutoff),
-        )
-        .all()
-    )
-
-    targets = missing + stale
-    if not targets:
+    if not rows:
         return
 
-    logger.info(f"VM auto-sync: {len(missing)} eksik ID, {len(stale)} eski kayıt — toplam {len(targets)}")
+    by_hv: "OrderedDict[int, list]" = OrderedDict()
+    for sid, hv_id in rows:
+        by_hv.setdefault(hv_id, []).append(sid)
+
+    logger.info(f"VM auto-sync: {len(rows)} sunucu, {len(by_hv)} hypervisor")
+
+    max_seconds = int(os.getenv("VM_AUTO_SYNC_MAX_SECONDS", "1800"))
+    breaker_threshold = int(os.getenv("VM_AUTO_SYNC_BREAKER_FAILS", "2"))
+    backoff_seconds = int(os.getenv("VM_AUTO_SYNC_BACKOFF_SECONDS", "1800"))
+    deadline = _time.monotonic() + max_seconds
 
     ok_count = 0
-    for srv in targets:
-        try:
-            result = search_and_sync_vm_details(srv, db)
-            if result.get("found"):
-                ok_count += 1
-                logger.debug(f"VM sync OK: {srv.name} → {result.get('vm_id')}")
-            else:
-                logger.debug(f"VM sync miss: {srv.name} — {result.get('message', '')}")
-        except Exception as e:
-            logger.warning(f"VM sync hata ({srv.name}): {e}")
+    attempted = 0
+    skipped_unreachable = 0
+    for hv_id, server_ids in by_hv.items():
+        if _time.monotonic() < _VM_SYNC_BACKOFF.get(hv_id, 0.0):
+            skipped_unreachable += len(server_ids)
+            logger.info("VM auto-sync: hypervisor #%s geri çekilme süresinde — %d sunucu atlandı",
+                        hv_id, len(server_ids))
+            continue
 
-    if ok_count:
-        logger.info(f"VM auto-sync tamamlandı: {ok_count}/{len(targets)} güncellendi")
+        consecutive_unreachable = 0
+        for idx, sid in enumerate(server_ids):
+            if _time.monotonic() > deadline:
+                logger.warning("VM auto-sync: süre sınırı (%ss) doldu; kalan sunucular sonraki tura", max_seconds)
+                break
+            # Sunucu başına KISA oturum: ağ beklemesi sırasında açık işlem tutulmaz.
+            s = SessionLocal()
+            try:
+                srv = s.get(Server, sid)
+                if srv is None:
+                    continue
+                attempted += 1
+                result = search_and_sync_vm_details(srv, s)
+                if result.get("found"):
+                    ok_count += 1
+                    consecutive_unreachable = 0
+                    logger.debug(f"VM sync OK: #{sid} → {result.get('vm_id')}")
+                elif result.get("unreachable"):
+                    consecutive_unreachable += 1
+                    logger.debug(f"VM sync miss: #{sid} — {result.get('message', '')}")
+                else:
+                    consecutive_unreachable = 0
+                    logger.debug(f"VM sync miss: #{sid} — {result.get('message', '')}")
+            except Exception as e:
+                logger.warning(f"VM sync hata (#{sid}): {e}")
+            finally:
+                try:
+                    s.rollback()
+                except Exception:
+                    pass
+                s.close()
+
+            if consecutive_unreachable >= breaker_threshold:
+                rest = len(server_ids) - idx - 1
+                skipped_unreachable += rest
+                _VM_SYNC_BACKOFF[hv_id] = _time.monotonic() + backoff_seconds
+                logger.warning(
+                    "VM auto-sync: hypervisor #%s erişilemiyor (%d ardışık başarısız oturum) — "
+                    "kalan %d sunucu atlandı, %d sn geri çekilme",
+                    hv_id, consecutive_unreachable, rest, backoff_seconds,
+                )
+                break
+        else:
+            # Hiç kesilmediyse hypervisor ulaşılabilir
+            _VM_SYNC_BACKOFF.pop(hv_id, None)
+
+    logger.info(
+        "VM auto-sync tamamlandı: %d/%d güncellendi (%d atlandı: erişilemeyen hypervisor)",
+        ok_count, attempted, skipped_unreachable,
+    )
 
 
 # Global instance

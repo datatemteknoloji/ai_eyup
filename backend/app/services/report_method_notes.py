@@ -24,10 +24,24 @@ _EXTRA: Dict[Tuple[str, str], Tuple[str, ...]] = {
     ("exadata", "capacity"): ("exa.health",),
     ("executive", "executive"): ("ops.health_score", "ops.platform_cards", "ops.issues",
                                  "linux.metrics", "win.metrics", "exa.health"),
+    # OpenShift ekip raporları (`ocp_report_engine`)
+    ("openshift", "capacity"): ("ocp.capacity.requests",),
+    ("openshift", "forecast"): ("report.capacity_trend",),
+    ("openshift", "capacity_plan"): ("ocp.cluster.n_plus_one", "ocp.capacity.whatif"),
+    ("openshift", "mtv_migration"): ("report.mtv.history",),
+    ("openshift", "mtv_readiness"): ("report.mtv.readiness", "report.mtv.history"),
+    # Yönetici «Tüm Ortamlar» raporları (`exec_catalog_reports`)
+    ("executive", "executive_summary"): ("report.exec.health", "report.exec.matrix"),
+    ("executive", "risk"): ("report.exec.health", "report.exec.matrix"),
+    ("executive", "riskiest_assets"): ("report.exec.health", "report.exec.matrix"),
+    ("executive", "forecast"): ("report.capacity_trend", "report.exec.matrix"),
+    ("executive", "capacity"): ("report.exec.matrix",),
+    ("executive", "migration"): ("report.mtv.readiness", "report.mtv.history", "report.exec.matrix"),
 }
 
 # Kapsam bazında her rapora eklenen kaynak notu (rapor türüne özel değilse).
 _SCOPE_SOURCE: Dict[str, Tuple[str, ...]] = {
+    "openshift": ("ocp.*",),
     "linux": ("linux.metrics",),
     "windows": ("win.metrics",),
     "exadata": ("exa.health",),

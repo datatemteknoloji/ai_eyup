@@ -56,7 +56,7 @@ export default function FindingContext({ ctx, onOpenFinding, openable }: { ctx: 
   const g = ctx.guide
   if (!imp && !rel.length && !evt.length && !oth.length && !g) return null
   return (
-    <div className="space-y-3 rounded border border-white/[0.06] bg-black/20 p-3" data-testid="finding-context">
+    <div className="space-y-3 rounded-sm border border-white/[0.06] bg-black/20 p-3" data-testid="finding-context">
       {imp && imp.available && imp.verdict && (
         <div data-testid="fc-impact" className="space-y-0.5">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">{t('vi_fc_impact')}</div>

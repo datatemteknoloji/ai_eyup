@@ -211,6 +211,11 @@ def test_loop_streams_last_turn_without_extra_llm_call(monkeypatch, _loop_env):
 
 
 def test_loop_without_policy_is_unchanged(monkeypatch, _loop_env):
+    """Politikasız döngü, araç turu bütçesi KAPALIYKEN (unified_tool_num_predict=0) eskisiyle aynı çağrı imzasını kullanır.
+    (Adım 3/2B: varsayılan bütçe açıktır — bkz. test_llm_2b.test_arac_turu_payloadina_think_ve_num_predict_girer.)"""
+    from app.services import runtime_settings as _rs
+    _orig = _rs.get_setting
+    monkeypatch.setattr(_rs, "get_setting", lambda k: 0 if k == "unified_tool_num_predict" else _orig(k))
     calls = []
 
     def fake_plain(model, messages, tools, timeout=90):  # think/num_predict kabul ETMEZ

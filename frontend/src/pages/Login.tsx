@@ -1,19 +1,53 @@
-import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Check, Lock, Moon, Share2, ShieldCheck, Sun } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { useBranding } from '../branding/BrandingContext'
 import { API_BASE_URL } from '../config/api'
 import { useLocale } from '../i18n/LocaleProvider'
+import { useTheme } from '../theme/ThemeProvider'
+import type { Locale } from '../i18n/messages'
+import LoginHub from '../components/login/LoginHub'
+import './login.css'
 
 type Step = 'credentials' | 'mfa' | 'enroll'
+type Tab = 'ad' | 'local'
+type LoginOptions = { ad_enabled: boolean; sso_enabled: boolean }
+
+const OPTS_KEY = 'ainew_login_options'
+const TAB_KEY = 'ainew_login_tab'
+const NO_OPTIONS: LoginOptions = { ad_enabled: false, sso_enabled: false }
+
+// SSO kodu tek kullanımlıktır; React StrictMode çift efektinde ikinci kez tüketilmesin.
+const handledSsoCodes = new Set<string>()
+
+function readOptions(): LoginOptions {
+  try {
+    const raw = JSON.parse(localStorage.getItem(OPTS_KEY) || 'null')
+    if (raw && typeof raw === 'object') {
+      return { ad_enabled: !!raw.ad_enabled, sso_enabled: !!raw.sso_enabled }
+    }
+  } catch {
+    /* yok say */
+  }
+  return NO_OPTIONS
+}
+
+function readTab(): Tab {
+  return localStorage.getItem(TAB_KEY) === 'local' ? 'local' : 'ad'
+}
 
 const Login: React.FC = () => {
-  const { login, completeMfaLogin } = useAuth()
-  const { appName, logoUrl, version } = useBranding()
+  const { login, completeMfaLogin, completeSsoLogin } = useAuth()
+  const { appName, logoUrl, version, companyName, tagline, footerText, heroTitle, heroText } = useBranding()
   const { t, locale, setLocale } = useLocale()
+  const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
+  const [params] = useSearchParams()
+
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -21,6 +55,67 @@ const Login: React.FC = () => {
   const [mfaToken, setMfaToken] = useState('')
   const [otpauthUrl, setOtpauthUrl] = useState('')
   const [secret, setSecret] = useState('')
+  const [options, setOptions] = useState<LoginOptions>(readOptions)
+  const [tab, setTab] = useState<Tab>(readTab)
+  const [ssoState, setSsoState] = useState<null | 'redirecting' | 'completing'>(null)
+
+  // AD kapalıysa sekme yok: tek form (arka uç hesabın türüne göre kendisi karar verir).
+  const activeTab: Tab = options.ad_enabled ? tab : 'local'
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API_BASE_URL}/public/login-options`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (cancelled || !data) return
+        const next = { ad_enabled: !!data.ad_enabled, sso_enabled: !!data.sso_enabled }
+        setOptions(next)
+        localStorage.setItem(OPTS_KEY, JSON.stringify(next))
+      })
+      .catch(() => {
+        /* son bilinen seçeneklerle devam */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // IdP dönüşü: ?sso_code=… (tek kullanımlık) veya ?sso_error=…
+  useEffect(() => {
+    const ssoCode = params.get('sso_code')
+    const ssoError = params.get('sso_error')
+    if (!ssoCode && !ssoError) return
+    window.history.replaceState(null, '', window.location.pathname)
+    if (ssoError) {
+      setError(`${t('login_sso_failed')}: ${ssoError.slice(0, 200)}`)
+      return
+    }
+    if (!ssoCode || handledSsoCodes.has(ssoCode)) return
+    handledSsoCodes.add(ssoCode)
+    setSsoState('completing')
+    completeSsoLogin(ssoCode)
+      .then(() => navigate('/', { replace: true }))
+      .catch((err: any) => {
+        setError(err?.message || t('login_sso_failed'))
+        setSsoState(null)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- yalnızca ilk yüklemede
+  }, [])
+
+  // Tarayıcı "geri" ile döndüğünde (bfcache) yönlendirme durumu takılı kalmasın.
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setSsoState(null)
+    }
+    window.addEventListener('pageshow', onShow)
+    return () => window.removeEventListener('pageshow', onShow)
+  }, [])
+
+  const chooseTab = (next: Tab) => {
+    setTab(next)
+    localStorage.setItem(TAB_KEY, next)
+    setError('')
+  }
 
   const finish = async () => {
     navigate('/', { replace: true })
@@ -76,126 +171,260 @@ const Login: React.FC = () => {
     }
   }
 
+  const startSso = () => {
+    setError('')
+    setSsoState('redirecting')
+    window.location.assign(`${API_BASE_URL}/auth/sso/start`)
+  }
+
+  const onTabKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault()
+      chooseTab(activeTab === 'ad' ? 'local' : 'ad')
+    }
+  }
+
+  const company = companyName || t('login_default_company')
+  const footer = footerText || t('login_default_footer', { year: new Date().getFullYear() })
+  const secure = typeof window !== 'undefined' && window.location.protocol === 'https:'
+
+  const brand = (
+    <div className="lg-brand">
+      {logoUrl ? (
+        <img className="lg-brand-logo" src={logoUrl} alt={appName} />
+      ) : (
+        <span className="lg-brand-mark" aria-hidden="true">
+          <Share2 size={18} strokeWidth={2.2} />
+        </span>
+      )}
+      <span className="lg-brand-text">
+        <span className="lg-brand-name">{appName}</span>
+        <span className="lg-brand-company">{company}</span>
+      </span>
+    </div>
+  )
+
+  const errorBox = error ? (
+    <div className="lg-error" role="alert">
+      {error}
+    </div>
+  ) : null
+
   return (
-    <div className="min-h-screen bg-cyber-deep flex flex-col items-center justify-start px-4 pt-[20vh] pb-8">
-      <div className="w-full max-w-sm">
-        <div className="flex flex-col items-center gap-3 mb-8">
-          {logoUrl ? (
-            <img
-              src={logoUrl}
-              alt={appName}
-              className="h-24 w-auto max-w-[280px] object-contain"
-            />
-          ) : (
-            <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center">
-              <span className="text-white font-bold text-2xl">DT</span>
-            </div>
-          )}
-          <span className="text-white font-semibold text-xl text-center leading-snug">{appName}</span>
+    <div className="lg-root">
+      <aside className="lg-hero">
+        {brand}
+        <div className="lg-hero-body">
+          <p className="lg-eyebrow">{tagline || t('login_eyebrow')}</p>
+          <h2 className="lg-title">{heroTitle || t('login_hero_title')}</h2>
+          <p className="lg-lead">{heroText || t('login_hero_text')}</p>
         </div>
+        <LoginHub appName={appName} logoUrl={logoUrl} ariaLabel={t('login_hub_aria')} />
+        <ul className="lg-features">
+          {(['login_feat_capacity', 'login_feat_health', 'login_feat_ai'] as const).map(k => (
+            <li key={k}>
+              <Check size={14} strokeWidth={2.5} aria-hidden="true" />
+              {t(k)}
+            </li>
+          ))}
+        </ul>
+      </aside>
 
-        {step === 'credentials' ? (
-          <form onSubmit={submitCreds}
-            className="bg-slate-800 border border-white/[0.06] rounded-2xl p-6 space-y-4 shadow-2xl">
-            <h1 className="text-lg font-semibold text-white text-center">{t('login_title')}</h1>
-
-            {error && (
-              <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
-                {error}
-              </div>
-            )}
-
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">{t('login_username')}</label>
-              <input
-                autoFocus
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 outline-none"
-                placeholder="admin"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">{t('login_password')}</label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 outline-none"
-                placeholder="••••••••"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={busy || !username || !password}
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 text-white font-medium rounded-lg py-2.5 text-sm transition-colors flex items-center justify-center gap-2"
-            >
-              {busy ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> {t('login_submitting')}</> : t('login_submit')}
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={submitMfa}
-            className="bg-slate-800 border border-white/[0.06] rounded-2xl p-6 space-y-4 shadow-2xl">
-            <h1 className="text-lg font-semibold text-white text-center">
-              {step === 'enroll' ? t('login_mfa_enroll') : t('login_mfa_verify')}
-            </h1>
-            {step === 'enroll' && (
-              <div className="text-xs text-slate-400 space-y-2">
-                <p>{t('login_mfa_secret_hint')}</p>
-                <p className="font-mono text-amber-200 break-all bg-cyber-deep rounded-lg px-2 py-2">{secret}</p>
-                {otpauthUrl && (
-                  <p className="break-all text-slate-500">otpauth: {otpauthUrl}</p>
-                )}
-              </div>
-            )}
-            {error && (
-              <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
-                {error}
-              </div>
-            )}
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">{t('login_mfa_code')}</label>
-              <input
-                autoFocus
-                value={code}
-                onChange={e => setCode(e.target.value)}
-                className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-white text-sm tracking-widest focus:border-blue-500 outline-none"
-                placeholder="000000"
-                inputMode="numeric"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={busy || code.trim().length < 6}
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 disabled:opacity-50 text-white font-medium rounded-lg py-2.5 text-sm"
-            >
-              {busy ? t('login_mfa_verifying') : t('login_mfa_confirm')}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setStep('credentials'); setCode(''); setError('') }}
-              className="w-full text-xs text-slate-400 hover:text-white"
-            >
-              {t('login_back')}
-            </button>
-          </form>
-        )}
-
-        <div className="flex items-center justify-center gap-2 mt-4">
+      <main className="lg-main">
+        <div className="lg-toolbar">
+          <select
+            className="lg-ctl lg-select"
+            value={locale}
+            onChange={e => setLocale(e.target.value as Locale)}
+            aria-label={t('language')}
+          >
+            <option value="tr">{t('language_tr')}</option>
+            <option value="en">{t('language_en')}</option>
+          </select>
           <button
             type="button"
-            onClick={() => setLocale(locale === 'tr' ? 'en' : 'tr')}
-            className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 rounded-lg border border-white/[0.06]"
+            className="lg-ctl lg-icon-btn"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? t('login_theme_to_light') : t('login_theme_to_dark')}
+            title={theme === 'dark' ? t('login_theme_to_light') : t('login_theme_to_dark')}
           >
-            {locale === 'tr' ? 'EN' : 'TR'}
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
         </div>
-        <p className="text-center text-xs text-slate-600 mt-2">
-          {appName}{version ? ` v${version}` : ''} · © 2026
-        </p>
-      </div>
+
+        <div className="lg-center">
+          <div className="lg-card">
+            <div className="lg-mobile-brand">{brand}</div>
+
+            {ssoState ? (
+              <div className="lg-fullstate" role="status">
+                <span className="lg-spin" />
+                {ssoState === 'completing' ? t('login_sso_completing') : t('login_sso_redirecting')}
+              </div>
+            ) : step === 'credentials' ? (
+              <form onSubmit={submitCreds} noValidate>
+                <h1>{t('login_form_title')}</h1>
+                <p className="lg-sub">
+                  {options.ad_enabled ? t('login_form_sub') : t('login_form_sub_local')}
+                </p>
+
+                {options.ad_enabled && (
+                  <div className="lg-seg" role="tablist" onKeyDown={onTabKey}>
+                    {(['ad', 'local'] as const).map(k => (
+                      <button
+                        key={k}
+                        type="button"
+                        role="tab"
+                        className="lg-tab"
+                        aria-selected={activeTab === k}
+                        tabIndex={activeTab === k ? 0 : -1}
+                        onClick={() => chooseTab(k)}
+                      >
+                        {k === 'ad' ? t('login_tab_ad') : t('login_tab_local')}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {errorBox}
+
+                <div className="lg-field">
+                  <label className="lg-label" htmlFor="lg-user">
+                    {t('login_username')}
+                  </label>
+                  <input
+                    id="lg-user"
+                    className="lg-input"
+                    autoFocus
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    placeholder={activeTab === 'ad' && options.ad_enabled ? t('login_username_ph_ad') : t('login_username_ph_local')}
+                  />
+                </div>
+
+                <div className="lg-field">
+                  <label className="lg-label" htmlFor="lg-pass">
+                    {t('login_password')}
+                  </label>
+                  <div className="lg-input-wrap">
+                    <input
+                      id="lg-pass"
+                      className="lg-input has-reveal"
+                      type={showPw ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="lg-reveal"
+                      onClick={() => setShowPw(v => !v)}
+                      aria-pressed={showPw}
+                    >
+                      {showPw ? t('login_password_hide') : t('login_password_show')}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="lg-btn lg-btn-primary"
+                  disabled={busy || !username || !password}
+                >
+                  {busy ? (
+                    <>
+                      <span className="lg-spin" /> {t('login_submitting')}
+                    </>
+                  ) : (
+                    t('login_submit_cta')
+                  )}
+                </button>
+
+                {options.sso_enabled && (
+                  <>
+                    <div className="lg-divider" aria-hidden="true">
+                      {t('login_or')}
+                    </div>
+                    <button type="button" className="lg-btn lg-btn-outline" onClick={startSso}>
+                      <Lock size={15} aria-hidden="true" />
+                      {t('login_sso')}
+                    </button>
+                  </>
+                )}
+
+                <p className="lg-note">
+                  <ShieldCheck size={15} aria-hidden="true" />
+                  <span>{secure ? t('login_note_secure') : t('login_note_audit')}</span>
+                </p>
+              </form>
+            ) : (
+              <form onSubmit={submitMfa} noValidate>
+                <h1>{step === 'enroll' ? t('login_mfa_enroll') : t('login_mfa_verify')}</h1>
+                <p className="lg-sub">
+                  {step === 'enroll' ? t('login_mfa_enroll_sub') : t('login_mfa_sub')}
+                </p>
+                {step === 'enroll' && (
+                  <div>
+                    <p className="lg-hint">{t('login_mfa_secret_hint')}</p>
+                    <p className="lg-secret">{secret}</p>
+                    {otpauthUrl && (
+                      <p className="lg-hint lg-mono" style={{ wordBreak: 'break-all' }}>
+                        otpauth: {otpauthUrl}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {errorBox}
+                <div className="lg-field">
+                  <label className="lg-label" htmlFor="lg-code">
+                    {t('login_mfa_code')}
+                  </label>
+                  <input
+                    id="lg-code"
+                    className="lg-input is-code"
+                    autoFocus
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    maxLength={8}
+                    value={code}
+                    onChange={e => setCode(e.target.value)}
+                    placeholder="000000"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="lg-btn lg-btn-primary"
+                  disabled={busy || code.trim().length < 6}
+                >
+                  {busy ? t('login_mfa_verifying') : t('login_mfa_confirm')}
+                </button>
+                <button
+                  type="button"
+                  className="lg-link"
+                  onClick={() => {
+                    setStep('credentials')
+                    setCode('')
+                    setError('')
+                  }}
+                >
+                  {t('login_back')}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+
+        <footer className="lg-footer">
+          <span className="lg-mono">
+            {appName}
+            {version ? ` v${version}` : ''}
+          </span>
+          <span>{footer}</span>
+        </footer>
+      </main>
     </div>
   )
 }

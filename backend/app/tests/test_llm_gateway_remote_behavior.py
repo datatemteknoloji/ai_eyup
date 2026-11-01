@@ -99,6 +99,17 @@ def remote_server(monkeypatch):
         server.server_close()
 
 
+def _wait_open(timeout=3.0):
+    """Olay döngüsündeki hatalarda sağlık yoklaması arka planda koşar (Adım 3): devre kısa süre sonra açılır."""
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        if la.is_open():
+            return True
+        time.sleep(0.02)
+    return la.is_open()
+
+
 def _stream_all(prompt="selam"):
     async def run():
         out = []
@@ -166,7 +177,7 @@ def test_server_error_opens_circuit_and_never_falls_back_to_ollama(remote_server
         chunks = _stream_all()
         assert chunks[-1].get("error")
 
-    assert la.is_open() is True
+    assert _wait_open() is True
 
     # Devre açıkken istek ağa hiç çıkmaz, kibar mesajla döner
     before = len(remote_server["requests"])
@@ -180,7 +191,7 @@ def test_recovery_after_success(remote_server):
     remote_server["mode"] = "server_error"
     for _ in range(la.FAILURE_THRESHOLD):
         _stream_all()
-    assert la.is_open() is True
+    assert _wait_open() is True
 
     remote_server["mode"] = "ok"
     la.reset()  # devre süresi dolduğunda yapılan ilk deneme

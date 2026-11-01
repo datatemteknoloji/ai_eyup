@@ -216,14 +216,14 @@ export function LimitsPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("wizard_limits")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">
         PAM limits · 99-dropt-portal.conf · çakışan satırlar # · yeni login’de geçerli
       </p>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
         <form
           onSubmit={onSubmit}
-          className="space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
+          className="space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-5"
         >
           <Input placeholder={t("talep_id")} value={talepId} onChange={(e) => setTalepId(e.target.value)} required />
 
@@ -236,7 +236,7 @@ export function LimitsPage() {
 
           <div className="grid items-end gap-3 sm:grid-cols-2">
             <div className="min-w-0">
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">
                 User / domain
               </label>
               <Input
@@ -247,7 +247,7 @@ export function LimitsPage() {
               />
             </div>
             <div className="min-w-0">
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Type</label>
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Type</label>
               <Select value={limitType} onValueChange={setLimitType}>
                 <SelectTrigger className="h-9">
                   <SelectValue />
@@ -263,7 +263,7 @@ export function LimitsPage() {
 
           <div className="grid items-end gap-3 sm:grid-cols-2">
             <div className="min-w-0">
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Item</label>
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Item</label>
               <Select value={item} onValueChange={setItem}>
                 <SelectTrigger className="h-9">
                   <SelectValue placeholder="Seçin" />
@@ -279,7 +279,7 @@ export function LimitsPage() {
               </Select>
             </div>
             <div className="min-w-0">
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Değer</label>
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Değer</label>
               <Input
                 className="h-9 font-mono"
                 placeholder="65536 veya unlimited"
@@ -287,9 +287,9 @@ export function LimitsPage() {
                 onChange={(e) => setValue(e.target.value)}
               />
               {value.trim() && !VALUE_RE.test(value.trim()) ? (
-                <p className="mt-1 text-xs text-[var(--color-destructive)]">Sayı veya unlimited</p>
+                <p className="mt-1 text-xs text-(--color-destructive)">Sayı veya unlimited</p>
               ) : (
-                <p className="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+                <p className="mt-1 text-[10px] text-(--color-muted-foreground)">
                   stack/memlock genelde KB
                 </p>
               )}
@@ -297,11 +297,11 @@ export function LimitsPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">
+            <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">
               Custom satırlar (tekli / çoklu)
             </label>
             <textarea
-              className="min-h-[200px] w-full resize-y rounded-lg border border-[var(--color-border)] bg-[var(--bg-deep,var(--theme-inset))] px-3 py-2.5 font-mono text-sm leading-relaxed text-[var(--color-foreground)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+              className="min-h-[200px] w-full resize-y rounded-lg border border-(--color-border) bg-(--bg-deep,var(--theme-inset)) px-3 py-2.5 font-mono text-sm leading-relaxed text-(--color-foreground) outline-hidden focus-visible:ring-2 focus-visible:ring-(--color-ring)"
               placeholder={"oracle soft nofile 65536\noracle hard nofile 65536\noracle soft nproc 16384"}
               value={custom}
               onChange={(e) => setCustom(e.target.value)}
@@ -309,25 +309,25 @@ export function LimitsPage() {
               rows={8}
             />
             {customError ? (
-              <p className="mt-1 text-xs text-[var(--color-destructive)]">{customError}</p>
+              <p className="mt-1 text-xs text-(--color-destructive)">{customError}</p>
             ) : (
-              <p className="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+              <p className="mt-1 text-[10px] text-(--color-muted-foreground)">
                 Her satır: domain soft|hard|- item value
               </p>
             )}
           </div>
 
-          {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+          {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
           <Button type="submit" disabled={busy || !canSubmit}>
             {busy ? "…" : t("preview")}
           </Button>
         </form>
 
-        <aside className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <aside className="rounded-xl border border-(--color-border) bg-(--color-card) p-5">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
               <h3 className="text-sm font-medium">Mevcut limits</h3>
-              <p className="text-[10px] text-[var(--color-muted-foreground)]">
+              <p className="text-[10px] text-(--color-muted-foreground)">
                 limits.conf + limits.d · çift tıkla → forma aktar
               </p>
             </div>
@@ -342,15 +342,15 @@ export function LimitsPage() {
             </Button>
           </div>
           {cached && !loading ? (
-            <p className="mb-2 text-[10px] text-[var(--color-muted-foreground)]">
+            <p className="mb-2 text-[10px] text-(--color-muted-foreground)">
               Cache’den gösteriliyor{refreshing ? " · arka planda yenileniyor…" : ""}
             </p>
           ) : null}
-          {listError ? <p className="text-sm text-[var(--color-destructive)]">{listError}</p> : null}
+          {listError ? <p className="text-sm text-(--color-destructive)">{listError}</p> : null}
 
           <div className="mb-3 flex flex-wrap items-end gap-2">
             <div className="min-w-[8rem] flex-1">
-              <label className="mb-1 block text-[10px] text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-[10px] text-(--color-muted-foreground)">
                 ulimit doğrula (user)
               </label>
               <Input
@@ -371,15 +371,15 @@ export function LimitsPage() {
             </Button>
           </div>
           {ulimitText ? (
-            <pre className="mb-3 max-h-28 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-background)] p-2 font-mono text-[10px] text-[var(--color-muted-foreground)]">
+            <pre className="mb-3 max-h-28 overflow-auto rounded-md border border-(--color-border) bg-(--color-background) p-2 font-mono text-[10px] text-(--color-muted-foreground)">
               {ulimitText}
             </pre>
           ) : null}
 
-          <div className="max-h-[28rem] overflow-y-auto rounded-md border border-[var(--color-border)]">
+          <div className="max-h-[28rem] overflow-y-auto rounded-md border border-(--color-border)">
             <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 bg-[var(--color-card)] text-[var(--color-muted-foreground)]">
-                <tr className="border-b border-[var(--color-border)]">
+              <thead className="sticky top-0 bg-(--color-card) text-(--color-muted-foreground)">
+                <tr className="border-b border-(--color-border)">
                   <th className="px-2 py-2 font-medium">Domain</th>
                   <th className="px-2 py-2 font-medium">Type</th>
                   <th className="px-2 py-2 font-medium">Item</th>
@@ -389,13 +389,13 @@ export function LimitsPage() {
               <tbody>
                 {loading && !entries.length ? (
                   <tr>
-                    <td colSpan={4} className="px-2 py-3 text-[var(--color-muted-foreground)]">
+                    <td colSpan={4} className="px-2 py-3 text-(--color-muted-foreground)">
                       Yükleniyor…
                     </td>
                   </tr>
                 ) : !entries.length ? (
                   <tr>
-                    <td colSpan={4} className="px-2 py-3 text-[var(--color-muted-foreground)]">
+                    <td colSpan={4} className="px-2 py-3 text-(--color-muted-foreground)">
                       Kayıt yok
                     </td>
                   </tr>
@@ -407,14 +407,14 @@ export function LimitsPage() {
                         key={`${k}|${e.source || ""}`}
                         title={`${e.source || ""}\nÇift tıkla: forma aktar`}
                         onDoubleClick={() => applyRowToForm(e)}
-                        className={`cursor-pointer border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-accent)] ${
-                          selectedKey === k ? "bg-[var(--color-primary)]/10" : ""
+                        className={`cursor-pointer border-b border-(--color-border) last:border-0 hover:bg-(--color-accent) ${
+                          selectedKey === k ? "bg-(--color-primary)/10" : ""
                         }`}
                       >
                         <td className="px-2 py-1.5 font-mono text-[11px]">{e.domain}</td>
                         <td className="px-2 py-1.5 font-mono text-[11px]">{e.type}</td>
                         <td className="px-2 py-1.5 font-mono text-[11px]">{e.item}</td>
-                        <td className="px-2 py-1.5 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+                        <td className="px-2 py-1.5 font-mono text-[11px] text-(--color-muted-foreground)">
                           {e.value}
                         </td>
                       </tr>

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -66,18 +67,33 @@ OME_RACK = {
     "DeviceManagement": [{"NetworkAddress": "10.20.30.42",
                           "ManagementProfile": [{"AgentName": "iDRAC", "Version": "5.10.50.00"}]}],
 }
+
+def _recent(minutes_ago: int = 60) -> datetime:
+    """Fixture zamanları göreli (sabit tarih, olay penceresi/LOOKBACK dışına düşüp testleri kırıyordu)."""
+    return datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+
+
+def _ome_ts(minutes_ago: int) -> str:
+    return _recent(minutes_ago).strftime("%Y-%m-%d %H:%M:%S.000")
+
+
+def _iso_z(minutes_ago: int) -> str:
+    return _recent(minutes_ago).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
 OME_CHASSIS = {"Id": 10100, "DeviceName": "MX7000-A", "Model": "PowerEdge MX7000", "Type": 2000,
                "DeviceServiceTag": "CHS0001", "Status": 1000}
 OME_ALERT = {"Id": 5001, "SeverityType": 16, "AlertDeviceId": 10074, "CategoryName": "Storage",
-             "TimeStamp": "2026-10-23 10:00:00.000", "Message": "Drive 3 failed", "AlertMessageId": "PDR1016"}
+             "TimeStamp": _ome_ts(60), "Message": "Drive 3 failed", "AlertMessageId": "PDR1016"}
 OME_ALERT_INFO = {"Id": 5002, "SeverityType": 2, "AlertDeviceId": 10074, "CategoryName": "Audit",
-                  "TimeStamp": "2026-10-23 10:01:00.000", "Message": "User login"}
+                  "TimeStamp": _ome_ts(59), "Message": "User login"}
 OME_WARRANTY = {"Id": 1, "DeviceId": 10074, "DeviceIdentifier": "XYZ9876", "ServiceLevelDescription": "ProSupport",
                 "ServiceProvider": "Dell", "StartDate": "2021-01-01 00:00:00.000", "EndDate": "2026-01-01 00:00:00.000"}
 
 
 def ome_router(*, login_status: int = 201, version: str = "4.7.0", devices=None, alerts=None, warranties=None,
-               mid_status: Optional[int] = None) -> Router:
+               mid_status: Optional[int] = None, software: Optional[Dict[int, list]] = None,
+               software_log: Optional[list] = None) -> Router:
     devices = devices if devices is not None else [OME_SERVER, OME_RACK, OME_CHASSIS]
     alerts = alerts if alerts is not None else [OME_ALERT, OME_ALERT_INFO]
     warranties = warranties if warranties is not None else [OME_WARRANTY]
@@ -101,6 +117,13 @@ def ome_router(*, login_status: int = 201, version: str = "4.7.0", devices=None,
             return 200, {"value": alerts, "@odata.count": len(alerts)}, {}
         if path == "/api/WarrantyService/Warranties":
             return 200, {"value": warranties, "@odata.count": len(warranties)}, {}
+        if software is not None and path.endswith("/InventoryDetails('deviceSoftware')"):
+            did = int(path.split("Devices(")[1].split(")")[0])
+            if software_log is not None:
+                software_log.append(did)
+            if did not in software:
+                return 404, {}, {}
+            return 200, {"value": [{"InventoryType": "deviceSoftware", "InventoryInfo": software[did]}]}, {}
         return 404, {}, {}
 
     return router
@@ -121,10 +144,12 @@ OV_RACK = {"uri": "/rest/server-hardware/99999", "name": "rack-7", "serverName":
            "mpHostInfo": {"mpIpAddresses": [{"address": "10.9.9.7", "type": "Static"}]}}
 OV_ALERT = {"uri": "/rest/alerts/77", "severity": "Critical", "alertState": "Active", "description": "Fan failed",
             "alertTypeID": "hpOneView.fanFailed", "physicalResourceType": "server-hardware",
-            "associatedResource": {"resourceUri": "/rest/server-hardware/99999", "resourceName": "rack-7"}, "created": "2026-10-23T09:00:00.000Z"}
+            "associatedResource": {"resourceUri": "/rest/server-hardware/99999", "resourceName": "rack-7"}, "created": _iso_z(60)}
 
 
-def oneview_router(*, login_status: int = 200, api: int = 9000, calls_log: Optional[list] = None) -> Router:
+def oneview_router(*, login_status: int = 200, api: int = 9000, calls_log: Optional[list] = None,
+                   firmware: Optional[dict] = None) -> Router:
+    """`firmware`: server-hardware uri-kuyruğu (örn. `37333036`) → `/firmware` yanıt gövdesi (yoksa 404)."""
     def router(method, path, params, body, headers):
         if calls_log is not None:
             calls_log.append((method, path))
@@ -142,6 +167,9 @@ def oneview_router(*, login_status: int = 200, api: int = 9000, calls_log: Optio
             return 200, {"members": [OV_BLADE, OV_RACK], "total": 2}, {}
         if path == "/rest/alerts":
             return 200, {"members": [OV_ALERT], "total": 1}, {}
+        if firmware is not None and path.startswith("/rest/server-hardware/") and path.endswith("/firmware"):
+            key = path.split("/")[3]
+            return (200, firmware[key], {}) if key in firmware else (404, {}, {})
         return 404, {}, {}
 
     return router

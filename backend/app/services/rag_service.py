@@ -2,7 +2,10 @@
 RAG servisi: Runbook, Incident, Metrik + Bilgi Bankası (LearnedFact) context üretir.
 Chat prompt'una eklenecek metinleri döndürür.
 """
+import asyncio
 import logging
+
+from app.core.chat_executor import run_chat_io
 from collections import defaultdict
 from typing import List, Optional, Sequence, Tuple
 
@@ -28,6 +31,7 @@ from app.services.rag_store import (
     COLLECTION_AUTOMIC,
     collection_for_document_title,
     module_for_collection,
+    module_for_title,
 )
 
 
@@ -64,23 +68,51 @@ async def _rerank_hits(query: str, hits: List[dict], top_k: int) -> List[dict]:
     """Embedding sıralı `hits`'i reranker ile yeniden sırala ve en iyi top_k'yı
     döndür. Reranker kapalı/hatalıysa orijinal (embedding) sırayı korur.
 
-    CPU-bound model çağrısı (`rerank`) bir thread executor'da çalıştırılır —
-    hem event loop'u bloklamaz hem de dört RAG koleksiyonu (runbook/incidents/
-    metrics/knowledge) gerçekten PARALEL rerank edilebilir (bkz.
-    get_rag_context_for_message'daki asyncio.gather)."""
+    CPU-bound model çağrısı (`rerank_scored`) bir thread executor'da çalıştırılır —
+    hem event loop'u bloklamaz hem de dört RAG koleksiyonu paralel rerank edilebilir.
+    Adım 8R/R3: reranker skoru varsa hit'e `rerank_score` yazılır ve (ayar açıksa) eşik altı hit'ler elenir."""
     if not hits:
         return hits
     try:
         import asyncio as _asyncio
-        from app.services.reranker import rerank
+        from app.services.reranker import rerank_scored
         docs = [h.get("document") or "" for h in hits]
         loop = _asyncio.get_event_loop()
-        order = await loop.run_in_executor(None, rerank, query, docs, top_k)
-        if order:
-            return [hits[i] for i in order]
+        scored = await loop.run_in_executor(None, rerank_scored, query, docs, top_k)
+        if scored:
+            out = []
+            for i, sc in scored:
+                h = dict(hits[i])
+                if sc is not None:
+                    h["rerank_score"] = float(sc)
+                out.append(h)
+            return apply_relevance_threshold(out)
     except Exception as e:
         logger.debug("RAG rerank atlandı: %s", e)
     return hits[:top_k]
+
+
+def relevance_threshold() -> Optional[float]:
+    """`rag_min_relevance_enabled` kapalıysa (varsayılan) None; açıksa `rag_min_relevance` (reranker skoru)."""
+    try:
+        from app.services import runtime_settings
+        if not runtime_settings.get_bool("rag_min_relevance_enabled"):
+            return None
+        return float(runtime_settings.get_float("rag_min_relevance"))
+    except Exception:
+        return None
+
+
+def apply_relevance_threshold(hits: List[dict], threshold: Optional[float] = None) -> List[dict]:
+    """Eşik altı `rerank_score`'lu hit'leri eler. Skor yoksa (reranker kapalı/yüklenmedi) hit KORUNUR
+    (eşik yalnız ölçülen skorda anlamlı). Eşik kapalıysa girdi aynen döner."""
+    thr = relevance_threshold() if threshold is None else threshold
+    if thr is None:
+        return hits
+    kept = [h for h in hits if h.get("rerank_score") is None or float(h["rerank_score"]) >= thr]
+    if len(kept) < len(hits):
+        logger.info("[RAG] alaka eşiği %.2f: %s/%s hit elendi", thr, len(hits) - len(kept), len(hits))
+    return kept
 
 
 def chunk_text(text: str, chunk_size: int = RUNBOOK_CHUNK_SIZE, overlap: int = RUNBOOK_CHUNK_OVERLAP) -> List[str]:
@@ -167,7 +199,7 @@ async def ingest_runbook(title: str, content: str) -> int:
     embeddings = await get_embeddings_batch(chunks)
     ids = [str(__import__("uuid").uuid4()) for _ in chunks]
     coll = collection_for_document_title(title or "")
-    mod = module_for_collection(coll)
+    mod = module_for_title(title or "") or module_for_collection(coll)
     metadatas = []
     for i in range(len(chunks)):
         meta = {"title": title or "Runbook", "index": i}
@@ -208,7 +240,7 @@ async def ingest_runbook_pages(title: str, pages: Sequence[Tuple[int, str]]) -> 
             all_chunks.append(chunk)
             meta = {"title": title or "Runbook", "index": i, "page": pn}
             coll_tmp = collection_for_document_title(title or "")
-            mod = module_for_collection(coll_tmp)
+            mod = module_for_title(title or "") or module_for_collection(coll_tmp)
             if mod:
                 meta["module"] = mod
             metadatas.append(meta)
@@ -733,8 +765,10 @@ async def _format_collection_context(
     joiner: str,
     query_embedding: Optional[List[float]] = None,
     embedding_usable: bool = True,
+    modules: Optional[Sequence[str]] = None,
 ) -> str:
-    """Hibrit arama: vektör (aynı model) + FTS. Embed yoksa yalnız FTS — boş dönmez."""
+    """Hibrit arama: vektör (aynı model) + FTS. Embed yoksa yalnız FTS — boş dönmez.
+    `modules` verilirse (yalnız runbook için çağrılır) satır modülü ∈ modules/general/etiketsiz olanlar aranır."""
     model, dim = _store_model_dim()
     emb = query_embedding
     if emb is None and embedding_usable:
@@ -746,13 +780,17 @@ async def _format_collection_context(
                 logger.info("RAG %s vektör yok → FTS: %s", collection, res.error)
         except Exception as e:
             logger.info("RAG %s embed hata → FTS: %s", collection, e)
-    hits = hybrid_search_collection(
+    # Adım 11: lexical/vektör SQL araması senkron; event döngüsünde çalışınca 1,5–2 sn tıkıyordu
+    # (SSE/progress teslim gecikmesi). İş parçacığına alındı (çağrı koşullarında değişiklik yok).
+    hits = await run_chat_io(
+        hybrid_search_collection,
         collection,
         message,
         query_embedding=emb,
         embedding_model=model,
         embedding_dim=dim,
         n_results=_candidate_k(top_k),
+        modules=modules,
     )
     hits = await _rerank_hits(message, hits, top_k)
     if not hits:
@@ -767,6 +805,7 @@ async def get_rag_context_for_message(
     server_ids: Optional[Sequence[int]] = None,
     include_server_facts: bool = False,
     collections: Optional[Sequence[str]] = None,
+    modules: Optional[Sequence[str]] = None,
 ) -> dict:
     """
     Chat RAG: runbook, incidents, metrics, knowledge — hibrit (vektör+FTS).
@@ -799,7 +838,7 @@ async def get_rag_context_for_message(
     if want is None or "runbook" in want:
         runbook = await _format_collection_context(
             message, COLLECTION_RUNBOOK, rb_k, joiner="\n\n---\n\n",
-            query_embedding=emb, embedding_usable=usable,
+            query_embedding=emb, embedding_usable=usable, modules=modules,
         )
     if want is None or "incidents" in want:
         incidents = await _format_collection_context(

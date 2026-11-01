@@ -133,6 +133,17 @@ def test_disable_instance_clears_capability(isolated_db):
         cap_mod.invalidate_capabilities()
 
 
+def test_menu_flags_follow_defined_integrations(monkeypatch):
+    monkeypatch.setattr(cap_mod, "_automic_system_defined", lambda: False)
+    monkeypatch.setattr(cap_mod, "_centrify_configured", lambda: True)
+    cap_mod.invalidate_capabilities()
+    payload = cap_mod.capabilities_payload()
+    assert payload["has_automic"] is False
+    assert payload["has_centrify"] is True
+    assert "automic" not in payload["capabilities"]
+    assert "centrify" in payload["capabilities"]
+
+
 def test_result_not_applicable_constant_export():
     assert isinstance(RESULT_NOT_APPLICABLE, str)
     assert RESULT_NOT_APPLICABLE in ("not_applicable",)

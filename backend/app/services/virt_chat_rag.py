@@ -27,8 +27,9 @@ def collect_virt_rag_block(message: str) -> str:
             return ""
 
         async def _run() -> Dict[str, Any]:
+            from app.services.rag_scope import modules_for_platform
             return await get_rag_context_for_message(
-                q, collections=plan.rag_collections or None,
+                q, collections=plan.rag_collections or None, modules=modules_for_platform("virtualization"),
             )
 
         try:

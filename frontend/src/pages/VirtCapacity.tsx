@@ -72,7 +72,7 @@ function ClusterCard({ c }: { c: Cluster }) {
   return (
     <Panel title={<span>{c.cluster} <span className="text-xs text-slate-500 font-normal">· {c.hypervisor} ({c.platform})</span></span>}
       right={n1IsNotApplicable(n1.status)
-        ? <span title={t('vi_n1_single_hint')} className="text-xs font-semibold text-slate-400 border border-dashed border-slate-500/40 rounded px-1.5 py-0.5">N+1: {t('vi_res_na')}<TermHint k="n1" /></span>
+        ? <span title={t('vi_n1_single_hint')} className="text-xs font-semibold text-slate-400 border border-dashed border-slate-500/40 rounded-sm px-1.5 py-0.5">N+1: {t('vi_res_na')}<TermHint k="n1" /></span>
         : <span className={`text-xs font-semibold ${n1Tone(n1.status)}`}>N+1: {n1Label[n1.status] || n1.status}{n1.mem_after_pct != null ? ` (%${fmt(n1.mem_after_pct)})` : ''}<TermHint k="n1" /></span>}
       method="cap.cluster.n_plus_one" methodAt={c.as_of}>
       <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
@@ -113,7 +113,7 @@ function Num({ label, value, onChange, step = '1', hint }: { label: string; valu
     <label className="flex flex-col gap-1 text-xs text-slate-400">
       <span className="inline-flex items-center">{label}{hint && <TermHint k={hint} />}</span>
       <input type="number" min="0" step={step} value={value} onChange={e => onChange(e.target.value)}
-        className="w-28 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
+        className="w-28 rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
     </label>
   )
 }
@@ -142,7 +142,7 @@ function VmPicker({ label, placeholder, onPick, listId }: { label: string; place
           setQ(v)
           onPick(opts.find(o => o.name === v) || null)
         }}
-        className="w-64 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white" />
+        className="w-64 rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white" />
       <datalist id={listId}>
         {opts.map(o => (
           <option key={`${o.name}-${o.hypervisor}-${o.cluster}`} value={o.name}>{[o.hypervisor, o.cluster].filter(Boolean).join(' · ')}</option>
@@ -162,7 +162,7 @@ export function ScopeSelect({ clusters, value, onChange, showHosts = true }: { c
   const cls = Array.from(new Set(inDc.map((c: any) => c.cluster))) as string[]
   const hosts = Array.from(new Set(inDc.filter((c: any) => !value.clusters.length || value.clusters.includes(c.cluster))
     .flatMap((c: any) => c.host_names || []))) as string[]
-  const sel = 'rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white'
+  const sel = 'rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white'
   const multi = (opts: string[], cur: string[], set: (v: string[]) => void, testId: string) => (
     <select multiple data-testid={testId} value={cur} className={`${sel} h-20 min-w-[10rem]`}
       onChange={e => set(Array.from(e.target.selectedOptions).map(o => o.value))}>
@@ -234,7 +234,7 @@ export function CollapsibleScope({ clusters, value, onChange, defaultOpen = fals
   value.clusters.forEach(cl => chips.push({ key: `cl-${cl}`, label: cl, remove: () => onChange({ ...value, clusters: value.clusters.filter(x => x !== cl), hosts: [] }) }))
   if (showHosts) value.hosts.forEach(h => chips.push({ key: `h-${h}`, label: h, remove: () => onChange({ ...value, hosts: value.hosts.filter(x => x !== h) }) }))
   return (
-    <div className="rounded border border-white/[0.06]" data-testid="scope-collapsible">
+    <div className="rounded-sm border border-white/[0.06]" data-testid="scope-collapsible">
       <div className="flex items-center gap-2 px-3 py-2 text-xs">
         <button type="button" data-testid="scope-toggle" aria-expanded={open} onClick={() => setOpen(o => !o)}
           className="inline-flex items-center gap-1.5 text-slate-300 hover:text-white">
@@ -448,7 +448,7 @@ function PolicyPanel({ onSaved, clusters }: { onSaved: () => void; clusters: Clu
               <span className="text-slate-200 flex items-center">{s.label}<InfoDot label={s.label} text={t(('vi_policy_help_' + k) as any)} />{s.overridden && <span className="ml-2 text-amber-300">{t('vi_policy_changed', { d: s.default })}</span>}</span>
               <input type="number" min={s.min} max={s.max} step="1" value={vals[k] ?? ''}
                 onChange={e => setVals(v => ({ ...v, [k]: e.target.value }))}
-                className="w-32 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
+                className="w-32 rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
               <span className="text-slate-500">{t('vi_policy_range', { a: s.min, b: s.max, d: s.default })}</span>
             </label>
           ))}

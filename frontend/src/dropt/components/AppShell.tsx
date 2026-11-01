@@ -95,7 +95,7 @@ export function AppShell() {
 
   if (!user) {
     return (
-      <div className="flex h-full items-center justify-center text-[var(--color-muted-foreground)]">
+      <div className="flex h-full items-center justify-center text-(--color-muted-foreground)">
         {t("loading")}
       </div>
     );
@@ -106,19 +106,19 @@ export function AppShell() {
       <div className="flex h-full min-h-0">
         <aside
           className={cn(
-            "flex shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-card)]/90 backdrop-blur transition-[width] duration-200",
+            "flex shrink-0 flex-col border-r border-(--color-border) bg-(--color-card)/90 backdrop-blur-sm transition-[width] duration-200",
             collapsed ? "w-14" : "w-44",
           )}
         >
           <div className={cn("flex items-start gap-2 px-3 py-4", collapsed && "flex-col items-center px-2")}>
             <div className={cn("min-w-0 flex-1", collapsed && "hidden")}>
-              <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-[var(--color-primary)]">
+              <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-(--color-primary)">
                 {t("portal")}
               </p>
               <h1 className="mt-1 truncate text-lg font-semibold tracking-tight">{appName}</h1>
             </div>
             {collapsed ? (
-              <p className="font-mono text-[10px] font-semibold text-[var(--color-primary)]">DO</p>
+              <p className="font-mono text-[10px] font-semibold text-(--color-primary)">DO</p>
             ) : null}
             <Tooltip>
               <TooltipTrigger asChild>
@@ -150,8 +150,8 @@ export function AppShell() {
                       "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
                       collapsed && "justify-center px-2",
                       isActive
-                        ? "bg-[var(--color-primary)]/15 text-[var(--theme-success-fg)]"
-                        : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+                        ? "bg-(--color-primary)/15 text-(--theme-success-fg)"
+                        : "text-(--color-muted-foreground) hover:bg-(--color-accent) hover:text-(--color-foreground)",
                     )
                   }
                 >
@@ -180,8 +180,8 @@ export function AppShell() {
                           cn(
                             "flex items-center justify-center rounded-md px-2 py-2 text-sm transition-colors",
                             isActive
-                              ? "bg-[var(--color-primary)]/15 text-[var(--theme-success-fg)]"
-                              : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+                              ? "bg-(--color-primary)/15 text-(--theme-success-fg)"
+                              : "text-(--color-muted-foreground) hover:bg-(--color-accent) hover:text-(--color-foreground)",
                           )
                         }
                       >
@@ -197,8 +197,8 @@ export function AppShell() {
                       cn(
                         "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
                         isActive
-                          ? "bg-[var(--color-primary)]/15 text-[var(--theme-success-fg)]"
-                          : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+                          ? "bg-(--color-primary)/15 text-(--theme-success-fg)"
+                          : "text-(--color-muted-foreground) hover:bg-(--color-accent) hover:text-(--color-foreground)",
                       )
                     }
                   >
@@ -215,8 +215,8 @@ export function AppShell() {
                           cn(
                             "flex items-center justify-center rounded-md px-2 py-2 text-sm transition-colors",
                             isActive
-                              ? "bg-[var(--color-primary)]/15 text-[var(--theme-success-fg)]"
-                              : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+                              ? "bg-(--color-primary)/15 text-(--theme-success-fg)"
+                              : "text-(--color-muted-foreground) hover:bg-(--color-accent) hover:text-(--color-foreground)",
                           )
                         }
                       >
@@ -232,8 +232,8 @@ export function AppShell() {
                       cn(
                         "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
                         isActive
-                          ? "bg-[var(--color-primary)]/15 text-[var(--theme-success-fg)]"
-                          : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+                          ? "bg-(--color-primary)/15 text-(--theme-success-fg)"
+                          : "text-(--color-muted-foreground) hover:bg-(--color-accent) hover:text-(--color-foreground)",
                       )
                     }
                   >
@@ -245,7 +245,7 @@ export function AppShell() {
             ) : null}
           </nav>
 
-          <div className="mt-auto flex h-12 shrink-0 items-center justify-between border-t border-[var(--color-border)] px-2">
+          <div className="mt-auto flex h-12 shrink-0 items-center justify-between border-t border-(--color-border) px-2">
             {user.role === "admin" || user.auth_source === "local" ? (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -256,8 +256,8 @@ export function AppShell() {
                     className={cn(
                       "h-8 w-8 shrink-0",
                       settingsActive
-                        ? "bg-[var(--color-primary)]/15 text-[var(--theme-success-fg)] hover:bg-[var(--color-primary)]/20"
-                        : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+                        ? "bg-(--color-primary)/15 text-(--theme-success-fg) hover:bg-(--color-primary)/20"
+                        : "text-(--color-muted-foreground) hover:bg-(--color-accent) hover:text-(--color-foreground)",
                     )}
                     onClick={() => navigate("/app/settings")}
                     aria-label={t("nav_settings")}
@@ -278,7 +278,7 @@ export function AppShell() {
                   type="button"
                   size="icon"
                   variant="ghost"
-                  className="h-8 w-8 shrink-0 text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+                  className="h-8 w-8 shrink-0 text-(--color-muted-foreground) hover:bg-(--color-accent) hover:text-(--color-foreground)"
                   onClick={logout}
                   aria-label={t("logout")}
                 >
@@ -291,9 +291,9 @@ export function AppShell() {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-14 shrink-0 items-center justify-end gap-2 border-b border-[var(--color-border)] bg-[var(--color-card)]/70 px-4 backdrop-blur">
-            <span className="mr-auto truncate text-sm text-[var(--color-muted-foreground)]">
-              <span className="font-medium text-[var(--color-foreground)]">{user.username}</span>
+          <header className="flex h-14 shrink-0 items-center justify-end gap-2 border-b border-(--color-border) bg-(--color-card)/70 px-4 backdrop-blur-sm">
+            <span className="mr-auto truncate text-sm text-(--color-muted-foreground)">
+              <span className="font-medium text-(--color-foreground)">{user.username}</span>
               <span className="mx-1.5">·</span>
               <span className="font-mono text-xs">{user.role}</span>
             </span>
@@ -303,7 +303,7 @@ export function AppShell() {
               type="button"
               size="icon"
               variant="ghost"
-              className="h-9 w-9 text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+              className="h-9 w-9 text-(--color-muted-foreground) hover:bg-(--color-accent) hover:text-(--color-foreground)"
               onClick={() => {
                 const next = theme === "light" ? "dark" : "light";
                 setTheme(next);
@@ -321,7 +321,7 @@ export function AppShell() {
               type="button"
               size="sm"
               variant="ghost"
-              className="h-9 gap-1.5 px-2 font-medium text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+              className="h-9 gap-1.5 px-2 font-medium text-(--color-muted-foreground) hover:bg-(--color-accent) hover:text-(--color-foreground)"
               onClick={() => {
                 const next = locale === "tr" ? "en" : "tr";
                 setLocale(next);

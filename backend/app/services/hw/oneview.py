@@ -26,7 +26,8 @@ from app.services.hw.creds import base_url, load_credentials, load_meta
 from app.services.hw.http import HwApiError, HwHttp
 from app.services.hw.identity import normalize_serial, normalize_uuid
 from app.services.hw.snapshot import (
-    ALL_PARTS, AlertRec, EnclosureRec, HwSnapshot, ManagerRec, PART_ALERTS, PART_INVENTORY, PART_WARRANTY, ServerRec,
+    ALL_PARTS, AlertRec, EnclosureRec, FirmwareRec, HwSnapshot, ManagerRec, PART_ALERTS, PART_INVENTORY, PART_WARRANTY,
+    ServerRec,
 )
 from app.services.integrations.types import ConnTestResult, ProviderHealth
 
@@ -135,6 +136,27 @@ def norm_enclosure(d: Dict[str, Any], manager_key: str, *, is_ovgd: bool = False
                         model=(d.get("enclosureModel") or d.get("enclosureType") or None),
                         serial=normalize_serial(d.get("serialNumber")), health=_health(d.get("status")),
                         bay_count=(d.get("deviceBayCount") if isinstance(d.get("deviceBayCount"), int) else None))
+
+
+FIRMWARE_MAX_PER_RUN = 200
+
+
+def norm_firmware(payload: Any, server_ref: str) -> List[FirmwareRec]:
+    """`GET /rest/server-hardware/{id}/firmware` → bileşen listesi. Alan adları OneView API dokümanı dizininden
+    (`components[].componentName/componentVersion/componentLocation`; tip DOĞRULANMADI → yalnız metin kabul edilir).
+    Biçim tanınmazsa BOŞ döner (hata yok; ölçülemedi). Bileşenin kurulu sürümüdür → status=Installed."""
+    comps = payload.get("components") if isinstance(payload, dict) else None
+    out: List[FirmwareRec] = []
+    for c in (comps if isinstance(comps, list) else []):
+        if not isinstance(c, dict):
+            continue
+        name, ver = c.get("componentName"), c.get("componentVersion")
+        if not isinstance(name, str) or not name.strip() or not isinstance(ver, (str, int, float)) or isinstance(ver, bool):
+            continue
+        loc = c.get("componentLocation")
+        out.append(FirmwareRec(server_ref=server_ref, name=name.strip(), component_type="FW", version=str(ver).strip() or None,
+                               status="Installed", location=(loc.strip() if isinstance(loc, str) and loc.strip() else None)))
+    return out
 
 
 def _parse_iso(v: Any) -> Optional[datetime]:
@@ -413,6 +435,42 @@ class HpeProvider:
             c.logout()
             c.http.close()
 
+    def _firmware(self, c: HpeClient, snap: HwSnapshot, key: str) -> None:
+        """Appliance başına, cihaz başına `GET /rest/server-hardware/{id}/firmware`. Tur başına en fazla
+        `firmware_max_per_run` sunucu; sıra SABİT (provider_ref) ve başlangıç `meta.firmware_cursors[key]` → art arda turlarda
+        HEPSİ okunur. OVGD'de bu uç YOK (yalnız appliance modu). Cihaz bazlı 404/biçim hatası: o sunucu atlanır."""
+        mine = sorted((s for s in snap.servers if s.manager_key == key), key=lambda x: x.provider_ref)
+        total = len(mine)
+        try:
+            cap = max(1, int(self.meta.get("firmware_max_per_run") or FIRMWARE_MAX_PER_RUN))
+        except (TypeError, ValueError):
+            cap = FIRMWARE_MAX_PER_RUN
+        try:
+            start = int((self.meta.get("firmware_cursors") or {}).get(key) or 0)
+        except (TypeError, ValueError):
+            start = 0
+        start = start % total if total else 0
+        n = 0
+        for k in range(min(cap, total)):
+            s = mine[(start + k) % total]
+            path = s.provider_ref.split("|", 1)[-1].rstrip("/")
+            if not path.startswith("/rest/server-hardware/"):
+                n += 1
+                continue
+            try:
+                payload = c.get(path + "/firmware")
+            except HwApiError as e:
+                if e.kind in ("network", "server"):
+                    snap.warnings.append(f"{key}: firmware okuması ağ/sunucu hatası nedeniyle kesildi; kalan sunucular sonraki turda.")
+                    break
+                payload = None                 # cihaz bazlı hata (ör. 404): atla, imleç ilerler
+            snap.firmware.extend(norm_firmware(payload, s.provider_ref))
+            n += 1
+            if c.throttle:
+                time.sleep(c.throttle)
+        snap.firmware_cursors[key] = (start + n) % total if total else 0
+        snap.firmware_progress[key] = {"read": n, "total": total}
+
     def _collect_appliances(self, parts: Set[str], snap: HwSnapshot) -> None:
         hosts = appliance_hosts(self.row, self.meta)
         if not hosts:
@@ -450,6 +508,8 @@ class HpeProvider:
                     snap.parts.add(PART_INVENTORY)
                     snap.complete_managers.add(key)
                     m.server_count = n
+                    if self.meta.get("fetch_firmware"):
+                        self._firmware(c, snap, key)
                 if PART_ALERTS in parts:
                     try:
                         rows = c.members("/rest/alerts", params={"filter": "alertState='Active'"}, max_pages=10)

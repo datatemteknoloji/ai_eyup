@@ -35,6 +35,7 @@ OpenShift Virtualization (KubeVirt) her iki tarafa da düşer: OCP `/openshift/v
 
 | Menü | Yol | Ne yapılır |
 |------|-----|------------|
+| Dashboard | `/openshift/dashboard` | Küme / node / pod / VM özeti. «Küme Altyapısı»: cluster kartı seçilince node ve namespace altta açılır, seçilen kartın pod listesi sıralanır ve aranır (`GET /openshift/hierarchy`) |
 | Komuta merkezi | `/openshift/ops` | Kritik iş yükü / cluster (kırmızı rozet) |
 | Envanter | `/openshift` | Cluster, node, proje, workload |
 | Virtual Machines | `/openshift/vms` | KubeVirt / OCP VM |
@@ -125,3 +126,11 @@ PromQL scrape yazılmaz. Monitoring **API modu** `metrics.k8s.io` anlık CPU/bel
 ## Limitler
 
 OCP sohbeti Linux SSH yerine geçmez. OLVM engine erişilemezse virt sayfaları boş kalır. ainew, OpenShift’e **kendini** operator olarak kurmaz; OCP’yi **yönetir**.
+
+---
+
+## Hazır Raporlar (`/openshift/reports`)
+
+Sanallaştırma/Linux ile aynı kart ızgarası; 14 rapor: Executive Summary, Kapasite, Kapasite Tahmin, Kapasite Planı (N+1), Risk, En Riskli Varlıklar, Proje (Namespace) Kullanımı, Depolama (PVC), Workload Sağlığı, Sanal Makineler (KubeVirt), Uyum ve Güncelleme, Operasyon, **MTV Migrasyon**, **MTV Migrasyon Hazırlık**. Veri yalnız ainew DB'sinden gelir (kümeye canlı çağrı yok); sayılar deterministiktir (LLM yok). Veri yoksa bölüm «Ölçülemedi» olur. Tahmin en az 14 günlük seri ister ve aralık verir. Ekip raporları sentetik (ZZ-FAKE) cluster'ı da gösterir.
+
+**MTV geçmişi:** MTV kümede yalnız güncel Plan/Migration CR'lerini tutar. ainew her 10 dakikalık OpenShift senkronunda bunların anlık görüntüsünü `mtv_plan_snapshots` tablosuna yazar (plan başına tek satır; silinen plan «Silindi» kalır, satır silinmez; küme/MTV erişilemezse hiçbir plan kapatılmaz). Geçmiş ainew'un ilk anlık görüntüsünden başlar; MTV öncesi taşımalar görünmez.

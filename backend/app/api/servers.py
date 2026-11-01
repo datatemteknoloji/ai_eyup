@@ -3,7 +3,8 @@ Servers API endpoints
 """
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, case, func, or_
+from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.orm import Session, selectinload
 from typing import List, Optional
 from app.core.database import get_db, SessionLocal
@@ -41,6 +42,26 @@ def _parse_hypervisor_types(raw: Optional[str]) -> Optional[list]:
         if mapped and mapped not in out:
             out.append(mapped)
     return out or None
+
+_HV_IDS_MAX = 200
+
+
+def parse_hypervisor_ids(raw: Optional[str]) -> list:
+    """Virgüllü id listesi → benzersiz pozitif int'ler. Geçersiz/boş değerler yok sayılır."""
+    if not raw:
+        return []
+    out: list = []
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part.isdigit():
+            continue
+        v = int(part)
+        if v > 0 and v not in out:
+            out.append(v)
+        if len(out) >= _HV_IDS_MAX:
+            break
+    return out
+
 
 # Create sonrası SSH/OS probe — UI'yi bloklamamak için kısa timeout
 _CREATE_SSH_CONNECT_TIMEOUT = 6.0
@@ -159,6 +180,29 @@ def _name_mismatch_sql_filter():
     )
 
 
+# os_type değerleri: PRETTY_NAME ("Red Hat Enterprise Linux 9.4 (Plow)"), kısa ID
+# ("rhel", "ol_8x64", "sles_11"), vCenter guest ("linuxGuest") ya da "Linux 9.6 CoreOS".
+# Kısa ID'ler yalnızca değerin BAŞINDA ve kelime sınırıyla eşleşir (gevşek "%ol%" kalıbı
+# "Microsoft Windows 11 ... Evaluation" vb. yanlış pozitifler üretiyordu).
+# PostgreSQL `~*` (ARE) ve Python `re.I` aynı sonucu verir (test edilir).
+KNOWN_LINUX_OS_TYPE_RE = (
+    r"(linux|red ?hat|rhel|rhcos|coreos|ubuntu|debian|centos|rocky|almalinux|fedora|"
+    r"suse|sles|photon|amazon|"
+    r"^(ol|alma|amzn|opensuse|sled|arch|alpine)([ _.0-9-]|$))"
+)
+
+
+def _windows_os_condition():
+    return func.coalesce(Server.os_type, "").ilike("%windows%")
+
+
+def _known_linux_condition():
+    """Bilinen Linux: Windows değil VE (os_release_id dolu VEYA os_type tanınan bir Linux dağıtımı)."""
+    has_release_id = func.length(func.trim(func.coalesce(Server.os_release_id, ""))) > 0
+    type_is_linux = func.coalesce(Server.os_type, "").op("~*")(KNOWN_LINUX_OS_TYPE_RE)
+    return and_(~_windows_os_condition(), or_(has_release_id, type_is_linux))
+
+
 def _apply_server_list_filters(
     query,
     *,
@@ -175,6 +219,7 @@ def _apply_server_list_filters(
     hypervisor_type: Optional[str] = None,
     hypervisor_types: Optional[str] = None,
     unassigned_hypervisor: Optional[bool] = None,
+    hypervisor_ids: Optional[str] = None,
 ):
     if q and q.strip():
         like = f"%{q.strip()}%"
@@ -200,22 +245,11 @@ def _apply_server_list_filters(
     if os_filter and os_filter.lower() != "all":
         os_l = os_filter.lower()
         if os_l == "linux":
-            query = query.filter(
-                or_(
-                    Server.os_type.ilike("%linux%"),
-                    Server.os_type.ilike("%rhel%"),
-                    Server.os_type.ilike("%ol%"),
-                    Server.os_type.ilike("%ubuntu%"),
-                    Server.os_type.ilike("%centos%"),
-                    Server.os_type.ilike("%rocky%"),
-                    Server.os_type.ilike("%sles%"),
-                    Server.os_release_id.isnot(None),
-                ),
-                ~Server.os_type.ilike("%windows%"),
-            )
+            query = query.filter(_known_linux_condition())
         elif os_l == "other":
             query = query.filter(
-                or_(Server.os_type.is_(None), Server.os_type == "", Server.os_type.ilike("%other%"), Server.os_type.ilike("%unknown%")),
+                ~_known_linux_condition(),
+                ~_windows_os_condition(),
             )
     if node_exporter and node_exporter.lower() != "all":
         ne = node_exporter.lower()
@@ -229,7 +263,13 @@ def _apply_server_list_filters(
             )
     if name_mismatch is True:
         query = query.filter(_name_mismatch_sql_filter())
-    if unassigned_hypervisor:
+    hv_ids = parse_hypervisor_ids(hypervisor_ids)
+    if hv_ids and unassigned_hypervisor:
+        # Ortam seçimi + "fiziksel / bağımsız" birlikte → OR
+        query = query.filter(or_(Server.hypervisor_id.in_(hv_ids), Server.hypervisor_id.is_(None)))
+    elif hv_ids:
+        query = query.filter(Server.hypervisor_id.in_(hv_ids))
+    elif unassigned_hypervisor:
         query = query.filter(Server.hypervisor_id.is_(None))
     elif hypervisor_id is not None:
         query = query.filter(Server.hypervisor_id == int(hypervisor_id))
@@ -249,6 +289,73 @@ def _apply_server_list_filters(
             enums = [HypervisorType(ht) for ht in types]
             query = query.filter(Server.hypervisor.has(Hypervisor.hypervisor_type.in_(enums)))
     return query
+
+
+_LIST_SORT_COLUMNS = frozenset({
+    "name", "ip_address", "status", "os_type", "cpu_cores", "memory_gb",
+    "server_type", "ai_ready",
+})
+_STATUS_SORT_ORDER = {"ONLINE": 1, "WARNING": 2, "CRITICAL": 3, "OFFLINE": 4}
+# Oktetler 0-255 (300.1.1.1 gibi değerler ::inet cast'inde 500 üretmesin)
+_IPV4_RE = (
+    r"^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}"
+    r"(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$"
+)
+
+
+def _server_list_order_by(sort_by: Optional[str], sort_dir: Optional[str]) -> list:
+    """GET /servers/ sıralaması (beyaz liste). Varsayılan: COALESCE(hostname, name) ASC.
+
+    Her durumda ``Server.id`` son anahtar — sayfalar arası kararlı sıra.
+    """
+    key = (sort_by or "").strip().lower()
+    if not key:
+        return [func.coalesce(Server.hostname, Server.name).asc(), Server.id.asc()]
+    if key not in _LIST_SORT_COLUMNS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Geçersiz sort_by: {sort_by}. İzin verilen: {', '.join(sorted(_LIST_SORT_COLUMNS))}",
+        )
+    direction = (sort_dir or "asc").strip().lower()
+    if direction not in ("asc", "desc"):
+        raise HTTPException(status_code=422, detail="Geçersiz sort_dir: asc veya desc olmalı")
+    desc = direction == "desc"
+
+    def _d(expr, nulls_last: bool = True):
+        out = expr.desc() if desc else expr.asc()
+        return out.nulls_last() if nulls_last else out
+
+    if key == "name":
+        # UI'daki görünen ad: hostname → vm_guest_hostname → name
+        display = func.lower(func.coalesce(
+            func.nullif(func.trim(func.coalesce(Server.hostname, "")), ""),
+            func.nullif(func.trim(func.coalesce(Server.vm_guest_hostname, "")), ""),
+            Server.name,
+            "",
+        ))
+        cols = [_d(display)]
+    elif key == "ip_address":
+        # Sayısal IPv4 sırası; IPv4 olmayan/boş değerler sona. CASE tembel değerlendirilir (::inet güvenli).
+        is_ipv4 = func.coalesce(Server.ip_address, "").op("~")(_IPV4_RE)
+        ip_as_inet = case((is_ipv4, func.cast(Server.ip_address, INET)), else_=None)
+        cols = [_d(ip_as_inet), _d(func.lower(func.coalesce(Server.ip_address, "")))]
+    elif key == "status":
+        rank = case(
+            *[(Server.status == k, v) for k, v in _STATUS_SORT_ORDER.items()],
+            else_=5,
+        )
+        cols = [_d(rank, nulls_last=False)]
+    elif key == "os_type":
+        cols = [_d(func.lower(func.nullif(func.trim(func.coalesce(Server.os_type, "")), "")))]
+    elif key == "server_type":
+        cols = [_d(func.lower(func.coalesce(Server.server_type, "")), nulls_last=False)]
+    elif key == "ai_ready":
+        cols = [_d(case((Server.ai_ready.is_(True), 1), else_=0), nulls_last=False)]
+    else:  # cpu_cores, memory_gb
+        cols = [_d(func.coalesce(getattr(Server, key), 0), nulls_last=False)]
+
+    # İkincil: görünen ad (aynı değerler arasında okunur sıra), sonra id.
+    return [*cols, func.coalesce(Server.hostname, Server.name).asc(), Server.id.asc()]
 
 
 def _mask_conn_config(cfg: dict | None) -> dict:
@@ -643,14 +750,21 @@ def list_servers(
     hypervisor_type: Optional[str] = None,
     hypervisor_types: Optional[str] = None,
     unassigned_hypervisor: bool = False,
+    hypervisor_ids: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: Optional[str] = None,
 ):
     """
     Sunucuları sayfalı listele.
 
     Dönüş: ``{ items, total, page, page_size }``.
+    ``sort_by``: name | ip_address | status | os_type | cpu_cores | memory_gb | server_type | ai_ready
+    (beyaz liste; geçersiz → 422). ``sort_dir``: asc | desc. Boşsa varsayılan sıra (hostname/name ASC).
+    ``hypervisor_ids``: virgüllü ortam (hypervisor) id'leri; ``unassigned_hypervisor=true`` ile OR'lanır.
     `include_node_exporter_status` artık SSH yapmaz — DB cache alanları kullanılır (deprecated flag).
     """
     del include_node_exporter_status  # SSH list path kaldırıldı; DB alanları yeterli
+    order_by = _server_list_order_by(sort_by, sort_dir)  # 422 try/except dışında kalsın
     try:
         global_cred = (
             db.query(GlobalCredential).filter_by(is_default=True).first()
@@ -675,10 +789,11 @@ def list_servers(
             hypervisor_type=hypervisor_type,
             hypervisor_types=hypervisor_types,
             unassigned_hypervisor=unassigned_hypervisor or None,
+            hypervisor_ids=hypervisor_ids,
         )
         total = query.count()
         servers = (
-            query.order_by(func.coalesce(Server.hostname, Server.name).asc())
+            query.order_by(*order_by)
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
@@ -709,6 +824,7 @@ def servers_summary(
     hypervisor_type: Optional[str] = None,
     hypervisor_types: Optional[str] = None,
     unassigned_hypervisor: bool = False,
+    hypervisor_ids: Optional[str] = None,
 ):
     """KPI / dashboard için aggregate sayılar — full envanter çekilmesin."""
     try:
@@ -723,6 +839,7 @@ def servers_summary(
                 hypervisor_type=hypervisor_type,
                 hypervisor_types=hypervisor_types,
                 unassigned_hypervisor=unassigned_hypervisor or None,
+                hypervisor_ids=hypervisor_ids,
             )
             return q
 
@@ -771,6 +888,128 @@ def servers_summary(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error summarizing servers: {str(e)}")
+
+
+# Ortam (hypervisor) facet'leri — tür sırası ve okunabilir etiketler (teknik adlar çevrilmez).
+_HV_GROUP_ORDER = ["vmware", "kvm", "openshift_virt", "hyperv", "proxmox", "xen"]
+_HV_GROUP_LABELS = {
+    "vmware": "VMware vCenter",
+    "kvm": "OLVM / oVirt (KVM)",
+    "openshift_virt": "OpenShift Virtualization",
+    "hyperv": "Hyper-V",
+    "proxmox": "Proxmox",
+    "xen": "Xen",
+}
+
+
+def build_hypervisor_facets(
+    db: Session,
+    platform: str,
+    *,
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    hide_offline: bool = False,
+    ai_ready: Optional[bool] = None,
+    server_type: Optional[str] = None,
+    node_exporter: Optional[str] = None,
+    name_mismatch: Optional[bool] = None,
+    os_filter: Optional[str] = None,
+    include_unclassified: bool = False,
+) -> dict:
+    """Ortam bazlı sayılar. Hypervisor filtreleri HARİÇ tüm liste filtreleri uygulanır.
+
+    Yalnızca id/name/type/status döner — hypervisor credential alanlarına (username, password,
+    connection_config, hostname, ip) hiç dokunulmaz.
+    """
+    from app.models.hypervisor import Hypervisor
+
+    counts: dict = {}
+    if platform == "windows":
+        # Windows listesiyle aynı satır kümesi (windows.py) — sayılar liste toplamıyla tutarlı.
+        from app.api.windows import _collect_windows_server_rows
+
+        rows = _collect_windows_server_rows(db, include_unclassified=include_unclassified, q=q)
+        for r in rows:
+            if hide_offline and r.get("status") == "OFFLINE":
+                continue
+            if status and status.upper() != "ALL" and (r.get("status") or "").upper() != status.upper():
+                continue
+            if ai_ready is not None and bool(r.get("ai_ready")) != bool(ai_ready):
+                continue
+            if server_type and server_type.upper() != "ALL" and (r.get("server_type") or "").upper() != server_type.upper():
+                continue
+            counts[r.get("hypervisor_id")] = counts.get(r.get("hypervisor_id"), 0) + 1
+    else:
+        from app.services.platform_scope import apply_server_platform_filter
+
+        query = apply_server_platform_filter(db.query(Server), platform, db)
+        query = _apply_server_list_filters(
+            query,
+            q=q,
+            status=status,
+            hide_offline=hide_offline,
+            ai_ready=ai_ready,
+            server_type=server_type,
+            os_filter=os_filter,
+            node_exporter=node_exporter,
+            name_mismatch=name_mismatch,
+        )
+        for hv_id, n in query.with_entities(Server.hypervisor_id, func.count(Server.id)).group_by(Server.hypervisor_id).all():
+            counts[hv_id] = int(n)
+
+    envs = (
+        db.query(Hypervisor.id, Hypervisor.name, Hypervisor.hypervisor_type, Hypervisor.status)
+        .order_by(func.lower(Hypervisor.name).asc(), Hypervisor.id.asc())
+        .all()
+    )
+    by_type: dict = {}
+    for hv_id, name, htype, hstatus in envs:
+        tkey = htype.value if hasattr(htype, "value") else str(htype or "").lower()
+        by_type.setdefault(tkey, []).append({
+            "id": hv_id,
+            "name": name or f"#{hv_id}",
+            "status": hstatus or "",
+            "count": int(counts.get(hv_id, 0)),
+        })
+    ordered = [t for t in _HV_GROUP_ORDER if t in by_type] + sorted(t for t in by_type if t not in _HV_GROUP_ORDER)
+    groups = [
+        {"type": t, "label": _HV_GROUP_LABELS.get(t, t), "environments": by_type[t]}
+        for t in ordered
+    ]
+    return {"groups": groups, "unassigned_count": int(counts.get(None, 0))}
+
+
+@router.get("/hypervisor-facets")
+def hypervisor_facets(
+    db: Session = Depends(get_db),
+    platform: str = "linux",
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    hide_offline: bool = False,
+    ai_ready: Optional[bool] = None,
+    server_type: Optional[str] = None,
+    node_exporter: Optional[str] = None,
+    name_mismatch: Optional[bool] = None,
+    os_filter: Optional[str] = Query(None, alias="os"),
+    include_unclassified: bool = False,
+):
+    """Ortam filtresi için facet'ler: ``{ groups: [{type,label,environments:[{id,name,status,count}]}], unassigned_count }``.
+
+    Sayılar, hypervisor filtreleri dışındaki tüm liste filtreleriyle hesaplanır.
+    RBAC: `/servers` önekiyle aynı modül kuralı (module_policy).
+    """
+    if platform not in ("linux", "windows"):
+        raise HTTPException(status_code=422, detail="platform linux veya windows olmalı")
+    try:
+        return build_hypervisor_facets(
+            db, platform, q=q, status=status, hide_offline=hide_offline, ai_ready=ai_ready,
+            server_type=server_type, node_exporter=node_exporter, name_mismatch=name_mismatch,
+            os_filter=os_filter, include_unclassified=include_unclassified,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error building hypervisor facets: {str(e)}")
 
 
 @router.get("/ai-ready/list")

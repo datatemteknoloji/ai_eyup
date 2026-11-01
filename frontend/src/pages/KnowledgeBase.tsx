@@ -369,7 +369,7 @@ const KnowledgeBase: React.FC = () => {
                           <input
                             value={editValue}
                             onChange={e => setEditValue(e.target.value)}
-                            className="bg-cyber-deep border border-white/[0.15] rounded px-1.5 py-0.5 text-xs text-white flex-1"
+                            className="bg-cyber-deep border border-white/[0.15] rounded-sm px-1.5 py-0.5 text-xs text-white flex-1"
                             autoFocus
                           />
                           <button

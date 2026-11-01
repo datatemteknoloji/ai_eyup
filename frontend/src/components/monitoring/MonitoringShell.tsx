@@ -39,14 +39,14 @@ export const MonitoringShell: React.FC<MonitoringShellProps> = ({
 }) => {
   const t = useT()
   const modeToggle = showModeToggle ? (
-    <div className="inline-flex rounded-md border border-white/[0.08] overflow-hidden text-[11px] flex-shrink-0">
+    <div className="inline-flex rounded-md border border-white/[0.08] overflow-hidden text-[11px] shrink-0">
       <button
         type="button"
         onClick={() => onModeChange('api')}
         className={`px-2.5 py-1 font-medium transition-colors ${
           mode === 'api'
             ? 'bg-blue-600 text-white'
-            : 'bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-white'
+            : 'bg-(--bg-elevated) text-(--text-secondary) hover:text-white'
         }`}
       >
         {t('mon_mode_api')}
@@ -59,7 +59,7 @@ export const MonitoringShell: React.FC<MonitoringShellProps> = ({
         className={`px-2.5 py-1 font-medium transition-colors ${
           mode === 'prometheus'
             ? 'bg-blue-600 text-white'
-            : 'bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-white'
+            : 'bg-(--bg-elevated) text-(--text-secondary) hover:text-white'
         } disabled:opacity-40 disabled:cursor-not-allowed`}
       >
         Prometheus
@@ -86,11 +86,11 @@ export const MonitoringShell: React.FC<MonitoringShellProps> = ({
     <div className="p-4 md:p-6 space-y-3 max-w-[1600px] mx-auto">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <Activity className="text-blue-400 flex-shrink-0" size={20} />
-          <h1 className="text-lg font-bold text-[var(--text-primary)] truncate">{title}</h1>
+          <Activity className="text-blue-400 shrink-0" size={20} />
+          <h1 className="text-lg font-bold text-(--text-primary) truncate">{title}</h1>
           <MonitoringArchitectureHint />
           {subtitle && (
-            <span className="hidden lg:inline text-[11px] text-[var(--text-muted)] truncate max-w-md">
+            <span className="hidden lg:inline text-[11px] text-(--text-muted) truncate max-w-md">
               · {subtitle}
             </span>
           )}

@@ -208,7 +208,7 @@ function MiniRing({ score, size = 46 }: { score: number | null; size?: number })
   const grade = unmeasured ? 'C' : score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 55 ? 'C' : score >= 35 ? 'D' : 'F'
   const color = unmeasured ? '#64748b' : GRADE_HEX[grade]
   return (
-    <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox="0 0 100 100">
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1e293b" strokeWidth="12" />
         <circle
@@ -238,7 +238,7 @@ function KpiCard({ icon, label, value, tone, pulse, onClick }: {
       className={`relative bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 flex items-center gap-3 overflow-hidden group hover:border-slate-600 transition-colors ${onClick ? 'cursor-pointer' : ''}`}
     >
       <div className={`absolute -right-4 -top-4 w-16 h-16 rounded-full blur-2xl opacity-40 ${tone}`} />
-      <div className={`relative w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${tone}`}>
+      <div className={`relative w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${tone}`}>
         {pulse && value > 0 && <span className="absolute inline-flex h-full w-full rounded-lg bg-red-400 opacity-20 animate-ping" />}
         {icon}
       </div>
@@ -274,7 +274,7 @@ function PlatformPanel({ platformKey, stat, link, linkLabel, onCriticalClick, on
   const meta = PLATFORM_META[platformKey] || PLATFORM_META.linux
   return (
     <div className="relative bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 flex flex-col gap-4 overflow-hidden hover:border-slate-600/80 transition-all group">
-      <div className={`absolute inset-x-0 top-0 h-24 bg-gradient-to-b ${meta.glow} to-transparent pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity`} />
+      <div className={`absolute inset-x-0 top-0 h-24 bg-linear-to-b ${meta.glow} to-transparent pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity`} />
       <div className="flex items-start justify-between relative">
         <div className="flex items-center gap-2">
           <div className={`w-9 h-9 rounded-lg border flex items-center justify-center ${meta.badge}`}>{meta.icon}</div>
@@ -454,7 +454,7 @@ export default function ExecutiveDashboard() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="relative overflow-hidden rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/10 via-slate-800/60 to-slate-800/60 p-5">
+      <div className="relative overflow-hidden rounded-2xl border border-amber-500/20 bg-linear-to-br from-amber-500/10 via-slate-800/60 to-slate-800/60 p-5">
         <div className="absolute -right-10 -top-16 w-56 h-56 rounded-full bg-amber-500/10 blur-3xl pointer-events-none" />
         <div className="flex items-center justify-between relative">
           <div className="flex items-center gap-3">
@@ -494,7 +494,7 @@ export default function ExecutiveDashboard() {
       {/* Genel Sağlık + KPI'lar */}
       <div className="grid grid-cols-1 lg:grid-cols-[auto_1fr] gap-4">
         <div className="relative bg-slate-800/60 border border-slate-700/50 rounded-xl p-6 flex flex-col items-center justify-center gap-2 min-w-[240px] overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent pointer-events-none" />
+          <div className="absolute inset-0 bg-linear-to-b from-white/[0.02] to-transparent pointer-events-none" />
           <ScoreRing score={overall.health_score} />
           <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg border ${overall.grade ? (GRADE_COLOR[overall.grade] || GRADE_COLOR.C) : 'text-slate-300 bg-slate-700/40 border-slate-600'}`}>
             {overall.grade ? `${overall.grade} · ${overall.label}` : overall.label}
@@ -589,7 +589,7 @@ export default function ExecutiveDashboard() {
                     onKeyDown={(e) => { if (e.key === 'Enter') openAlert(a) }}
                     className={`flex items-center gap-3 bg-slate-900/40 border-l-4 ${SEV_STRIPE[a.severity] || SEV_STRIPE.info} border-y border-r border-slate-700/40 rounded-r-lg px-3 py-2.5 cursor-pointer hover:bg-slate-800/60`}
                   >
-                    <span className="w-6 flex items-center justify-center flex-shrink-0">
+                    <span className="w-6 flex items-center justify-center shrink-0">
                       {MEDAL_COLOR[i]
                         ? <Trophy size={15} strokeWidth={2} style={{ color: MEDAL_COLOR[i] }} />
                         : <span className="text-slate-500 text-xs">#{i + 1}</span>}
@@ -597,13 +597,13 @@ export default function ExecutiveDashboard() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <span className="text-white text-sm font-medium truncate">{a.server_name}</span>
-                        <span className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${meta?.badge || ''}`}>
+                        <span className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full border shrink-0 ${meta?.badge || ''}`}>
                           {meta?.icon} {platformLabel(a.platform, t)}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 truncate" title={a.title}>{a.title}</p>
                     </div>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full border flex-shrink-0 ${SEV_BADGE[a.severity] || SEV_BADGE.info}`}>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full border shrink-0 ${SEV_BADGE[a.severity] || SEV_BADGE.info}`}>
                       {a.severity}
                     </span>
                   </div>

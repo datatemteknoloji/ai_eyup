@@ -102,3 +102,47 @@ def test_produce_writes_locked_row(isolated_db, monkeypatch):
     assert body["status"] == "ready"
     assert body["summary"] == "Özet cümlesi."
     assert body["summary_source"] == "template"
+
+
+def _stub_build(monkeypatch):
+    monkeypatch.setattr("app.services.exec_snapshot.build_executive_facts",
+                        lambda *_a, **_k: [{"report_type": "a1", "sections": []}])
+    monkeypatch.setattr("app.services.exec_snapshot.compose_summary",
+                        lambda *_a, **_k: {"text": "x", "source": "template"})
+
+
+def _advisory_count(db) -> int:
+    from sqlalchemy import text
+    return db.execute(text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'")).scalar()
+
+
+def test_produce_does_not_leak_advisory_lock_across_pool_connections(isolated_db, monkeypatch):
+    """Kilit oturum bağlantısında alınıp `rollback()` sonrası başka havuz bağlantısında bırakılmaya çalışılırsa
+    kilit sızıyordu (sonraki üretimler None; tam takımda sıra bağımlı hata)."""
+    from sqlalchemy import text
+    _stub_build(monkeypatch)
+    eng = isolated_db.get_bind()
+    conns = [eng.connect() for _ in range(3)]
+    for c in conns:
+        c.execute(text("SELECT 1"))
+    for c in conns:
+        c.close()                                   # havuzda 3 boşta bağlantı
+    ids = [produce_bundle(isolated_db) for _ in range(3)]
+    assert all(ids)
+    assert _advisory_count(isolated_db) == 0
+
+
+def test_produce_returns_none_while_another_session_holds_the_lock(isolated_db, monkeypatch):
+    from sqlalchemy import text
+    from app.services import exec_snapshot as snap
+    _stub_build(monkeypatch)
+    eng = isolated_db.get_bind()
+    other = eng.connect().execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        assert other.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": snap._LOCK}).scalar()
+        assert produce_bundle(isolated_db) is None          # kilit dolu → üretim yok
+    finally:
+        other.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": snap._LOCK})
+        other.close()
+    assert produce_bundle(isolated_db)                       # kilit düşünce üretir
+    assert _advisory_count(isolated_db) == 0

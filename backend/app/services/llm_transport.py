@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -84,6 +84,36 @@ def probe_ollama_version(
     except Exception as exc:
         logger.debug("Ollama /api/version probe failed for %s: %s", base, exc)
         return None
+
+
+def probe_remote_health(*, timeout: float = 3.0) -> Optional[bool]:
+    """Uzak LLM sağlık yoklaması (devre kesici için; model ÇALIŞTIRMAZ, yük bindirmez).
+
+    Native Ollama: GET {base}/api/version · OpenAI-uyumlu gateway: GET {base}/v1/models.
+    Dönüş: True = sunucu yanıt veriyor (4xx dahil: ayakta; yalnız 5xx/ağ hatası ölü sayılır),
+    False = ulaşılamıyor/5xx, None = uzak LLM etkin değil (yoklanacak hedef yok).
+    """
+    from app.core.config import remote_llm_enabled, remote_llm_ssl_verify
+
+    if not remote_llm_enabled():
+        return None
+    base = remote_base_url()
+    if not base:
+        return None
+    try:
+        native = is_remote_ollama()
+        url = f"{base}/api/version" if native else f"{base}/v1/models"
+        headers: Dict[str, str] = {}
+        if not native:
+            from app.services.llm_gateway import _remote_headers
+            headers = _remote_headers()
+        t = max(0.5, float(timeout))
+        with httpx.Client(timeout=httpx.Timeout(t, connect=min(t, 2.0)), verify=remote_llm_ssl_verify()) as client:
+            resp = client.get(url, headers=headers)
+        return resp.status_code < 500
+    except Exception as exc:
+        logger.info("[LLM] sağlık yoklaması başarısız: %s: %s", type(exc).__name__, str(exc)[:160])
+        return False
 
 
 def remote_base_url(*, ai_source: Any = None) -> str:
@@ -277,6 +307,11 @@ def _source_id(ai_source: Any = None) -> str:
         return "default"
 
 
+def _active_model_name() -> str:
+    from app.services.ollama_runtime import active_model_name
+    return active_model_name()
+
+
 def discover_model_context_length(
     *,
     model: Optional[str] = None,
@@ -284,11 +319,11 @@ def discover_model_context_length(
     ai_source: Any = None,
 ) -> Optional[int]:
     """Gerçek model context penceresi; yoksa None (ayar hard-cap kullanılır)."""
-    from app.core.config import get_active_model, remote_llm_enabled, remote_llm_ssl_verify, settings
+    from app.core.config import remote_llm_enabled, remote_llm_ssl_verify, settings
     from app.services.llm_ai_source import resolve_ai_source
 
     src = resolve_ai_source(ai_source)
-    want = (model or src.model or get_active_model() or settings.OLLAMA_DEFAULT_MODEL or "").strip()
+    want = (model or src.model or _active_model_name() or settings.OLLAMA_DEFAULT_MODEL or "").strip()
     transport = resolve_active_transport(ai_source=src)
     base_for_key = (
         remote_base_url(ai_source=src)
@@ -371,6 +406,50 @@ def get_effective_context_tokens(
     return max(2048, min(desired, real))
 
 
+def activity_warnings() -> List[str]:
+    """Son pencerede (llm_warn_window_sec) gözlenen kuyruk / zaman aşımı / atlama uyarıları.
+
+    Yalnız BİLGİ amaçlıdır (erişimi ENGELLEMEZ); eşikler runtime_settings `llm_warn_*`. Hata → boş liste.
+    """
+    try:
+        from app.services import llm_activity
+        from app.services.runtime_settings import get_setting
+
+        def _i(key: str, fb: int) -> int:
+            try:
+                return int(float(get_setting(key)))
+            except (TypeError, ValueError):
+                return fb
+
+        win = max(60, _i("llm_warn_window_sec", 1800))
+        st = llm_activity.window_stats(float(win))
+        mins = max(1, int(round(win / 60)))
+        out: List[str] = []
+        th_q = _i("llm_warn_queue_wait_ms", 5000)
+        if st["calls"] >= 3 and st["sched_wait_ms_p95"] >= th_q:
+            out.append(
+                f"Kuyruk bekleme yüksek (p95 {st['sched_wait_ms_p95'] / 1000:.1f} sn, son {mins} dk): "
+                "LLM sunucusunun paralelliğini (ör. OLLAMA_NUM_PARALLEL) ve llm_max_concurrent değerini gözden geçirin"
+            )
+        hint = (st["by_class"].get("route_hint") or {}).get("hit_timeout", 0)
+        if hint >= _i("llm_warn_best_effort_timeouts", 3):
+            out.append(f"İsteğe bağlı çağrılar sık zaman aşımına uğruyor ({hint} çağrı, son {mins} dk)")
+        skips = sum(v for k, v in (st.get("skipped") or {}).items() if k.startswith("route_hint:"))
+        if skips >= _i("llm_warn_hint_skips", 5):
+            out.append(
+                f"Yönlendirme ipucu sık atlanıyor ({skips} kez, son {mins} dk): LLM sürekli meşgul olabilir"
+            )
+        tt = (st["by_class"].get("tool_turn") or {}).get("hit_timeout", 0)
+        if tt >= _i("llm_warn_tool_turn_limit", 2):
+            out.append(
+                f"Araç turu çağrıları zaman aşımı sınırına dayanıyor ({tt} çağrı, son {mins} dk): "
+                "model yavaş ya da üretim çok uzun olabilir"
+            )
+        return out
+    except Exception:
+        return []
+
+
 def build_llm_health(*, model: Optional[str] = None, ai_source: Any = None) -> Dict[str, Any]:
     """Platform / Ayarlar sağlık kartı — taşıma + etkin bütçe + Ollama /api/ps."""
     from app.core.config import remote_llm_enabled
@@ -413,7 +492,7 @@ def build_llm_health(*, model: Optional[str] = None, ai_source: Any = None) -> D
                 + (f", keşif {disc}" if disc else "")
                 + ")."
             ),
-            "warnings": [],
+            "warnings": activity_warnings(),
             "errors": [],
             "configured_num_ctx": effective,
             "loaded_context_length": disc,
@@ -444,6 +523,7 @@ def build_llm_health(*, model: Optional[str] = None, ai_source: Any = None) -> D
         health["warnings"].append(
             f"Yüklü context ({loaded}) ≠ etkin bütçe ({effective})"
         )
+    health["warnings"].extend(activity_warnings())
     if remote_llm_enabled() and transport == TRANSPORT_OLLAMA:
         health["message"] = (
             f"REMOTE_LLM native Ollama ({base}). "

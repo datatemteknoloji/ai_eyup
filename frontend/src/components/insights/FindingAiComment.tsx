@@ -44,14 +44,14 @@ export function AiCommentView({ c, busy, onRegen, onFeedback }: {
     <AiBlock method="ai.finding.comment" title={t('vi_ai_label')}>
       <div className="space-y-3" data-testid="ai-comment">
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-          <span className={`inline-flex items-center rounded border px-1.5 py-0.5 ${CONF_TONE[conf.level] || ''}`} data-testid={`ai-conf-${conf.level}`}>
+          <span className={`inline-flex items-center rounded-sm border px-1.5 py-0.5 ${CONF_TONE[conf.level] || ''}`} data-testid={`ai-conf-${conf.level}`}>
             {t('vi_ai_conf')}: {t(`vi_ai_conf_${conf.level}` as any)}<TermHint k="ai_conf" />
           </span>
           {conf.reasons.length > 0 && <span data-testid="ai-conf-reasons">({conf.reasons.map(r => t(`vi_ai_cr_${r}` as any)).join('; ')})</span>}
           <span data-testid="ai-generated">{t('vi_ai_generated', { at: c.generated_at ? new Date(c.generated_at).toLocaleString() : '—', model: c.model || '—', v: c.version })}</span>
         </div>
         {c.stale && (
-          <div className="flex flex-wrap items-center gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200" data-testid="ai-stale">
+          <div className="flex flex-wrap items-center gap-2 rounded-sm border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200" data-testid="ai-stale">
             <span className="inline-flex items-center">{t('vi_ai_stale')}<TermHint k="ai_stale" /></span>
             <GhostButton accent={NEON.orange} onClick={onRegen}>{t('vi_ai_regen')}</GhostButton>
           </div>
@@ -67,13 +67,13 @@ export function AiCommentView({ c, busy, onRegen, onFeedback }: {
         <Section title={t('vi_ai_sec_priority')}>{k.oncelik}</Section>
         {k.gozlenen.length > 0 && <Section title={t('vi_ai_sec_observed')} testid="ai-sec-observed"><Bullets items={k.gozlenen} /></Section>}
         {k.genel_bilgi.length > 0 && (
-          <div className="rounded border border-dashed border-slate-500/40 bg-black/20 p-2" data-testid="ai-sec-general">
+          <div className="rounded-sm border border-dashed border-slate-500/40 bg-black/20 p-2" data-testid="ai-sec-general">
             <div className="text-[11px] uppercase tracking-wider text-slate-500 inline-flex items-center">{t('vi_ai_sec_general')}<TermHint k="ai_general" /></div>
             <div className="text-xs text-slate-300 leading-relaxed"><Bullets items={k.genel_bilgi} /></div>
           </div>
         )}
         {(k.diger_iyilestirmeler || []).length > 0 && (
-          <div className="rounded border border-white/[0.08] bg-black/10 p-2" data-testid="ai-sec-other">
+          <div className="rounded-sm border border-white/[0.08] bg-black/10 p-2" data-testid="ai-sec-other">
             <div className="text-[11px] uppercase tracking-wider text-slate-500 inline-flex items-center">{t('vi_ai_sec_other')}<TermHint k="ai_other" /></div>
             <div className="text-xs text-slate-300 leading-relaxed"><Bullets items={k.diger_iyilestirmeler!} /></div>
           </div>
@@ -82,9 +82,9 @@ export function AiCommentView({ c, busy, onRegen, onFeedback }: {
         <div className="flex flex-wrap items-center gap-2 border-t border-violet-500/15 pt-2 text-[11px] text-slate-400" data-testid="ai-feedback">
           <span>{t('vi_ai_fb_q')}</span>
           <button type="button" data-testid="ai-fb-yes" aria-pressed={c.feedback.mine === true} onClick={() => onFeedback(true)}
-            className={`rounded border px-2 py-0.5 ${c.feedback.mine === true ? 'border-emerald-500/60 bg-emerald-600/20 text-emerald-200' : 'border-white/[0.1] hover:text-slate-200'}`}>{t('vi_ai_fb_yes')}</button>
+            className={`rounded-sm border px-2 py-0.5 ${c.feedback.mine === true ? 'border-emerald-500/60 bg-emerald-600/20 text-emerald-200' : 'border-white/[0.1] hover:text-slate-200'}`}>{t('vi_ai_fb_yes')}</button>
           <button type="button" data-testid="ai-fb-no" aria-pressed={c.feedback.mine === false} onClick={() => onFeedback(false)}
-            className={`rounded border px-2 py-0.5 ${c.feedback.mine === false ? 'border-red-500/60 bg-red-600/20 text-red-200' : 'border-white/[0.1] hover:text-slate-200'}`}>{t('vi_ai_fb_no')}</button>
+            className={`rounded-sm border px-2 py-0.5 ${c.feedback.mine === false ? 'border-red-500/60 bg-red-600/20 text-red-200' : 'border-white/[0.1] hover:text-slate-200'}`}>{t('vi_ai_fb_no')}</button>
           <span className="text-slate-500" data-testid="ai-fb-counts">{t('vi_ai_fb_counts', { up: c.feedback.helpful, down: c.feedback.not_helpful })}</span>
           {!c.stale && <GhostButton onClick={onRegen}>{busy ? t('vi_ai_generating') : t('vi_ai_regen')}</GhostButton>}
         </div>

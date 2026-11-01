@@ -33,7 +33,7 @@ function rgb(hex: string) {
 }
 
 const card = 'bg-[#0d1422] border border-white/[0.07] rounded-[10px]'
-const inputCls = 'w-full bg-[#080d16] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-[#e8edf5] placeholder-slate-600 focus:outline-none focus:border-blue-500/60'
+const inputCls = 'w-full bg-[#080d16] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-[#e8edf5] placeholder-slate-600 focus:outline-hidden focus:border-blue-500/60'
 
 const PS_SCRIPTS = [
   { labelKey: 'ans_ps_uptime' as const, script: '(Get-CimInstance Win32_OperatingSystem).LastBootUpTime' },
@@ -154,12 +154,12 @@ const WindowsAnsible: React.FC = () => {
                       : 'hover:bg-white/[0.03] border border-transparent'
                   }`}>
                   <input type="checkbox" checked={sel} onChange={() => toggle(s.id)}
-                    className="w-3.5 h-3.5 accent-blue-500 flex-shrink-0" />
+                    className="w-3.5 h-3.5 accent-blue-500 shrink-0" />
                   <div className="min-w-0">
                     <p className="text-sm text-[#e8edf5] truncate">{s.name}</p>
                     <p className="text-[11px] font-mono text-slate-500">{s.ip_address}</p>
                   </div>
-                  <span className="ml-auto flex-shrink-0 w-1.5 h-1.5 rounded-full"
+                  <span className="ml-auto shrink-0 w-1.5 h-1.5 rounded-full"
                     style={{ background: NEON.green }} />
                 </label>
               )
@@ -234,7 +234,7 @@ const WindowsAnsible: React.FC = () => {
                 {result.results && Object.entries(result.results).map(([srv, res]: [string, any]) => (
                   <div key={srv} className="px-5 py-3">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0"
                         style={{ background: res.rc === 0 ? NEON.green : NEON.red }} />
                       <span className="text-xs font-medium text-[#e8edf5]">{srv}</span>
                       <span className="text-[10px] font-mono text-slate-600 ml-auto">

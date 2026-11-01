@@ -127,7 +127,7 @@ export function Bar({ pct, warn = 75, crit = 90 }: { pct?: number | null; warn?:
   const v = Math.max(0, Math.min(100, pct ?? 0))
   const c = pct == null ? 'bg-slate-600' : v >= crit ? 'bg-red-500' : v >= warn ? 'bg-amber-500' : 'bg-blue-600'
   return (
-    <div className="h-1.5 w-full rounded bg-white/[0.06] overflow-hidden">
+    <div className="h-1.5 w-full rounded-sm bg-white/[0.06] overflow-hidden">
       <div className={`h-full ${c}`} style={{ width: `${v}%` }} />
     </div>
   )
@@ -154,7 +154,7 @@ export function ResultBadge({ result }: { result: string }) {
   return (
     <span
       title={title}
-      className={`px-2 py-0.5 rounded border text-[11px] font-medium whitespace-nowrap ${map[result] || map.not_measurable}`}
+      className={`px-2 py-0.5 rounded-sm border text-[11px] font-medium whitespace-nowrap ${map[result] || map.not_measurable}`}
     >
       {label}
     </span>
@@ -206,13 +206,13 @@ function DraftModal({ base, finding, onClose }: { base: InsightsBase; finding: F
           <>
             <div className="text-xs text-amber-300">{t('vi_draft_note')}</div>
             <div className="relative">
-              <pre className="bg-black/40 border border-white/[0.06] rounded p-3 text-xs font-mono text-slate-200 whitespace-pre-wrap">{q.data.script}</pre>
+              <pre className="bg-black/40 border border-white/[0.06] rounded-sm p-3 text-xs font-mono text-slate-200 whitespace-pre-wrap">{q.data.script}</pre>
               <button className="absolute top-2 right-2 text-slate-400 hover:text-white" onClick={() => copy(q.data.script)} title={t('vi_copy')}><Copy size={14} /></button>
             </div>
             {q.data.rollback && (
               <div>
                 <div className="text-xs text-slate-400 mb-1">{t('vi_rollback')}</div>
-                <pre className="bg-black/40 border border-white/[0.06] rounded p-3 text-xs font-mono text-slate-300 whitespace-pre-wrap">{q.data.rollback}</pre>
+                <pre className="bg-black/40 border border-white/[0.06] rounded-sm p-3 text-xs font-mono text-slate-300 whitespace-pre-wrap">{q.data.rollback}</pre>
               </div>
             )}
             {(q.data.notes || []).map((n: string, i: number) => <div key={i} className="text-xs text-slate-400">• {n}</div>)}
@@ -242,9 +242,9 @@ function ExceptionModal({ base, finding, onClose }: { base: InsightsBase; findin
       <div className="p-5 space-y-3 text-sm">
         <div className="text-xs text-slate-400">{t('vi_exc_hint')}</div>
         <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} placeholder={t('vi_exc_reason')}
-          className="w-full rounded bg-black/30 border border-white/[0.08] p-2 text-sm text-white" />
+          className="w-full rounded-sm bg-black/30 border border-white/[0.08] p-2 text-sm text-white" />
         <label className="flex items-center gap-2 text-xs text-slate-400">{t('vi_exc_days')}
-          <input value={days} onChange={e => setDays(e.target.value.replace(/\D/g, ''))} className="w-20 rounded bg-black/30 border border-white/[0.08] px-2 py-1 text-white font-mono" />
+          <input value={days} onChange={e => setDays(e.target.value.replace(/\D/g, ''))} className="w-20 rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1 text-white font-mono" />
         </label>
         {err && <div className="text-red-300 text-xs">{err}</div>}
       </div>
@@ -326,11 +326,11 @@ export function FindingsTable({ base, rows, showPlatform = true, emptyText }: {
                 <tr className="border-b border-white/[0.04] hover:bg-white/[0.02] cursor-pointer" onClick={() => setOpen(isOpen ? null : f.id)}>
                   <td className="px-3 py-2 text-slate-500">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                   <td className="px-3 py-2"><SeverityBadge severity={f.severity} /></td>
-                  <td className="px-3 py-2 text-white">{f.title}<MethodBadge id={f.check_id} at={f.last_seen} className="ml-2" />{f.exception && <span className="ml-2 text-[10px] text-slate-400 border border-white/10 rounded px-1">{t('vi_excepted')}</span>}</td>
+                  <td className="px-3 py-2 text-white">{f.title}<MethodBadge id={f.check_id} at={f.last_seen} className="ml-2" />{f.exception && <span className="ml-2 text-[10px] text-slate-400 border border-white/10 rounded-sm px-1">{t('vi_excepted')}</span>}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-300">{f.entity_name}{f.cluster_name && f.cluster_name !== f.entity_name ? <span className="text-slate-500"> · {f.cluster_name}</span> : null}</td>
                   {showPlatform && <td className="px-3 py-2 text-xs text-slate-400">{f.source_name} <span className="text-slate-600">({f.platform})</span></td>}
                   <td className="px-3 py-2 text-xs text-slate-400 max-w-[28rem] truncate" title={f.detail || ''}>{f.detail || '—'}</td>
-                  <td className="px-3 py-2"><ResultBadge result={f.result} />{f.stale && f.stale_note && <span className="ml-1.5 text-[10px] text-amber-200 border border-amber-500/30 bg-amber-500/10 rounded px-1 whitespace-nowrap" title={f.stale_note} data-unverifiable>{t('g_ref_unverifiable')}</span>}</td>
+                  <td className="px-3 py-2"><ResultBadge result={f.result} />{f.stale && f.stale_note && <span className="ml-1.5 text-[10px] text-amber-200 border border-amber-500/30 bg-amber-500/10 rounded-sm px-1 whitespace-nowrap" title={f.stale_note} data-unverifiable>{t('g_ref_unverifiable')}</span>}</td>
                 </tr>
                 {isOpen && (
                   <tr className="border-b border-white/[0.04] bg-black/20">
@@ -345,7 +345,7 @@ export function FindingsTable({ base, rows, showPlatform = true, emptyText }: {
                       {base === 'virt-insights' && f.result === 'fail' && <FindingAiComment f={f} />}
                       {f.refs && f.refs.length > 0 && <div className="text-[11px] text-slate-500">{f.refs.join(' · ')}</div>}
                       {f.evidence && Object.keys(f.evidence).length > 0 && (
-                        <pre className="text-[11px] font-mono text-slate-400 bg-black/30 rounded p-2 max-h-56 overflow-auto whitespace-pre-wrap">{JSON.stringify(f.evidence, null, 2)}</pre>
+                        <pre className="text-[11px] font-mono text-slate-400 bg-black/30 rounded-sm p-2 max-h-56 overflow-auto whitespace-pre-wrap">{JSON.stringify(f.evidence, null, 2)}</pre>
                       )}
                       <div className="text-[11px] text-slate-500">{t('vi_first_seen')}: {f.first_seen ? new Date(f.first_seen).toLocaleString() : '—'} · {t('vi_last_seen')}: {f.last_seen ? new Date(f.last_seen).toLocaleString() : '—'} · <span className="font-mono">{f.check_id}</span></div>
                       {f.exception && <div className="text-xs text-slate-400">{t('vi_exc_reason')}: {f.exception.reason} ({f.exception.created_by}{f.exception.expires_at ? ` → ${new Date(f.exception.expires_at).toLocaleDateString()}` : ''})</div>}

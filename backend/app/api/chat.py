@@ -4,7 +4,8 @@ Chat API endpoints - veritabanı tabanlı (kalıcı, tüm worker'larda aynı ver
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import func, delete
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from app.services.chat_text_norm import normalize_user_text
 from typing import Optional, List
 from datetime import datetime, timezone
 import logging
@@ -12,9 +13,13 @@ import re
 import unicodedata
 import httpx
 
-from app.services.chat_rules import NUMBER_RULE_TR
+from app.core.chat_executor import run_chat_io
+from app.services.chat_quality import trace as _cq_trace
+from app.services.chat_rules import (
+    NUMBER_RULE_TR, ADVICE_RULE_TR, HONESTY_RULE_TR, USER_LANGUAGE_RULE_TR, OC_RULE_TR,
+)
 from app.core.auth import get_current_user, get_current_user_optional
-from app.core.database import get_db
+from app.core.database import get_db, release_txn
 from app.core.config import settings, get_active_model, remote_llm_enabled
 from app.models.server import Server
 from app.models.hypervisor import Hypervisor
@@ -93,6 +98,14 @@ def _classify_db_only_sysinfo(msg_lower: str, ssh_only_keywords, ssh_sysinfo_key
     return db_only_answer, matched_db_static_topic
 
 from app.services.llm_external import detect_provider as _detect_provider
+import time as _time_mod
+from app.services.chat_live_final import (   # Adım 17: ortak canlı akış yardımcıları
+    LiveFinal as _LiveFinal,
+    final_think_level as _final_think_level,
+    live_loop_kwargs as _live_loop_kwargs,
+    paced_chunks as _paced_chunks_live,
+    thinking_allowed as _thinking_allowed,
+)
 
 
 async def _stream_external_openai(client, url: str, api_key: str, model: str, prompt: str, extra_headers: dict = None):
@@ -196,6 +209,12 @@ async def list_available_models(db: Session = Depends(get_db)):
 
 class ChatRequest(BaseModel):
     message: str
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def _normalize_message(cls, v):
+        # Adım 19: modelin yazdığı kırılmaz tire (U+2011) vb. kopyalanıp sorulunca ad eşleşmesi bozulmasın
+        return normalize_user_text(v) if isinstance(v, str) else v
     server_ids: Optional[List[int]] = None
     server_id: Optional[int] = None
     hypervisor_ids: Optional[List[int]] = None
@@ -207,6 +226,9 @@ class ChatRequest(BaseModel):
     ephemeral: Optional[bool] = False  # Gizli mod: mesajlar DB'ye yazılmaz
     # linux | openshift | exadata — OpenShift sohbeti Linux SSH/tool ile karışmasın
     platform: Optional[str] = "linux"
+    # Admin/bench: iç tur izi (varsayılan KAPALI; admin değilse yok sayılır)
+    debug_trace: Optional[bool] = False
+    now_override: Optional[str] = None
 
 
 _CHAT_CATEGORIES = frozenset({"linux", "openshift", "exadata"})
@@ -771,7 +793,10 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db), user
             if request.use_rag is not False:
                 try:
                     from app.services.rag_service import get_rag_context_for_message
-                    rag_ctx = await get_rag_context_for_message(message)
+                    from app.services.rag_scope import modules_for_platform
+                    rag_ctx = await get_rag_context_for_message(
+                        message, modules=modules_for_platform(_normalize_chat_platform(getattr(request, "platform", None))),
+                    )
                     if rag_ctx.get("runbook"):
                         context_parts.append("RUNBOOK / DOKÜMANTASYON (ilgili bölümler):\n" + rag_ctx["runbook"].strip())
                     if rag_ctx.get("incidents"):
@@ -1291,9 +1316,17 @@ def _build_prompt(
     system_block = "\n\n".join(
         [identity]
         + (["TOPLAMA DURUMU:\n" + collection_summary] if collection_summary else [])
-        + [rules, NUMBER_RULE_TR]
+        + [rules, NUMBER_RULE_TR, ADVICE_RULE_TR, HONESTY_RULE_TR, USER_LANGUAGE_RULE_TR]
+        + ([OC_RULE_TR] if str(platform or "").lower() in ("openshift", "ocp") else [])
     )
     tail_parts = ["KULLANICI SORUSU: " + message]
+    try:
+        from app.services.chat_quality.unavailable_info import hint as _ua_hint
+        _h = _ua_hint(message)
+        if _h:
+            tail_parts.append(_h)
+    except Exception:
+        pass
     if _dir_add:
         tail_parts.append(_dir_add.strip())
     tail_parts.append("YANIT (Markdown, Turkce):")
@@ -1372,6 +1405,9 @@ async def chat_stream(
 
         async def event_generator():
             try:
+                # Sohbet LLM çağrıları arka plan işlerinden önceliklidir (llm_scheduler; genel varsayılan değişmez)
+                from app.services import llm_scheduler as _llm_sched
+                _llm_sched.mark_chat()
                 raw_message = request.message.strip()
                 if not raw_message:
                     yield _sse({"error": "Mesaj boş"})
@@ -1465,6 +1501,7 @@ async def chat_stream(
                 _pending_fs = get_full_scan_pending(session_id, platform=chat_platform)
                 _cc = None if (_fs.get("full_scan") or _pending_fs) else canned_chitchat_answer(
                     message, platform=chat_platform,
+                    session_id=(None if ephemeral else session_id),
                 )
                 if _cc:
                     yield _sse({"phase": "answering"})
@@ -1472,13 +1509,54 @@ async def chat_stream(
                     _timing.note_ttft()
                     for i in range(0, len(_cc), 8):
                         yield _sse({"token": _cc[i:i + 8]})
+                    from app.services.chat_quality.count_followup import pop_context as _pop_cc
+                    _cc_ctx = _pop_cc()
                     _persist_chat_pair(
                         db, session_id, ephemeral=ephemeral, user=None, assistant=_cc,
-                        meta={"intents": ["chitchat"]},
+                        meta={"intents": ["chitchat"], **({"count_context": _cc_ctx} if _cc_ctx else {})},
                     )
                     _timing.finish(cache_hit=False, extra={"path": "chitchat"})
                     yield _sse({"done": True, "session_id": session_id})
                     return
+
+                # ── Adım 21: «Rapor soruları» — OpenShift hazır raporu (LLM'siz, motor özeti) ──
+                _rep = None
+                if chat_platform == "openshift" and not (_fs.get("full_scan") or _pending_fs):
+                    try:
+                        from app.services.chat_quality import report_rules as _rr
+                        from app.core.auth import user_has_module as _uhm
+                        _ocp_ok = bool(_auth_user is not None and (
+                            _auth_user.role in ("admin", "superadmin")
+                            or any(_uhm(_auth_user, m, db) for m in ("openshift", "ai_automation", "executive"))
+                        ))
+                        _rep = _rr.detect(message, platform="openshift", ocp_ok=_ocp_ok)
+                    except Exception:
+                        logger.debug("report_rules.detect atlandı", exc_info=True)
+                        _rep = None
+                if _rep:
+                    _rres = None
+                    try:
+                        _rr.note_trace(_rep, "openshift")
+                        yield _sse({"phase": "collecting"})
+                        yield _sse({"intent": "report"})
+                        _rres = await run_chat_io(_rr.build_answer, _rep)
+                    except Exception:
+                        logger.warning("[ReportRules] rapor üretilemedi; normal akışa düşülüyor", exc_info=True)
+                        _rres = None
+                    if _rres:
+                        _rtxt = _rres["answer"]
+                        yield _sse({"phase": "answering"})
+                        _timing.note_ttft()
+                        async for _pc in _paced_chunks_live(_rtxt):
+                            yield _pc
+                        _persist_chat_pair(
+                            db, session_id, ephemeral=ephemeral, user=None, assistant=_rtxt,
+                            meta={"intents": ["report", _rres["report_type"]],
+                                  "report_type": _rres["report_type"], "report_title": _rres["report_title"]},
+                        )
+                        _timing.finish(cache_hit=False, extra={"path": "report_rules"})
+                        yield _sse({"done": True, "session_id": session_id})
+                        return
 
                 message = _fs.get("work_message") or message
                 _fleet_scan_token = None
@@ -1494,6 +1572,8 @@ async def chat_stream(
                 # Konusma gecmisi — bu takip sorusu mu (session'da onceki mesaj var mi)?
                 from app.services.chat_history import fetch_recent_history, format_history_block, has_prior_messages
                 _is_followup = (not ephemeral) and has_prior_messages(db, session_id)
+                from app.services.chat_history import has_real_prior_messages
+                _cache_followup = (not ephemeral) and has_real_prior_messages(db, session_id)   # Adım 9: user mesajı önceden kayıtlı → _is_followup hep True
                 history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
 
                 # ── 1. Cache kontrolü ─────────────────────────────────────────
@@ -1503,8 +1583,10 @@ async def chat_stream(
                 # _context_key — session_id icermiyor).
                 # Gizli modda cache okuma/yazma yok (prompt sızıntısı önlemi).
                 server_ids = request.server_ids or []
-                cached = None if (_is_followup or ephemeral or _has_directive) else get_cached_answer(
-                    db, message, server_ids, platform=chat_platform,
+                from app.services.chat_cache_service import rbac_signature as _rbac_sig
+                _cache_sig = _rbac_sig(_auth_user, db)
+                cached = None if (_cache_followup or ephemeral or _has_directive) else get_cached_answer(
+                    db, message, server_ids, platform=chat_platform, rbac_sig=_cache_sig,
                 )
                 _timing.mark("cache")
                 if cached:
@@ -1548,10 +1630,7 @@ async def chat_stream(
                     _persist_chat_pair(
                         db, session_id, ephemeral=ephemeral, user=None, assistant=inv_answer,
                     )
-                    if not ephemeral and not _has_directive:
-                        save_to_cache(
-                            db, message, inv_answer, server_ids, platform=chat_platform,
-                        )
+                    # Adım 9: envanter özeti şablon + veri cevabıdır → önbelleğe YAZILMAZ.
                     yield _sse({"done": True, "session_id": session_id})
                     return
 
@@ -1616,6 +1695,39 @@ async def chat_stream(
 
                 if direct_cmds:
                     logger.info(f"Direkt komut(lar) algılandı: {direct_cmds!r}")
+                    # ── Eylem politikası kapısı: yalnız READ_ONLY komut çalışır (model/kullanıcı
+                    # metni mutating komut çalıştıramaz). Reddedilenler audit'e yazılır.
+                    from app.services.agent.policy import classify_command as _classify_cmd, RiskLevel as _Risk
+                    from app.services.audit import record_audit as _record_audit
+                    try:  # thread içinde ORM nesnesine dokunmamak için ad burada alınır
+                        _audit_actor = str(getattr(_auth_user, "username", None) or "unknown")
+                    except Exception:
+                        _audit_actor = "unknown"
+                    _blocked_cmds = [c for c in direct_cmds if _classify_cmd(c) != _Risk.READ_ONLY]
+                    if _blocked_cmds:
+                        for _bc in _blocked_cmds:
+                            _record_audit(
+                                None, category="ssh", action="ssh.exec", status="blocked",
+                                actor=_audit_actor, summary=f"chat.direct_cmd: {_bc[:140]}",
+                                detail={"source": "chat.direct_cmd", "reason": "not_read_only",
+                                        "risk": _classify_cmd(_bc).value},
+                            )
+                        direct_cmds = [c for c in direct_cmds if c not in _blocked_cmds]
+                        _blk_txt = ", ".join(f"`{c}`" for c in _blocked_cmds)
+                        _refuse = (
+                            f"{_blk_txt} salt-okunur bir teşhis komutu olmadığı için çalıştırılmadı. "
+                            "Sohbet yalnızca salt-okunur teşhis komutlarını (ör. `df -h`, `uptime`, "
+                            "`ss -tulpn`) çalıştırır; değişiklik yapan işlemler için onaylı Agent akışını kullanın."
+                        )
+                        if not direct_cmds:
+                            for i in range(0, len(_refuse), 8):
+                                yield _sse({"token": _refuse[i:i + 8]})
+                            _persist_chat_pair(
+                                db, session_id, ephemeral=ephemeral, user=None, assistant=_refuse,
+                            )
+                            yield _sse({"done": True, "session_id": session_id})
+                            return
+                        yield _sse({"token": _refuse + "\n\n"})
                     _ANALYZE_KEYWORDS = ['analiz', 'analyze', 'yorumla', 'değerlendir', 'incele',
                                          'açıkla', 'neden', 'sorun', 'problem', 'yavaş', 'yüksek',
                                          'kontrol et', 'ne anlama', 'ne göster', 'raporla', 'rapor']
@@ -1678,6 +1790,14 @@ async def chat_stream(
                                     for cmd in direct_cmds:
                                         t = _get_timeout(cmd)
                                         ok, out, err = ssh.execute_command(f"timeout {t} {cmd} 2>&1")
+                                        _record_audit(
+                                            None, category="ssh", action="ssh.exec",
+                                            status="success" if ok else "error", actor=_audit_actor,
+                                            target_type="server", target_id=getattr(srv, "id", None),
+                                            server_id=getattr(srv, "id", None),
+                                            summary=f"{getattr(srv, 'name', '?')}: {cmd[:140]}",
+                                            detail={"source": "chat.direct_cmd"},
+                                        )
                                         if ok and out and out.strip():
                                             results[cmd] = (out.strip(), "")
                                         else:
@@ -1805,6 +1925,7 @@ async def chat_stream(
                         Server.hypervisor_id == request.hypervisor_id, Server.ai_ready == True
                     ).all()
 
+                mentioned = []
                 if chat_platform == "openshift":
                     selected_servers = []
                     inventory_servers = []
@@ -2017,6 +2138,7 @@ async def chat_stream(
                     allow_agentic_without_collect=(
                         chat_platform == "openshift" or not selected_servers
                     ),
+                    has_named_target=bool(mentioned) and chat_platform != "openshift",
                 )
                 if _live_path.is_deep:
                     is_deep = True
@@ -2077,7 +2199,8 @@ async def chat_stream(
                         return {}
                     try:
                         from app.services.rag_service import get_rag_context_for_message
-                        return await get_rag_context_for_message(message)
+                        from app.services.rag_scope import modules_for_platform
+                        return await get_rag_context_for_message(message, modules=modules_for_platform(chat_platform))
                     except Exception:
                         return {}
 
@@ -2102,7 +2225,8 @@ async def chat_stream(
                     try:
                         from app.services.agent.tools import _openshift_ask_handler
                         import json as _json_ocp
-                        ocp_live = _openshift_ask_handler(db, {"question": message}, {})
+                        # Adım 11: senkron OCP API çağrısı (list_nodes vb.) event döngüsünü bloklamasın
+                        ocp_live = await run_chat_io(_openshift_ask_handler, db, {"question": message}, {})
                         if ocp_live.get("ok"):
                             context_parts.append(
                                 "OPENSHIFT CANLI ÖZET (API):\n"
@@ -2112,7 +2236,7 @@ async def chat_stream(
                                         for k in (
                                             "cluster", "version", "node_count", "nodes",
                                             "project_count", "pod_count", "pods_by_status",
-                                            "problem_pod_count", "problem_pods_sample",
+                                            "problem_pod_count", "error_state_count", "problem_pods_sample",
                                         )
                                         if ocp_live.get(k) is not None
                                     },
@@ -2232,6 +2356,8 @@ async def chat_stream(
                 # ── 5b. Model/sağlayıcı yukarıda (Dalga 2 path) belirlendi ──
                 # Agentic READ_ONLY tool-calling — XOR: collect ile birlikte yalnızca
                 # derin yol / force_both. Bkz. chat_path_policy.resolve_live_path.
+                _lf = _LiveFinal(timing=_timing)       # Adım 17: canlı tek geçiş + düşünme akışı
+                _think_ok = _thinking_allowed(_auth_user, provider)
                 if _live_path.run_agentic:
                     yield _sse({"phase": "tools"})
                     _timing.mark("agentic_start")
@@ -2260,6 +2386,7 @@ async def chat_stream(
                             domains=tool_domains,
                             platform=chat_platform,
                             output_directive=output_directive,
+                            **_live_loop_kwargs(_auth_user, provider),
                         )
 
                         def _next_item(g):
@@ -2270,7 +2397,7 @@ async def chat_stream(
 
                         tool_context_text = ""
                         while True:
-                            item = await loop.run_in_executor(None, _next_item, gen)
+                            item = await loop.run_in_executor(None, _cq_trace.run_in_trace, _cq_trace.current(), _next_item, gen)
                             if item is None:
                                 break
                             itype = item.get("type")
@@ -2278,8 +2405,12 @@ async def chat_stream(
                                 yield _sse({"type": "tool_call", "tool": item.get("tool"), "label": item.get("label")})
                             elif itype == "tool_result":
                                 yield _sse({"type": "tool_result", "tool": item.get("tool")})
+                            elif itype in ("thinking", "answer_start", "token", "answer_reset"):
+                                for _raw in _lf.on_item(item):
+                                    yield _raw
                             elif itype == "final":
                                 tool_context_text = item.get("tool_text") or ""
+                                _lf.on_item(item)
                                 break
                             elif itype in ("skipped", "error"):
                                 if itype == "error":
@@ -2288,8 +2419,14 @@ async def chat_stream(
 
                         if tool_context_text:
                             context_str = context_str + "\n\nARAÇ SONUÇLARI (bu turda modelin kendi kararıyla çalıştırdığı ek SSH/canlı sorgular):\n" + tool_context_text
+                        async for _raw in _lf.settle():
+                            yield _raw
                     except Exception as e:
                         logger.warning(f"[LinuxChat] agentic tool loop devre dışı bırakıldı: {e}")
+                        if _lf.live_text:      # yarım canlı cevap kalmasın
+                            _lf.live_text = ""
+                            _lf.use_loop_final = False
+                            yield _sse({"replace_answer": True})
                         # XOR agentic-first başarısızsa ve collect atlandıysa: bir kez collect dene
                         if needs_ssh and selected_servers and not _live_path.run_fixed_collect and not ssh_ctx:
                             try:
@@ -2364,12 +2501,17 @@ async def chat_stream(
                 # Kullanıcı mesajı stream başında kaydedildi; burada yalnızca AI yanıtı
 
                 # ── 6. AI Streaming (Ollama / Groq / OpenAI / Anthropic / OpenRouter) ──────
-                yield _sse({"phase": "answering"})
+                release_txn(db)   # LLM akışı boyunca DB işlemi açık kalmasın (idle in transaction)
+                if not _lf.use_loop_final:
+                    yield _sse({"phase": "answering"})
                 full_response = ""
-                _ttft_sent = False
+                _ttft_sent = _lf.ttft_noted
 
                 async with httpx.AsyncClient(timeout=180.0) as client:
-                    if provider == "groq" and settings.GROQ_API_KEY:
+                    if _lf.use_loop_final:
+                        # Adım 17: cevap araç turunda zaten canlı akıtıldı → ikinci üretim YOK
+                        full_response = _lf.loop_text
+                    elif provider == "groq" and settings.GROQ_API_KEY:
                         async for token in _stream_external_openai(
                             client, settings.GROQ_API_URL, settings.GROQ_API_KEY,
                             model, prompt
@@ -2406,11 +2548,21 @@ async def chat_stream(
                     else:
                         # Ollama (varsayılan) veya REMOTE_LLM_ENABLED ise uzak gateway
                         llm_err = None
-                        async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt, timeout=180.0):
+                        _gt_buf, _gt_last = "", _time_mod.monotonic()
+                        async for chunk in llm_gateway.stream_generate(
+                            client, model=model, prompt=prompt, timeout=180.0, think=_final_think_level(model),
+                        ):
                             if chunk.get("error"):
                                 llm_err = str(chunk["error"])
                                 yield _sse({"error": llm_err})
                                 break
+                            _gth = chunk.get("thinking")
+                            if _gth and _think_ok and not full_response:
+                                _gt_buf += str(_gth)
+                                _gnow = _time_mod.monotonic()
+                                if len(_gt_buf) >= 40 or _gnow - _gt_last >= 0.3:
+                                    yield _sse({"type": "thinking", "text": _gt_buf})
+                                    _gt_buf, _gt_last = "", _gnow
                             token = chunk.get("response", "")
                             if token:
                                 full_response += token
@@ -2458,17 +2610,25 @@ async def chat_stream(
                 # SSH verisi içeren yanıtlar canlı veri, takip soruları da bağlama bağımlı —
                 # ikisi de cache'e kaydedilmez (aksi halde sonraki izole bir soru bu bağlama
                 # bağımlı cevabı yanlışlıkla kullanabilir).
-                if (
-                    full_response and not is_deep and not needs_ssh and not _is_followup
-                    and not ephemeral and not _has_directive
-                ):
-                    save_to_cache(db, message, full_response, server_ids, platform=chat_platform)
+                _cache_res = "not_attempted"
+                if full_response:
+                    _cache_res = save_to_cache(
+                        db, message, full_response, server_ids, platform=chat_platform, rbac_sig=_cache_sig,
+                        # Canlı yol «knowledge_only» (hiçbir kaynak toplanmadı) değilse veya SSH/Prometheus bağlamı varsa → veri cevabı
+                        live_data=bool(
+                            locals().get("ssh_ctx") or locals().get("prom_ctx")
+                            or needs_ssh or is_deep
+                            or getattr(locals().get("_live_path"), "reason", "") != "knowledge_only"
+                        ),
+                        followup=_cache_followup, directive=_has_directive, ephemeral=ephemeral,
+                    )
 
                 _timing.finish(
                     cache_hit=False,
                     extra={
                         "path": getattr(_live_path, "reason", ""),
                         "targets": len(selected_servers) if selected_servers else 0,
+                        "cache": _cache_res,
                     },
                 )
                 yield _sse({"done": True, "session_id": session_id, **_evid_sse})
@@ -2505,8 +2665,9 @@ async def chat_stream(
             yield chunk
 
     plat = _normalize_chat_platform(payload.get("platform"))
-    from app.services.chat_orchestrator.http_bridge import attach_and_stream
-    return attach_and_stream(
+    from app.services.chat_orchestrator.http_bridge import attach_and_stream_async
+    # Adım 11: create_turn → plan_sources (yönlendirme ipucu LLM'i, senkron, ≤8 sn) event döngüsünü bloklamasın
+    _stream_resp = await attach_and_stream_async(
         platform=plat,
         payload=payload,
         message=payload.get("message") or "",
@@ -2514,6 +2675,8 @@ async def chat_stream(
         pipeline=pipeline,
         user_id=getattr(_auth_user, "id", None),
     )
+    release_txn(db, keep_loaded=True)   # istek oturumu tur boyunca idle in transaction kalmasın
+    return _stream_resp
 
 
 class ChatFeedbackRequest(BaseModel):
@@ -2528,9 +2691,9 @@ class ChatFeedbackRequest(BaseModel):
 
 
 @router.post("/feedback")
-def chat_feedback(body: ChatFeedbackRequest, db: Session = Depends(get_db)):
+def chat_feedback(body: ChatFeedbackRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Asistan cevabına 👍/👎 veya düzeltme — QA cache öğrenmesi."""
-    from app.services.chat_cache_service import apply_feedback
+    from app.services.chat_cache_service import apply_feedback, rbac_signature as _rbac_signature
 
     try:
         result = apply_feedback(
@@ -2541,6 +2704,7 @@ def chat_feedback(body: ChatFeedbackRequest, db: Session = Depends(get_db)):
             server_ids=body.server_ids,
             vote=body.vote,
             correction_text=body.correction_text,
+            rbac_sig=_rbac_signature(user, db),
         )
         return result
     except ValueError as e:

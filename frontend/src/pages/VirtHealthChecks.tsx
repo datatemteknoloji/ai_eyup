@@ -92,7 +92,7 @@ function ComplianceTab() {
               <th className="px-3 py-2">{t('vi_res_nm')}</th>
               <th className="px-3 py-2">{t('vi_res_na')}</th>
               <th className="px-3 py-2">{t('vi_excepted')}</th>
-              <th className="px-3 py-2">{t('vi_cmp_score')}</th>
+              <th className="px-3 py-2" title={t('vi_cmp_score_hint')}>{t('vi_cmp_score')} ⓘ</th>
             </tr>
           </thead>
           <tbody>
@@ -105,7 +105,14 @@ function ComplianceTab() {
                   <td className="px-3 py-2 font-mono text-amber-200/80">{c.counts.not_measurable}</td>
                   <td className="px-3 py-2 font-mono text-slate-500">{c.counts.not_applicable ?? 0}</td>
                   <td className="px-3 py-2 font-mono text-slate-400">{c.counts.excepted}</td>
-                  <td className="px-3 py-2 font-mono text-blue-300">{c.score_pct != null ? `%${fmt(c.score_pct)}` : '—'}</td>
+                  <td className="px-3 py-2 font-mono text-blue-300" title={t('vi_cmp_score_hint')}>
+                    {c.score_pct != null ? `%${fmt(c.score_pct)}` : '—'}
+                    {c.score_pct != null && (
+                      <span className="ml-1 text-[10px] text-slate-500" data-testid="cmp-score-basis">
+                        ({c.counts.pass}/{(c.counts.pass ?? 0) + (c.counts.fail ?? 0)})
+                      </span>
+                    )}
+                  </td>
                 </tr>
                 {open === c.control && (
                   <tr><td colSpan={6} className="bg-black/20"><FindingsTable base="virt-insights" rows={c.findings} /></td></tr>
@@ -247,8 +254,8 @@ function WriteCredRow({ hv }: { hv: any }) {
     <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.04] pt-3">
       <div className="w-48 text-sm text-white">{hv.name}</div>
       <div className="w-56 text-xs">{st.data?.configured ? <span className="text-emerald-400">{t('vi_wc_set', { u: st.data.username })}</span> : <span className="text-slate-500">{t('vi_wc_none')}</span>}</div>
-      <input value={u} onChange={e => setU(e.target.value)} placeholder={t('vi_wc_user')} autoComplete="off" className="w-48 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white" />
-      <input value={p} onChange={e => setP(e.target.value)} placeholder={t('vi_wc_pass')} type="password" autoComplete="new-password" className="w-40 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white" />
+      <input value={u} onChange={e => setU(e.target.value)} placeholder={t('vi_wc_user')} autoComplete="off" className="w-48 rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white" />
+      <input value={p} onChange={e => setP(e.target.value)} placeholder={t('vi_wc_pass')} type="password" autoComplete="new-password" className="w-40 rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white" />
       <GhostButton accent={NEON.blue} onClick={save} disabled={!u || !p}>{t('save')}</GhostButton>
       {st.data?.configured && <GhostButton onClick={clear}>{t('vi_wc_clear')}</GhostButton>}
       {msg && <span className="text-xs text-blue-300">{msg}</span>}

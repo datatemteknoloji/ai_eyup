@@ -283,7 +283,7 @@ export const PlatformStatusTab: React.FC = () => {
     <div
       className={
         expanded
-          ? 'fixed inset-0 z-[80] bg-[#080d16] p-4 flex flex-col gap-4'
+          ? 'fixed inset-0 z-80 bg-[#080d16] p-4 flex flex-col gap-4'
           : 'flex flex-col gap-4 flex-1 min-h-0 h-full overflow-hidden'
       }
     >
@@ -506,7 +506,7 @@ export const PlatformStatusTab: React.FC = () => {
                 value={logFilter}
                 onChange={(e) => setLogFilter(e.target.value)}
                 placeholder={t('ps_filter_ph')}
-                className="w-full bg-black/30 border border-white/[0.08] rounded-lg pl-8 pr-8 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500/40"
+                className="w-full bg-black/30 border border-white/[0.08] rounded-lg pl-8 pr-8 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-hidden focus:border-blue-500/40"
               />
               {logFilter && (
                 <button
@@ -583,7 +583,7 @@ const GroupList: React.FC<{
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm text-white font-medium truncate">{c.name}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${statusColor(c.status)}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-sm border ${statusColor(c.status)}`}>
                       {c.status}
                     </span>
                   </div>

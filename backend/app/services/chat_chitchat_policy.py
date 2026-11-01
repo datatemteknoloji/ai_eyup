@@ -10,7 +10,7 @@ Pending filo onayı varken “ok/tamam” API katmanında full_scan’ten sonra 
 from __future__ import annotations
 
 import re
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 # Ortam / teşhis — chitchat değil (selam + ops karışık mesajlar da buraya düşer)
 _OPS_BLOCK = re.compile(
@@ -286,9 +286,58 @@ def is_chitchat(message: Optional[str]) -> bool:
     return classify_chitchat(message) is not None
 
 
-def canned_chitchat_answer(message: Optional[str], *, platform: Optional[str] = None) -> Optional[str]:
+def canned_chitchat_answer(
+    message: Optional[str], *, platform: Optional[str] = None, allowed_modules: Any = None,
+    session_id: Optional[int] = None,
+) -> Optional[str]:
+    # Güvenlik kapısı (Adım 2): eylem emri / sistem talimatı isteği → LLM'e gitmeden şablon ret.
+    # Dört sohbet hattı (Linux/OCP/Exadata, Sanallaştırma, Unified, Windows) bu noktadan geçer;
+    # cevap `chitchat` yolu gibi yazılır/kalıcılaştırılır, iz yolu `action_gate` olarak işaretlenir.
+    try:
+        from app.services.chat_quality.action_gate import gate_response
+        _blocked = gate_response(message or "", platform=platform)
+        if _blocked:
+            return _blocked
+    except Exception:
+        pass
     cat = classify_chitchat(message)
     if not cat:
+        # ainew'de olmayan bilgi (Adım 8a): lisans/müşteri/sözleşme/iş sahibi/maliyet → LLM'siz sabit dürüst cevap.
+        # Varlık kapısından ÖNCE: «X'in sahibi kim?» belirsiz-ad sorusuna değil, dürüst «veride yok» cevabına gitmeli.
+        try:
+            from app.services.chat_quality.unavailable_info import respond as _unavail
+            _ua = _unavail(message or "", platform=platform, allowed_modules=allowed_modules)
+            if _ua:
+                return _ua
+        except Exception:
+            pass
+        # Varlık çözümleyici kapısı (Adım 4): var olmayan ad → "bulunamadı"; aynı adla birden fazla kayıt → sor.
+        # Eylem kapısından SONRA, LLM/araca gitmeden; belirsizlikte None (normal akış).
+        try:
+            from app.services.chat_quality.entity_gate import gate_response as _entity_gate
+            _resolved = _entity_gate(message or "", platform=platform, allowed_modules=allowed_modules)
+            if _resolved:
+                return _resolved
+        except Exception:
+            pass
+        # Sayım kuralı (Adım 5b): eylem + varlık kapılarından SONRA, LLM/araca gitmeden; SQL COUNT + kapsam + kırılım.
+        # RBAC: platform + allowed_modules ile konu kapısı; belirsizde/hatada None (normal akış).
+        try:
+            from app.services.chat_quality.count_rules import count_response as _count_rule
+            _counted = _count_rule(message or "", platform=platform, allowed_modules=allowed_modules,
+                                   session_id=session_id)
+            if _counted:
+                return _counted
+        except Exception:
+            pass
+        # Evet/hayır VM güç durumu (Adım 6b-1): «X çalışıyor mu / açık mı / kapalı mı?» → envanter şablonu.
+        try:
+            from app.services.chat_quality.vm_yesno import respond as _vm_yesno
+            _yn = _vm_yesno(message or "", platform=platform, allowed_modules=allowed_modules)
+            if _yn:
+                return _yn
+        except Exception:
+            pass
         return None
     text = _CANNED.get(cat)
     if not text:

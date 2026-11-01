@@ -118,3 +118,29 @@ def rerank(query: str, documents: List[str], top_k: int) -> List[int]:
     except Exception as e:
         logger.warning("[Reranker] tahmin başarısız, orijinal sıralamaya dönülüyor: %s", e)
         return fallback
+
+
+def rerank_scored(query: str, documents: List[str], top_k: int):
+    """`rerank` ile aynı sıralama; (orijinal_indeks, skor) çiftleri döner. Reranker devre dışı/hata → skorsuz
+    (skor=None) orijinal sıra. Skor, cross-encoder ham çıktısıdır (ölçek modele bağlıdır)."""
+    n = len(documents)
+    if n == 0 or top_k <= 0:
+        return []
+    fallback = [(i, None) for i in range(min(top_k, n))]
+    if not query or not query.strip() or not is_enabled():
+        return fallback
+    try:
+        from app.services import runtime_settings
+        model_name = runtime_settings.get_str("rag_reranker_model") or "BAAI/bge-reranker-v2-m3"
+    except Exception:
+        model_name = "BAAI/bge-reranker-v2-m3"
+    model = _load_model(model_name)
+    if model is None:
+        return fallback
+    try:
+        scores = model.predict([[query, doc or ""] for doc in documents])
+        order = sorted(range(n), key=lambda i: float(scores[i]), reverse=True)[:top_k]
+        return [(i, float(scores[i])) for i in order]
+    except Exception as e:
+        logger.warning("[Reranker] tahmin başarısız, orijinal sıralamaya dönülüyor: %s", e)
+        return fallback

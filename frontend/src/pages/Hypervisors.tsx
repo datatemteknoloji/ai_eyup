@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import VirtInsightsStrip from '../components/insights/VirtInsightsStrip'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
@@ -7,14 +7,18 @@ import { inventoryHeaders } from '../lib/inventoryApi'
 import {
   Server, Cpu, MemoryStick, Power, PowerOff, Monitor, Search,
   Plus, Trash2, RefreshCw, ChevronDown, ChevronRight, LayoutDashboard,
-  Database, Settings, X, Check, AlertTriangle, BarChart3, HardDrive,
+  Database, Settings, X, Check, AlertTriangle, BarChart3, HardDrive, Layers,
   Network, Cloud, ExternalLink, Pencil, Loader2,
 } from 'lucide-react'
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts'
 import { isVmOnline, isPoweredOn as isPowerStateOn } from '../utils/powerState'
+import { fmtResource, HostResourceChart } from '../components/dashboard/ResourceCharts'
+import { HostTypesTip, HoverTip, HypervisorNamesTip, VirtCapacityCard, inventoryTip, useCapacityOverview } from '../components/dashboard/CapacityBreakdown'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import { virtHostIpHint, virtHostTitle } from '../lib/virtHostLabel'
 import HwServerCard from '../components/hardware/HwServerCard'
+import HwHostLogsCard from '../components/hardware/HwHostLogsCard'
+import HwBadge from '../components/hardware/HwBadge'
+import { ColumnTable } from '../components/ColumnTable'
 
 // DESIGN.md: "Mor (purple, violet) kullanılmaz — blue-600 tek aksan rengidir."
 // `info` DESIGN.md'deki --info token'ıyla aynı (#38bdf8) — RAM/VM-sayısı gibi
@@ -106,42 +110,16 @@ interface EsxHost {
   inventory?: { id?: number; vendor?: string; model?: string; cpu_model?: string }
 }
 
-// ── Utilities ───────────────────────────────────────────────────────────────
-const fmtMem = (mb: number | null | undefined) => {
-  if (mb == null || Number.isNaN(Number(mb))) return '—'
-  const n = Number(mb)
-  return n >= 1024 ? `${(n / 1024).toFixed(0)} GB` : `${Math.round(n)} MB`
-}
-const fmtDisk = (gb: number | null | undefined) => {
-  if (gb == null || Number.isNaN(Number(gb))) return '—'
-  const n = Number(gb)
-  return n >= 1024 ? `${(n / 1024).toFixed(1)} TB` : `${n.toFixed(0)} GB`
-}
-/** Host CPU — vCenter/OLVM değerleri MHz; büyük değerleri GHz göster. */
-const fmtCpu = (mhz: number | null | undefined) => {
-  if (mhz == null || Number.isNaN(Number(mhz))) return '—'
-  const n = Number(mhz)
-  if (n >= 1000) return `${(n / 1000).toFixed(1)} GHz`
-  return `${Math.round(n)} MHz`
-}
-const fmtResource = (value: number | null | undefined, unit: string) => {
-  if (unit === 'GB') return fmtDisk(value)
-  if (unit === 'MB') return fmtMem(value)
-  if (unit === 'MHz') return fmtCpu(value)
-  if (value == null || Number.isNaN(Number(value))) return '—'
-  return `${Math.round(Number(value))} ${unit}`
-}
-
 // ── Confirm Modal ───────────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
   message: string; onConfirm: () => void; onCancel: () => void
 }) => {
   const t = useT()
   return (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
-        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0">
+        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center shrink-0">
           <AlertTriangle className="w-4 h-4 text-yellow-400" />
         </div>
         <div>
@@ -180,129 +158,6 @@ const StatCard = ({ icon: Icon, label, value, sub, accent, trend }: {
     </div>
   </div>
 )
-
-// ── Resource Gauge ──────────────────────────────────────────────────────────
-const ResourceGauge = ({ label, used, total, unit, accent }: {
-  label: string; used: number; total: number; unit: string; accent: string
-}) => {
-  const t = useT()
-  const pct = total > 0 ? Math.round((used / total) * 100) : 0
-  const free = total - used
-  const getColor = (p: number) => p >= 90 ? NEON.red : p >= 75 ? NEON.orange : accent
-
-  return (
-    <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
-      <div className="flex items-center justify-between mb-4">
-        <span className="text-sm font-medium text-white">{label}</span>
-        <span className="text-xs px-2 py-1 rounded-full" style={{ background: `${getColor(pct)}20`, color: getColor(pct) }}>
-          {pct}%
-        </span>
-      </div>
-      <div className="h-3 bg-slate-800 rounded-full overflow-hidden mb-3">
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${accent}, ${getColor(pct)})`, boxShadow: `0 0 10px ${accent}60` }}
-        />
-      </div>
-      <div className="flex justify-between text-xs">
-        <span className="text-slate-400">{t('hv_used')}: <span className="text-white font-medium">{fmtResource(used, unit)}</span></span>
-        <span className="text-slate-400">{t('hv_free')}: <span className="text-green-400 font-medium">{fmtResource(free, unit)}</span></span>
-      </div>
-    </div>
-  )
-}
-
-// ── VM Status Pie ───────────────────────────────────────────────────────────
-const VMStatusPie = ({ poweredOn, poweredOff }: { poweredOn: number; poweredOff: number }) => {
-  const t = useT()
-  const total = poweredOn + poweredOff
-  if (total === 0) return null
-  
-  const data = [
-    { name: t('hv_running'), value: poweredOn, color: NEON.green },
-    { name: t('power_off'), value: poweredOff, color: '#475569' },
-  ].filter(d => d.value > 0)
-
-  return (
-    <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
-      <h3 className="text-sm font-medium text-white mb-4">{t('hv_vm_status_dist')}</h3>
-      <div className="flex items-center gap-6">
-        <div className="relative">
-          <ResponsiveContainer width={100} height={100}>
-            <PieChart>
-              <Pie data={data} cx="50%" cy="50%" innerRadius={30} outerRadius={45} paddingAngle={3} dataKey="value">
-                {data.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-              </Pie>
-              <Tooltip formatter={(v: number) => [`${v} VM`, '']} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-lg font-bold text-white">{total}</span>
-          </div>
-        </div>
-        <div className="flex-1 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Power className="w-4 h-4 text-green-400" />
-              <span className="text-sm text-slate-300">{t('hv_running')}</span>
-            </div>
-            <span className="text-sm font-bold text-green-400">{poweredOn}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <PowerOff className="w-4 h-4 text-slate-500" />
-              <span className="text-sm text-slate-300">{t('power_off')}</span>
-            </div>
-            <span className="text-sm font-bold text-slate-400">{poweredOff}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Host Resource Bar Chart ─────────────────────────────────────────────────
-const HostResourceChart = ({ hosts }: { hosts: EsxHost[] }) => {
-  const t = useT()
-  if (hosts.length === 0) return null
-
-  const data = hosts.slice(0, 6).map(h => {
-    const label = virtHostTitle(h)
-    return {
-      name: label.length > 14 ? label.slice(0, 14) + '…' : label,
-      CPU: h.cpu_usage_pct || 0,
-      Memory: h.mem_usage_pct || 0,
-      Disk: h.ds_usage_pct || 0,
-    }
-  })
-
-  return (
-    <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-5">
-      <h3 className="text-sm font-medium text-white mb-4">{t('hv_host_resource')}</h3>
-      <ResponsiveContainer width="100%" height={180}>
-        <BarChart data={data} layout="vertical" margin={{ left: 0, right: 10 }}>
-          <XAxis type="number" domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
-          <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 10 }} width={80} axisLine={false} tickLine={false} />
-          <Tooltip 
-            contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
-            formatter={(v: number) => [`${v}%`, '']}
-          />
-          <Bar dataKey="CPU" fill={NEON.cyan} radius={[0, 4, 4, 0]} barSize={8} />
-          <Bar dataKey="Memory" fill={NEON.info} radius={[0, 4, 4, 0]} barSize={8} />
-          <Bar dataKey="Disk" fill={NEON.orange} radius={[0, 4, 4, 0]} barSize={8} />
-        </BarChart>
-      </ResponsiveContainer>
-      <div className="flex justify-center gap-4 mt-2">
-        {[{ label: 'CPU', color: NEON.cyan }, { label: 'Memory', color: NEON.info }, { label: 'Disk', color: NEON.orange }].map(l => (
-          <div key={l.label} className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full" style={{ background: l.color }} />
-            <span className="text-xs text-slate-400">{l.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 // ── VM Detail Drawer ────────────────────────────────────────────────────────
 const VMDetailDrawer = ({
@@ -396,11 +251,11 @@ const VMDetailDrawer = ({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/55 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/55 backdrop-blur-xs" onClick={onClose} />
       <div className="relative w-full max-w-md h-full bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col overflow-hidden">
         <div className="flex-none px-5 py-4 border-b border-slate-800 flex items-start justify-between gap-3">
           <div className="min-w-0 flex items-start gap-3">
-            <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${powerOn ? 'bg-green-500/15' : 'bg-slate-700/60'}`}>
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${powerOn ? 'bg-green-500/15' : 'bg-slate-700/60'}`}>
               <Monitor className={`w-5 h-5 ${powerOn ? 'text-green-400' : 'text-slate-400'}`} />
             </div>
             <div className="min-w-0">
@@ -554,7 +409,7 @@ const VMDetailDrawer = ({
             <div className="rounded-xl border border-slate-700/50 bg-slate-800/30 divide-y divide-slate-800/80">
               {fields.filter(f => f.val != null && f.val !== '').map(f => (
                 <div key={f.label} className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
-                  <span className="text-slate-500 flex-shrink-0">{f.label}</span>
+                  <span className="text-slate-500 shrink-0">{f.label}</span>
                   <span className="text-slate-200 text-right break-all font-mono text-xs">{String(f.val)}</span>
                 </div>
               ))}
@@ -614,11 +469,20 @@ const VMDetailDrawer = ({
 }
 
 // ── VM Table ────────────────────────────────────────────────────────────────
-const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] }) => {
+// Arama ve vCenter filtresi SUNUCUDA uygulanır (liste sayfalı; istemci süzmesi yalnız o sayfayı arardı).
+const VMTable = ({
+  vms, hypervisors, total, search, onSearchChange, hvFilter, onHvFilterChange,
+}: {
+  vms: VM[]
+  hypervisors: Hypervisor[]
+  total: number
+  search: string
+  onSearchChange: (v: string) => void
+  hvFilter: string
+  onHvFilterChange: (v: string) => void
+}) => {
   const t = useT()
-  const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'online' | 'offline'>('all')
-  const [hvFilter, setHvFilter] = useState<string>('all')
   const [sortBy, setSortBy] = useState<'name' | 'cpu' | 'ram'>('name')
   const [selectedVm, setSelectedVm] = useState<VM | null>(null)
 
@@ -630,15 +494,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
 
   const filtered = useMemo(() => {
     let list = [...vms]
-    
-    if (search) {
-      const q = search.toLowerCase()
-      list = list.filter(v => v.name.toLowerCase().includes(q) || v.ip_address?.includes(q) || v.os_type?.toLowerCase().includes(q))
-    }
-    
-    if (hvFilter !== 'all') {
-      list = list.filter(v => String(v.hypervisor_id) === hvFilter)
-    }
+
     if (filter === 'online') {
       list = list.filter(v => isVmOnline(v.status, v.vm_power_state))
     } else if (filter === 'offline') {
@@ -650,7 +506,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
     else list.sort((a, b) => a.name.localeCompare(b.name))
     
     return list
-  }, [vms, search, filter, sortBy])
+  }, [vms, filter, sortBy])
 
   const isPoweredOn = (vm: VM) => isVmOnline(vm.status, vm.vm_power_state)
 
@@ -661,7 +517,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
         <div className="flex items-center gap-2">
           <Monitor className="w-5 h-5 text-blue-400" />
           <span className="text-sm font-medium text-white">{t('hv_virtual_machines')}</span>
-          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">{vms.length}</span>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">{total || vms.length}</span>
         </div>
         <div className="flex items-center gap-2">
           {/* Search */}
@@ -671,15 +527,15 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
               type="text"
               placeholder={t('hv_vm_search')}
               value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="bg-cyber-deep border border-white/[0.06] rounded-lg pl-9 pr-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 w-48"
+              onChange={e => onSearchChange(e.target.value)}
+              className="bg-cyber-deep border border-white/[0.06] rounded-lg pl-9 pr-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:border-blue-500/50 w-48"
             />
           </div>
           {hypervisors.length > 1 && (
             <select
               value={hvFilter}
-              onChange={e => setHvFilter(e.target.value)}
-              className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50 max-w-[200px]"
+              onChange={e => onHvFilterChange(e.target.value)}
+              className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-hidden focus:border-blue-500/50 max-w-[200px]"
             >
               <option value="all">{t('vmn_all_vcenters')}</option>
               {hypervisors.map(h => (
@@ -690,7 +546,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
           <select
             value={filter}
             onChange={e => setFilter(e.target.value as any)}
-            className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50"
+            className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-hidden focus:border-blue-500/50"
           >
             <option value="all">{t('filter_all')}</option>
             <option value="online">{t('hv_running')}</option>
@@ -700,7 +556,7 @@ const VMTable = ({ vms, hypervisors }: { vms: VM[]; hypervisors: Hypervisor[] })
           <select
             value={sortBy}
             onChange={e => setSortBy(e.target.value as any)}
-            className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500/50"
+            className="bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-hidden focus:border-blue-500/50"
           >
             <option value="name">{t('hv_sort_name')}</option>
             <option value="cpu">{t('hv_sort_cpu')}</option>
@@ -805,16 +661,17 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-500/20 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-lg bg-linear-to-br from-cyan-500/20 to-blue-500/20 flex items-center justify-center">
             <Database className="w-5 h-5 text-cyan-400" />
           </div>
           <div>
             <div className="text-sm font-medium text-white flex items-center gap-1.5 flex-wrap">
               <span>{virtHostTitle(host)}</span>
+              {host.inventory?.id ? <HwBadge kind="esxi" id={host.inventory.id} /> : null}
               {(host.roles || []).map((role) => (
                 <span
                   key={role}
-                  className="px-1.5 py-0.5 rounded text-[10px] font-medium text-rose-300 bg-rose-500/15 border border-rose-500/30"
+                  className="px-1.5 py-0.5 rounded-sm text-[10px] font-medium text-rose-300 bg-rose-500/15 border border-rose-500/30"
                 >
                   {role === 'master' ? t('dash_role_master') : role === 'infra' ? t('dash_role_infra') : role === 'worker' ? t('dash_role_worker') : role}
                 </span>
@@ -851,6 +708,8 @@ const HostCard = ({ host, hvName }: { host: EsxHost; hvName: string }) => {
         <div className="px-5 py-4 border-t border-white/[0.06] bg-slate-900/30 space-y-4">
           {/* Donanım (Dell OME / HPE OneView) — entegrasyon/eşleşme/yetki yoksa render edilmez */}
           {host.inventory?.id ? <HwServerCard kind="esxi" id={host.inventory.id} /> : null}
+          {/* Host donanım günlükleri (SEL/vmkernel) — kayıt yoksa render edilmez */}
+          {host.inventory?.id ? <HwHostLogsCard kind="esxi" id={host.inventory.id} showEmpty /> : null}
           {/* Resource Bars */}
           {[
             { label: 'CPU', used: host.cpu_usage_mhz, total: host.cpu_total_mhz, unit: 'MHz', pct: host.cpu_usage_pct, color: NEON.cyan },
@@ -950,7 +809,7 @@ const HypervisorManagement = ({
             )}
             <button
               onClick={onAdd}
-              className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all"
+              className="flex items-center gap-2 px-3 py-1.5 bg-linear-to-r from-blue-600 to-blue-700 text-white text-sm rounded-lg hover:from-blue-500 hover:to-blue-600 transition-all"
             >
               <Plus className="w-4 h-4" /> {t('add')}
             </button>
@@ -976,14 +835,14 @@ const HypervisorManagement = ({
             <div key={hv.id} className="bg-cyber-card rounded-xl border border-white/[0.06] p-5 hover:border-slate-600/50 transition-all">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${getTypeColor(hv.type)} flex items-center justify-center`}>
+                  <div className={`w-10 h-10 rounded-lg bg-linear-to-br ${getTypeColor(hv.type)} flex items-center justify-center`}>
                     <span className="text-xs font-bold text-white">{hv.type?.slice(0, 2).toUpperCase()}</span>
                   </div>
                   <div>
                     <div className="text-sm font-medium text-white flex items-center gap-2">
                       {hv.name}
                       {(hv.sync_job?.status === 'running' || hv.status === 'SYNCING') && (
-                        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-sm bg-blue-500/20 text-blue-300 border border-blue-500/30">
                           <RefreshCw className="w-2.5 h-2.5 animate-spin" /> {t('hv_scanning')}
                         </span>
                       )}
@@ -1136,10 +995,10 @@ const SyncScanningOverlay = ({
       : null
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-60 p-4">
       <div className="bg-cyber-card rounded-2xl border border-white/[0.08] w-full max-w-lg shadow-2xl p-6">
         <div className="flex items-start gap-4 mb-5">
-          <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
             job.status === 'error' ? 'bg-red-500/15' : job.status === 'done' ? 'bg-green-500/15' : 'bg-blue-500/15'
           }`}>
             {job.status === 'error' ? (
@@ -1162,7 +1021,7 @@ const SyncScanningOverlay = ({
         <div className="mb-4">
           <div className="flex justify-between text-xs text-slate-400 mb-1.5">
             <span className="truncate pr-2">{job.message || tr('job_processing')}</span>
-            <span className="font-mono text-slate-300 flex-shrink-0">{pct}%</span>
+            <span className="font-mono text-slate-300 shrink-0">{pct}%</span>
           </div>
           <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden">
             <div
@@ -1287,7 +1146,7 @@ const EditHypervisorModal = ({ hv, onClose, onSave, saving }: {
     : Boolean(form.username) && Boolean(form.password)
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">{t('hv_edit_title')}</h2>
@@ -1373,7 +1232,7 @@ const EditHypervisorModal = ({ hv, onClose, onSave, saving }: {
             <div className="flex-1" />
             <button type="button" onClick={onClose} className="px-4 py-2.5 bg-white/[0.07] text-white rounded-lg text-sm">{t('cancel')}</button>
             <button type="submit" disabled={saving}
-              className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+              className="px-4 py-2.5 bg-linear-to-r from-blue-600 to-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
               {t('save')}
             </button>
           </div>
@@ -1437,7 +1296,7 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
     : Boolean(formData.username) && Boolean(formData.password)
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
         <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">{t('hv_add_title')}</h2>
@@ -1447,12 +1306,12 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
           <div>
             <label className="block text-xs text-slate-400 mb-1.5">{t('hv_name_req')}</label>
             <input type="text" required value={formData.name} onChange={e => { setFormData({...formData, name: e.target.value}); setTestResult(null) }}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="vCenter Production" />
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50" placeholder="vCenter Production" />
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1.5">{t('hv_type_req')}</label>
             <select value={formData.type} onChange={e => { setFormData({...formData, type: e.target.value}); setTestResult(null) }}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50">
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50">
               <option value="vmware">VMware vCenter / ESXi</option>
               <option value="hyperv">Microsoft Hyper-V</option>
               <option value="kvm">KVM / oVirt / OLVM</option>
@@ -1478,26 +1337,26 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">{t('hv_api_url')}</label>
                 <input type="text" required value={formData.ip_address} onChange={e => { setFormData({...formData, ip_address: e.target.value}); setTestResult(null) }}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="https://api.cluster.example.com:6443" />
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50" placeholder="https://api.cluster.example.com:6443" />
               </div>
               {ocpAuthMethod === 'token' ? (
                 <div>
                   <label className="block text-xs text-slate-400 mb-1.5">{t('hv_token_req')}</label>
                   <textarea required value={formData.token} onChange={e => { setFormData({...formData, token: e.target.value}); setTestResult(null) }}
                     rows={3}
-                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50 font-mono" placeholder="Service Account token (oc whoami -t / sa/token secret)" />
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50 font-mono" placeholder="Service Account token (oc whoami -t / sa/token secret)" />
                 </div>
               ) : (
                 <>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1.5">{t('hv_username_req')}</label>
                     <input type="text" required value={formData.username} onChange={e => { setFormData({...formData, username: e.target.value}); setTestResult(null) }}
-                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="kubeadmin" />
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50" placeholder="kubeadmin" />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1.5">{t('hv_password')}</label>
                     <input type="password" required value={formData.password} onChange={e => { setFormData({...formData, password: e.target.value}); setTestResult(null) }}
-                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                      className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50" />
                   </div>
                   <p className="text-[11px] text-slate-500 leading-relaxed">
                     {t('hv_oauth_hint')}
@@ -1511,23 +1370,23 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
                 <div className="col-span-2">
                   <label className="block text-xs text-slate-400 mb-1.5">{t('hv_ip_req')}</label>
                   <input type="text" required value={formData.ip_address} onChange={e => { setFormData({...formData, ip_address: e.target.value}); setTestResult(null) }}
-                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="192.168.1.100" />
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50" placeholder="192.168.1.100" />
                 </div>
                 <div>
                   <label className="block text-xs text-slate-400 mb-1.5">{t('hv_port')}</label>
                   <input type="number" value={formData.port} onChange={e => { setFormData({...formData, port: parseInt(e.target.value) || 443}); setTestResult(null) }}
-                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50" />
                 </div>
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">{t('hv_username_req')}</label>
                 <input type="text" required value={formData.username} onChange={e => { setFormData({...formData, username: e.target.value}); setTestResult(null) }}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" placeholder="administrator@vsphere.local" />
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50" placeholder="administrator@vsphere.local" />
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">{t('hv_password')}</label>
                 <input type="password" required value={formData.password} onChange={e => { setFormData({...formData, password: e.target.value}); setTestResult(null) }}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-blue-500/50" />
               </div>
             </>
           )}
@@ -1549,7 +1408,7 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">{t('cancel')}</button>
             <button type="submit" disabled={!testResult?.success}
-              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 text-sm font-medium">
+              className="flex-1 px-4 py-2.5 bg-linear-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 text-sm font-medium">
               {t('add')}
             </button>
           </div>
@@ -1560,11 +1419,251 @@ const AddHypervisorModal = ({ onClose, onCreate }: { onClose: () => void; onCrea
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ── Sanallaştırma Altyapısı: tür → ortam → cluster → host → VM ───────────────
+// Kartlar seçilince (ana dashboard gibi) alt kırılım hemen altında açılır.
+// ══════════════════════════════════════════════════════════════════════════════
+type VirtKind = 'openshift' | 'vmware' | 'kvm' | 'other'
+
+interface HHost { host_name: string; host_ref?: string | null; role?: string | null; state?: string | null; cpu_pct?: number | null; mem_pct?: number | null; vms_total: number; vms_running: number }
+interface HCluster { name: string; standalone: boolean; ha_enabled?: boolean | null; drs_enabled?: boolean | null; host_count: number; vms_total: number; vms_running: number; hosts: HHost[] }
+interface HHv { hypervisor_id: number; name: string; type: string; host_count: number; vms_total: number; vms_running: number; vms_unmapped: number; clusters: HCluster[] }
+
+const KIND_ORDER: VirtKind[] = ['openshift', 'vmware', 'kvm', 'other']
+const KIND_ACCENT: Record<VirtKind, string> = { openshift: '#ee0000', vmware: '#3b82f6', kvm: '#f59e0b', other: '#94a3b8' }
+
+function virtKind(type: string): VirtKind {
+  const t = (type || '').toLowerCase()
+  if (t.includes('openshift')) return 'openshift'
+  if (t === 'vmware') return 'vmware'
+  if (t === 'kvm') return 'kvm'
+  return 'other'
+}
+
+const KindMark: React.FC<{ kind: VirtKind }> = ({ kind }) => {
+  if (kind === 'vmware') {
+    return <img src="/assets/logos/vmware-logo.svg" alt="" className="w-7 h-7 object-contain" />
+  }
+  if (kind === 'openshift') {
+    return (
+      <svg viewBox="0 0 32 32" className="w-7 h-7" aria-hidden>
+        <circle cx="16" cy="16" r="15" fill="#EE0000" />
+        <path d="M16 6.5l2.2 6.6h7l-5.7 4.1 2.2 6.6L16 19.7l-5.7 4.1 2.2-6.6-5.7-4.1h7z" fill="#fff" />
+      </svg>
+    )
+  }
+  if (kind === 'kvm') {
+    return <img src="/assets/logos/oracle-logo.png" alt="" className="w-7 h-7 object-contain rounded-sm" />
+  }
+  return <span className="w-7 h-7 rounded-md bg-slate-600 text-white text-[10px] font-bold flex items-center justify-center">HV</span>
+}
+
+const pickStyle = (on: boolean, accent: string): React.CSSProperties => ({
+  background: on ? `${accent}14` : 'rgba(255,255,255,0.03)',
+  border: `1px solid ${on ? accent : 'rgba(255,255,255,0.08)'}`,
+})
+
+const VirtHierarchyExplorer: React.FC<{ onOpenVms: (hvId: number) => void }> = ({ onOpenVms }) => {
+  const t = useT()
+  const [params, setParams] = useSearchParams()
+  const kind = (params.get('kind') as VirtKind) || null
+  const hvId = Number(params.get('hv')) || null
+  const clusterName = params.get('cluster')
+  const hostRef = params.get('host')
+  const setSel = (next: { kind?: VirtKind | null; hv?: number | null; cluster?: string | null; host?: string | null }) => {
+    const p = new URLSearchParams(params)
+    const k = next.kind === undefined ? kind : next.kind
+    const hv = next.hv === undefined ? hvId : next.hv
+    const cl = next.cluster === undefined ? clusterName : next.cluster
+    const ho = next.host === undefined ? hostRef : next.host
+    if (k) p.set('kind', k); else p.delete('kind')
+    if (hv) p.set('hv', String(hv)); else p.delete('hv')
+    if (cl) p.set('cluster', cl); else p.delete('cluster')
+    if (ho) p.set('host', ho); else p.delete('host')
+    setParams(p, { replace: true })
+  }
+
+  const q = useQuery<{ hypervisors: HHv[] }>({
+    queryKey: ['virt-hierarchy'],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/hierarchy`)
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.json()
+    },
+  })
+  const tree = q.data?.hypervisors ?? []
+  const groups = KIND_ORDER
+    .map(k => ({ kind: k, items: tree.filter(h => virtKind(h.type) === k) }))
+    .filter(g => g.items.length > 0)
+  const kindLabel = (k: VirtKind) => t(k === 'openshift' ? 'hv_kind_openshift' : k === 'vmware' ? 'hv_kind_vmware' : k === 'kvm' ? 'hv_kind_kvm' : 'hv_kind_other')
+  const activeKind = groups.find(g => g.kind === kind) || null
+  const hv = activeKind?.items.find(h => h.hypervisor_id === hvId) || null
+  const cluster = hv?.clusters.find(c => c.name === clusterName) || null
+  const host = cluster?.hosts.find(h => (h.host_ref || h.host_name) === hostRef) || null
+
+  const vmsQ = useQuery<any>({
+    queryKey: ['hier-host-vms', hv?.hypervisor_id, host?.host_ref, host?.host_name],
+    enabled: !!hv && !!host,
+    queryFn: async () => {
+      const qs = new URLSearchParams()
+      if (host?.host_ref) qs.set('host_ref', host.host_ref)
+      if (host?.host_name) qs.set('host_name', host.host_name)
+      const r = await fetch(`${API_BASE_URL}/hypervisors/${hv!.hypervisor_id}/host-vms?${qs}`)
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.json()
+    },
+  })
+
+  const crumb = (label: string, onClick: (() => void) | null, testId: string) => (
+    onClick
+      ? <button type="button" data-testid={testId} onClick={onClick} className="text-blue-400 hover:text-blue-300">{label}</button>
+      : <span data-testid={testId} className="text-white font-medium">{label}</span>
+  )
+  const panel = (accent: string) => ({ background: `${accent}0a`, border: `1px solid ${accent}40` })
+
+  return (
+    <div className="space-y-3" data-testid="virt-hierarchy">
+      <div className="flex flex-wrap items-center gap-1.5 text-sm" data-testid="virt-hierarchy-crumbs">
+        {crumb(t('virt_infra_tab'), kind ? () => setSel({ kind: null, hv: null, cluster: null, host: null }) : null, 'crumb-root')}
+        {activeKind && <><ChevronRight size={14} className="text-slate-600" />{crumb(kindLabel(activeKind.kind), hv ? () => setSel({ hv: null, cluster: null, host: null }) : null, 'crumb-kind')}</>}
+        {hv && <><ChevronRight size={14} className="text-slate-600" />{crumb(hv.name, cluster ? () => setSel({ cluster: null, host: null }) : null, 'crumb-hv')}</>}
+        {cluster && <><ChevronRight size={14} className="text-slate-600" />{crumb(cluster.standalone ? t('dash_cluster_standalone') : cluster.name, host ? () => setSel({ host: null }) : null, 'crumb-cluster')}</>}
+        {host && <><ChevronRight size={14} className="text-slate-600" />{crumb(host.host_name, null, 'crumb-host')}</>}
+      </div>
+
+      {q.isLoading ? <p className="text-sm text-slate-500">{t('loading')}</p> : q.isError ? <p className="text-sm text-red-300">{t('dash_vm_error')}</p> : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2" data-testid="virt-kind-grid">
+            {groups.map(g => {
+              const on = kind === g.kind
+              const accent = KIND_ACCENT[g.kind]
+              const hosts = g.items.reduce((n, h) => n + h.host_count, 0)
+              const vms = g.items.reduce((n, h) => n + h.vms_total, 0)
+              return (
+                <button key={g.kind} type="button" data-testid="virt-kind-card" aria-pressed={on}
+                  onClick={() => setSel({ kind: on ? null : g.kind, hv: null, cluster: null, host: null })}
+                  className="text-left rounded-lg p-2.5 min-w-0 hover:bg-white/[0.05]" style={pickStyle(on, accent)}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <KindMark kind={g.kind} />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-semibold text-white truncate">{kindLabel(g.kind)}</span>
+                      <span className="block text-[10px] text-slate-400">{t('hv_kind_count', { n: g.items.length })}</span>
+                    </span>
+                  </div>
+                  <div className="flex gap-2 mt-2 text-[10px] text-slate-400">
+                    <span>{t('dash_host_count', { n: hosts })}</span><span>·</span><span>{t('dash_vm_count', { n: vms })}</span>
+                  </div>
+                </button>
+              )
+            })}
+            {groups.length === 0 && <p className="text-sm text-slate-500">{t('dash_hv_no_clusters')}</p>}
+          </div>
+
+          {activeKind && (
+            <div className="rounded-lg p-3" data-testid="virt-env-panel" style={panel(KIND_ACCENT[activeKind.kind])}>
+              <h3 className="text-sm font-semibold text-white mb-2">{t('hv_kind_envs', { name: kindLabel(activeKind.kind) })}</h3>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                {activeKind.items.map(h => {
+                  const on = hvId === h.hypervisor_id
+                  return (
+                    <button key={h.hypervisor_id} type="button" data-testid="hier-hv-card" aria-pressed={on}
+                      onClick={() => setSel({ hv: on ? null : h.hypervisor_id, cluster: null, host: null })}
+                      className="text-left rounded-lg p-2.5 min-w-0 hover:bg-white/[0.05]" style={pickStyle(on, '#3b82f6')}>
+                      <span className="block text-xs font-semibold text-white truncate">{h.name}</span>
+                      <span className="block text-[10px] text-slate-400 mt-1">
+                        {t('dash_cluster_count', { n: h.clusters.length })} · {t('dash_host_count', { n: h.host_count })} · {t('dash_vm_count', { n: h.vms_total })}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {hv && (
+                <div className="mt-3" data-testid="virt-cluster-panel">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-semibold text-slate-200">{t('dash_hv_clusters_title', { name: hv.name })}</h4>
+                    <button type="button" onClick={() => onOpenVms(hv.hypervisor_id)} className="text-xs text-blue-400 hover:text-blue-300">{t('hv_see_all')}</button>
+                  </div>
+                  {hv.clusters.length === 0 ? <p className="text-xs text-slate-500">{t('dash_hv_no_clusters')}</p> : (
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                      {hv.clusters.map(c => {
+                        const on = clusterName === c.name
+                        return (
+                          <button key={c.name} type="button" data-testid="hier-cluster-card" aria-pressed={on}
+                            onClick={() => setSel({ cluster: on ? null : c.name, host: null })}
+                            className="text-left rounded-lg p-2.5 min-w-0 hover:bg-white/[0.05]" style={pickStyle(on, '#38bdf8')}>
+                            <span className="block text-xs font-semibold text-white truncate">{c.standalone ? t('dash_cluster_standalone') : c.name}</span>
+                            <span className="block text-[10px] text-slate-400 mt-1">
+                              {t('dash_host_count', { n: c.host_count })} · {t('dash_vm_count', { n: c.vms_total })}
+                              {c.ha_enabled ? ' · HA' : ''}{c.drs_enabled ? ' · DRS' : ''}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {cluster && (
+                    <div className="mt-3" data-testid="virt-host-panel">
+                      <h4 className="text-xs font-semibold text-slate-200 mb-2">{t('dash_cluster_hosts_title', { name: cluster.standalone ? t('dash_cluster_standalone') : cluster.name })}</h4>
+                      {cluster.hosts.length === 0 ? <p className="text-xs text-slate-500">{t('dash_hv_no_hosts')}</p> : (
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                          {cluster.hosts.map(h => {
+                            const key = h.host_ref || h.host_name
+                            const on = hostRef === key
+                            return (
+                              <button key={key} type="button" data-testid="hier-host-card" aria-pressed={on}
+                                onClick={() => setSel({ host: on ? null : key })}
+                                className="text-left rounded-lg p-2.5 min-w-0 hover:bg-white/[0.05]" style={pickStyle(on, '#22c55e')}>
+                                <span className="block text-xs font-semibold text-white truncate">{h.host_name}</span>
+                                <span className="block text-[10px] text-slate-400 mt-1">
+                                  {[h.role, h.cpu_pct == null ? null : `CPU ${Math.round(h.cpu_pct)}%`, t('dash_vm_count', { n: h.vms_total })].filter(Boolean).join(' · ')}
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {host && (
+            <ColumnTable
+              testId="hier-vm-table"
+              rowTestId="hier-vm-row"
+              rows={(vmsQ.data?.vms || []) as any[]}
+              rowKey={(v: any) => v.id}
+              searchPlaceholder={t('virt_vm_search')}
+              loading={vmsQ.isLoading}
+              error={vmsQ.isError ? t('dash_vm_error') : null}
+              empty={(vmsQ.data?.unmapped ?? 0) > 0 && !(vmsQ.data?.vms || []).length ? t('dash_vm_unmapped', { n: vmsQ.data.unmapped }) : (vmsQ.data?.vms || []).length ? t('virt_vm_no_match') : t('dash_vm_none')}
+              columns={[
+                { id: 'name', label: t('dash_vm_name'), text: (v: any) => v.name || '', render: (v: any) => <span className="text-white">{v.name}</span> },
+                { id: 'power', label: t('dash_vm_state'), text: (v: any) => v.powered_on ? t('dash_vm_on') : t('dash_vm_off'), num: (v: any) => v.powered_on ? 1 : 0 },
+                { id: 'ip', label: t('dash_vm_ip'), text: (v: any) => v.ip || '' },
+                { id: 'os', label: t('dash_vm_os'), text: (v: any) => v.os || '' },
+                { id: 'cpu', label: t('dash_vm_cpu'), text: (v: any) => v.cpu == null ? '' : String(v.cpu), num: (v: any) => v.cpu ?? null },
+                { id: 'ram', label: t('dash_vm_mem'), text: (v: any) => v.memory_gb == null ? '' : String(v.memory_gb), num: (v: any) => v.memory_gb ?? null },
+                { id: 'disk', label: t('dash_vm_disk'), text: (v: any) => v.disk_gb == null ? '' : String(v.disk_gb), num: (v: any) => v.disk_gb ?? null },
+              ]}
+            />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ── Main Component ────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventoryEdit = false }) => {
   const t = useT()
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'vms' | 'hosts' | 'hypervisors'>(allowInventoryEdit ? 'hypervisors' : 'dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'vms' | 'hosts' | 'hypervisors' | 'hierarchy'>(allowInventoryEdit ? 'hypervisors' : 'dashboard')
   const [showAddModal, setShowAddModal] = useState(false)
   const [scanTarget, setScanTarget] = useState<{ id: number; name: string } | null>(null)
   const [scanQueue, setScanQueue] = useState<{ id: number; name: string }[]>([])
@@ -1590,15 +1689,31 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
 
   const [vmPage, setVmPage] = useState(1)
   const vmPageSize = 50
+  // VM arama + vCenter filtresi sunucuda uygulanır (sayfalı liste).
+  const [vmSearch, setVmSearch] = useState('')
+  const [vmSearchQ, setVmSearchQ] = useState('')
+  const [vmHvFilter, setVmHvFilter] = useState('all')
+  useEffect(() => {
+    const id = window.setTimeout(() => setVmSearchQ(vmSearch.trim()), 400)
+    return () => window.clearTimeout(id)
+  }, [vmSearch])
+  useEffect(() => { setVmPage(1) }, [vmSearchQ])
 
   // VMs — backend ile aynı tanım: hypervisor_id dolu OLUŞTU ya da server_type=VIRTUAL
   const { data: vmsPage } = useQuery({
-    queryKey: ['servers', 'platform=virt', vmPage, vmPageSize],
+    queryKey: ['servers', 'platform=virt', vmPage, vmPageSize, vmSearchQ, vmHvFilter],
     queryFn: async () => {
       const { fetchServersPage } = await import('../api/servers')
-      return fetchServersPage<VM>({ platform: 'virt', page: vmPage, page_size: vmPageSize })
+      return fetchServersPage<VM>({
+        platform: 'virt',
+        page: vmPage,
+        page_size: vmPageSize,
+        q: vmSearchQ || undefined,
+        hypervisor_id: vmHvFilter !== 'all' ? Number(vmHvFilter) : undefined,
+      })
     },
     refetchInterval: 60_000,
+    placeholderData: (prev) => prev,
   })
   const vms = vmsPage?.items ?? []
   const vmsTotal = vmsPage?.total ?? 0
@@ -1613,24 +1728,25 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
   })
 
   // ESX Host Metrics
-  const [allHosts, setAllHosts] = useState<{ hvName: string; host: EsxHost }[]>([])
-  const [hostsLoading, setHostsLoading] = useState(true)
+  const [hostSearch, setHostSearch] = useState('')
+  // Host metrikleri: kendi periyodik yenilemesi var (hypervisor listesi değişmese de güncellenir). Tür filtresi sunucuda
+  // (`/hypervisors/host-metrics` yalnız host metriği toplanan türleri döner) — burada tür listesi sabitlenmez.
+  const hostMetricsQ = useQuery<{ hosts?: { hvName: string; host: EsxHost }[] } | null>({
+    queryKey: ['hypervisors', 'host-metrics'],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE_URL}/hypervisors/host-metrics`)
+      return r.ok ? r.json() : null
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  })
+  const hostsLoading = hostMetricsQ.isLoading
+  const allHosts = useMemo(
+    () => (hostMetricsQ.data?.hosts || []).map(row => ({ hvName: row.hvName, host: row.host })),
+    [hostMetricsQ.data],
+  )
 
-  useEffect(() => {
-    const virtHvs = hypervisors.filter(h => {
-      const t = h.type?.toLowerCase() || ''
-      return t === 'vmware' || t === 'kvm' || t === 'openshift_virt'
-    })
-    if (virtHvs.length === 0) { setHostsLoading(false); return }
-
-    fetch(`${API_BASE_URL}/hypervisors/host-metrics`)
-      .then(r => r.ok ? r.json() : null)
-      .then((data: { hosts?: { hvName: string; host: EsxHost }[] } | null) => {
-        setAllHosts((data?.hosts || []).map(row => ({ hvName: row.hvName, host: row.host })))
-        setHostsLoading(false)
-      })
-      .catch(() => { setAllHosts([]); setHostsLoading(false) })
-  }, [hypervisors])
+  const { data: capacity } = useCapacityOverview(!allowInventoryEdit)
 
   const dismissedProgressRef = React.useRef<Set<number>>(new Set())
 
@@ -1781,12 +1897,14 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
   const totalVmRam = virtSummary?.memory_gb ?? vms.reduce((acc, v) => acc + (v.memory_gb || 0), 0)
 
   // Host totals
-  const totalHostCpu = allHosts.reduce((acc, h) => acc + (h.host.cpu_total_mhz || 0), 0)
-  const usedHostCpu = allHosts.reduce((acc, h) => acc + (h.host.cpu_usage_mhz || 0), 0)
-  const totalHostMem = allHosts.reduce((acc, h) => acc + (h.host.mem_total_mb || 0), 0)
-  const usedHostMem = allHosts.reduce((acc, h) => acc + (h.host.mem_used_mb || 0), 0)
-  const totalHostDisk = allHosts.reduce((acc, h) => acc + (h.host.ds_total_gb || 0), 0)
-  const usedHostDisk = allHosts.reduce((acc, h) => acc + (h.host.ds_used_gb || 0), 0)
+  // Hostlar sekmesi araması: ad / IP ipucu / hypervisor adı / rol (büyük-küçük harf duyarsız)
+  const filteredHosts = useMemo(() => {
+    const q = hostSearch.trim().toLowerCase()
+    if (!q) return allHosts
+    return allHosts.filter(({ hvName, host }) =>
+      [virtHostTitle(host), host.host_name, host.display_name, host.ip_address, virtHostIpHint(host), hvName, ...(host.roles || [])]
+        .filter(Boolean).join(' ').toLowerCase().includes(q))
+  }, [allHosts, hostSearch])
 
   if (hvLoading) {
     return (
@@ -1837,9 +1955,8 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             </>
           ) : (
             <>
-              <h1 className="text-xl font-bold text-white">{t('hv_title_dash')}</h1>
-              <p className="text-sm text-slate-500">{t('hv_subtitle_dash')}</p>
-              <Link to="/integrations/hypervisors" className="inline-block mt-2 text-xs text-blue-400 hover:text-blue-300">
+              {/* Sayfa başlığı üst çubukta zaten var; burada yalnız envanter yönetimi bağlantısı kalır. */}
+              <Link to="/integrations/hypervisors" className="inline-block text-xs text-blue-400 hover:text-blue-300">
                 {t('hv_inventory_mgmt')}
               </Link>
             </>
@@ -1849,12 +1966,22 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
           <>
             {/* Quick Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              <StatCard icon={Database} label={t('hv_hypervisor')} value={hypervisors.length} sub={t('hv_n_vmware', { n: hypervisors.filter(h => h.type === 'vmware').length })} accent={NEON.blue} />
-              <StatCard icon={Server} label="Host" value={allHosts.length} sub={t('label_virt_host')} accent={NEON.cyan} />
-              <StatCard icon={Monitor} label={t('hv_stat_total_vm')} value={virtSummary?.total ?? vmsTotal} sub={t('hv_sub_running', { n: poweredOn })} accent={NEON.info} />
+              <HoverTip testId="hv-tip-hypervisor" tip={<HypervisorNamesTip hypervisors={hypervisors} data={capacity} />}>
+                <StatCard icon={Database} label={t('hv_hypervisor')} value={hypervisors.length} sub={t('hv_n_vmware', { n: hypervisors.filter(h => h.type === 'vmware').length })} accent={NEON.blue} />
+              </HoverTip>
+              <HoverTip testId="hv-tip-host" tip={<HostTypesTip data={capacity} />}>
+                <StatCard icon={Server} label="Host" value={allHosts.length} sub={t('label_virt_host')} accent={NEON.cyan} />
+              </HoverTip>
+              <HoverTip testId="hv-tip-vm" tip={inventoryTip(capacity, 'servers', true)}>
+                <StatCard icon={Monitor} label={t('hv_stat_total_vm')} value={virtSummary?.total ?? vmsTotal} sub={t('hv_sub_running', { n: poweredOn })} accent={NEON.info} />
+              </HoverTip>
               <StatCard icon={Power} label={t('hv_stat_active_vm')} value={poweredOn} sub={t('hv_sub_off', { n: poweredOff })} accent={NEON.green} />
-              <StatCard icon={Cpu} label={t('hv_stat_vcpu')} value={totalVmCpu} sub={t('hv_sub_cores')} accent={NEON.orange} />
-              <StatCard icon={MemoryStick} label={t('hv_stat_mem')} value={`${totalVmRam} GB`} sub={t('hv_sub_mem')} accent={NEON.red} />
+              <HoverTip testId="hv-tip-cpu" align="right" tip={inventoryTip(capacity, 'cpu', true)}>
+                <StatCard icon={Cpu} label={t('hv_stat_vcpu')} value={totalVmCpu} sub={t('hv_sub_cores')} accent={NEON.orange} />
+              </HoverTip>
+              <HoverTip testId="hv-tip-mem" align="right" tip={inventoryTip(capacity, 'memory', true)}>
+                <StatCard icon={MemoryStick} label={t('hv_stat_mem')} value={`${totalVmRam} GB`} sub={t('hv_sub_mem')} accent={NEON.red} />
+              </HoverTip>
             </div>
 
             <VirtInsightsStrip />
@@ -1877,9 +2004,10 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
             ? [{ id: 'hypervisors', icon: Settings, label: t('hv_tab_hvs') }]
             : [
                 { id: 'dashboard', icon: LayoutDashboard, label: t('nav_dashboard') },
-                { id: 'vms', icon: Monitor, label: t('hv_tab_vms') },
-                { id: 'hosts', icon: Database, label: t('hv_tab_hosts') },
+                { id: 'hierarchy', icon: Layers, label: t('virt_infra_tab') },
                 { id: 'hypervisors', icon: Settings, label: t('hv_tab_hvs') },
+                { id: 'hosts', icon: Database, label: t('hv_tab_hosts') },
+                { id: 'vms', icon: Monitor, label: t('hv_tab_vms') },
               ]
           ).map(tab => (
             <button
@@ -1898,22 +2026,26 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
         </div>
 
         {/* Tab Content */}
+        {!allowInventoryEdit && activeTab === 'hierarchy' && (
+          <VirtHierarchyExplorer onOpenVms={(hvId) => { setVmHvFilter(String(hvId)); setVmPage(1); setActiveTab('vms') }} />
+        )}
+
         {!allowInventoryEdit && activeTab === 'dashboard' && (
           <div className="space-y-6">
-            {/* Resource Gauges */}
-            {allHosts.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <ResourceGauge label={t('hv_cpu_usage')} used={usedHostCpu} total={totalHostCpu} unit="MHz" accent={NEON.cyan} />
-                <ResourceGauge label={t('hv_mem_usage')} used={usedHostMem} total={totalHostMem} unit="MB" accent={NEON.info} />
-                <ResourceGauge label={t('hv_disk_usage')} used={usedHostDisk} total={totalHostDisk} unit="GB" accent={NEON.orange} />
-              </div>
+            {/* CPU / Bellek / Depolama: üstte fiziksel kullanım (ölçer), altta hypervisor başına kullanım + dağıtılan vCPU/RAM */}
+            {capacity && (capacity.physical.sources.length > 0 || capacity.inventory.sources.some(x => x.kind === 'hypervisor')) && (
+              <>
+                <p className="text-xs text-slate-500 -mb-3">{t('vcc_hint')}</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start" data-testid="virt-capacity">
+                  <VirtCapacityCard data={capacity} basis="cpu" />
+                  <VirtCapacityCard data={capacity} basis="memory" />
+                  <VirtCapacityCard data={capacity} basis="storage" />
+                </div>
+              </>
             )}
 
             {/* Charts Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <VMStatusPie poweredOn={poweredOn} poweredOff={poweredOff} />
-              <HostResourceChart hosts={allHosts.map(h => h.host)} />
-            </div>
+            <HostResourceChart hosts={allHosts.map(h => h.host)} topN={10} />
 
             {/* Recent VMs */}
             {vms.length > 0 && (
@@ -1937,7 +2069,7 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
                         </div>
                         <div className="min-w-0">
                           <div className="text-sm text-blue-300 truncate">{vm.name}</div>
-                          <div className="text-xs text-slate-500">{vm.cpu_cores} vCPU • {vm.memory_gb} GB</div>
+                          <div className="text-xs text-slate-500">{[vm.cpu_cores > 0 ? `${vm.cpu_cores} vCPU` : null, vm.memory_gb > 0 ? `${vm.memory_gb} GB` : null].filter(Boolean).join(' • ') || '—'}</div>
                         </div>
                       </button>
                     )
@@ -1950,7 +2082,15 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
 
         {!allowInventoryEdit && activeTab === 'vms' && (
           <div className="space-y-3">
-            <VMTable vms={vms} hypervisors={hypervisors} />
+            <VMTable
+              vms={vms}
+              hypervisors={hypervisors}
+              total={vmsTotal}
+              search={vmSearch}
+              onSearchChange={setVmSearch}
+              hvFilter={vmHvFilter}
+              onHvFilterChange={(v) => { setVmHvFilter(v); setVmPage(1) }}
+            />
             {vmsTotal > 0 && (
               <div className="flex items-center justify-between text-sm text-slate-400 px-1">
                 <span>{(vmPage - 1) * vmPageSize + 1}–{Math.min(vmPage * vmPageSize, vmsTotal)} / {vmsTotal}</span>
@@ -1981,11 +2121,35 @@ const Hypervisors: React.FC<{ allowInventoryEdit?: boolean }> = ({ allowInventor
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {allHosts.map(({ hvName, host }) => (
-                  <HostCard key={`${hvName}-${host.host_name}`} host={host} hvName={hvName} />
-                ))}
-              </div>
+              <>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="relative w-full sm:w-80">
+                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="search"
+                      data-testid="hv-host-search"
+                      value={hostSearch}
+                      onChange={(e) => setHostSearch(e.target.value)}
+                      placeholder={t('hv_host_search')}
+                      className="w-full pl-9 pr-3 py-2 rounded-lg text-sm bg-cyber-card border border-white/[0.08] text-white placeholder-slate-500 focus:outline-hidden focus:border-blue-500/50"
+                    />
+                  </div>
+                  <span data-testid="hv-host-count" className="text-xs text-slate-500">
+                    {filteredHosts.length === allHosts.length
+                      ? t('hv_host_count_all', { n: allHosts.length })
+                      : t('hv_host_count_filtered', { n: filteredHosts.length, total: allHosts.length })}
+                  </span>
+                </div>
+                {filteredHosts.length === 0 ? (
+                  <p data-testid="hv-host-nomatch" className="text-sm text-slate-500 py-6 text-center">{t('hv_host_no_match')}</p>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {filteredHosts.map(({ hvName, host }) => (
+                      <HostCard key={`${hvName}-${host.host_name}`} host={host} hvName={hvName} />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

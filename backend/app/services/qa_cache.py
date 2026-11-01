@@ -59,6 +59,18 @@ def _cache_key(question: str, model: Optional[str] = None) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
+def peek_cached_answer(question: str, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Adım 9: yalnız OKU — hit sayacı/TTL'e dokunmaz (ağır araç turunu atlayıp atlamayacağına karar vermek için)."""
+    r = _get_redis()
+    if not r or not question:
+        return None
+    try:
+        raw = r.get(_KEY_PREFIX + _cache_key(question, model))
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
 def get_cached_answer(question: str, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Önbellekte varsa cevabı döndürür (hit sayacını artırıp gerekirse TTL uzatır)."""
     r = _get_redis()

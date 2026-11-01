@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -338,6 +339,35 @@ def _has_unaddressed_cross_domain_clause(message: str, domains: Optional[frozens
     return True
 
 
+def _tool_turn_timeout() -> int:
+    """Araç turu okuma zaman aşımı (sn): sınıf `tool_turn` dinamik değeri; alt sınır 90 sn (llm_timeouts)."""
+    try:
+        from app.services import llm_timeouts
+        return max(90, int(round(llm_timeouts.timeout_for("tool_turn"))))
+    except Exception:
+        return 90
+
+
+def _default_tool_budget(model: str):
+    """Politikasız araç turunun (think, num_predict) bütçesi — `unified_tool_think` / `unified_tool_num_predict`.
+
+    num_predict = 0 → sınırsız (eski davranış, None). think yalnız gpt-oss'ta (diğerlerinde None).
+    Ayar okunamazsa güvenli taraf: bütçe UYGULANMAZ (eski davranış).
+    """
+    try:
+        from app.services import llm_chat_policy as _lcp
+        from app.services.runtime_settings import get_setting
+        np = int(float(get_setting("unified_tool_num_predict") or 0))
+        np_out = None if np <= 0 else max(256, np)
+        think = None
+        if np_out is not None and _lcp.supports_think_level(model):
+            t = str(get_setting("unified_tool_think") or "").strip().lower()
+            think = t if t in ("low", "medium", "high") else None
+        return think, np_out
+    except Exception:
+        return None, None
+
+
 def _policy_supports_think(model: str) -> bool:
     try:
         from app.services.llm_chat_policy import supports_think_level
@@ -353,6 +383,28 @@ def _tool_result_to_text(result: Any) -> str:
         return json.dumps(result, ensure_ascii=False, default=str)[:48000]
     except Exception:
         return str(result)[:48000]
+
+
+# Adım 14: gpt-oss + araç modunda bazen akıl yürütme (analysis kanalı) `content`'e sızar
+# ("User asked: … We need to answer in Turkish …"). Canlı akıtılan cevapta bu ASLA görünmemeli.
+_LEAD_HOLD_CHARS = 80
+_REASONING_LEAK_RE = re.compile(
+    r"^\s*(?:analysis\b|user\s+(?:asked|wants|is asking|says|question)|the\s+user\b|we\s+(?:need|have|should|must|can|will|are|see)\b|"
+    r"let(?:'|’)s\b|let me\b|i\s+(?:need|should|will|must|think)\b|need\s+to\b|okay[,.\s]|ok[,.\s]|"
+    r"so\s+(?:the|we|we'll)\b|first[,\s]+(?:we|i|let)|provide\b|use\s+(?:the\s+)?data\b)",
+    re.IGNORECASE,
+)
+
+
+_LEAK_RETRY_NOTE = (
+    "Önceki taslağın akıl yürütme/analiz metni içeriyordu (İngilizce 'User asked…', 'We need…' gibi). "
+    "Şimdi YALNIZ kullanıcıya yönelik nihai cevabı Türkçe yaz; iç düşünceni cevaba YAZMA."
+)
+
+
+def looks_like_reasoning_leak(text: str) -> bool:
+    """Cevabın başı İngilizce akıl yürütme açılışı gibi mi? (Türkçe cevap beklenirken)"""
+    return bool(_REASONING_LEAK_RE.match(text or ""))
 
 
 def run_read_only_tool_loop(
@@ -372,8 +424,21 @@ def run_read_only_tool_loop(
     output_directive: Optional[str] = None,
     extra_ctx: Optional[Dict[str, Any]] = None,
     llm_policy: Optional[Dict[str, Any]] = None,
+    stream_final: bool = False,
+    forward_thinking: bool = False,
+    final_reminder: Optional[str] = None,
 ) -> Iterator[Dict[str, Any]]:
     """READ_ONLY tool-calling döngüsü — generator.
+
+    stream_final / forward_thinking (Adım 14 — politikasız yol, `llm_policy` YOKKEN):
+      stream_final      True → araç kullanıldıktan sonraki araçsız son tur `chat_with_tools_stream` ile canlı akar
+                        ({"type":"answer_start"} + {"type":"token"}); `final` olayı `final_text/final_streamed`
+                        taşır → çağıran İKİNCİ üretimi atlayabilir. Nudge bekleyen tur akıtılmaz.
+      forward_thinking  True → her LLM turu akışlı çağrılır; modelin akıl yürütmesi birleştirilmiş
+                        {"type":"thinking","text":…} olayları olarak iletilir (cevap DEĞİL).
+      final_reminder    (yalnız stream_final) araçlar çalıştıktan sonra, son turdan ÖNCE bir kez `system` mesajı olarak eklenir
+                        (+ bu turda kullanılan araç adları «cevaba yazma» listesi) — iç terim sızıntısını azaltır.
+      İkisi de False (varsayılan) → davranış eskisiyle aynı (akışsız `chat_with_tools`).
 
     llm_policy (opsiyonel, Adım 6b — şimdilik yalnız Automic sohbeti):
       depth            "simple" | "analysis" | "default" → think seviyesi / num_predict
@@ -424,7 +489,19 @@ def run_read_only_tool_loop(
 
     _pol: Dict[str, Any] = dict(llm_policy or {})
     # Modüle özgü ince taban prompt (Automic): genel OpenShift/vCenter ağırlıklı SYSTEM_PROMPT yerine geçer.
-    sys_content = str(_pol.get("base_prompt") or "") or SYSTEM_PROMPT
+    sys_content = str(_pol.get("base_prompt") or "")
+    if not sys_content:
+        # Öneri kuralı (Adım 2): yalnız genel prompt'a; modüle özgü taban prompt (Automic) etkilenmez.
+        from app.services.chat_rules import (
+            ADVICE_RULE_TR as _ADVICE, HONESTY_RULE_TR as _HONEST,
+            USER_LANGUAGE_RULE_TR as _USERLANG, OC_RULE_TR as _OC,
+        )
+        sys_content = SYSTEM_PROMPT + "\n\n" + _ADVICE + "\n\n" + _HONEST + "\n\n" + _USERLANG
+        _oc_scope = (platform or "").strip().lower() in ("openshift", "ocp") or bool(
+            domains and "openshift" in domains and "linux" not in domains and "windows" not in domains
+        )
+        if _oc_scope:
+            sys_content += "\n\n" + _OC
     plat = (platform or "").strip().lower()
     if plat in _PLATFORM_HINTS:
         sys_content += _PLATFORM_HINTS[plat]
@@ -537,7 +614,9 @@ def run_read_only_tool_loop(
 
     tool_texts: List[str] = []
     tools_used: List[str] = []
-    structured_results: List[Dict[str, Any]] = []
+    # TracedResults: list gibi davranır; ayrıca (bağlıysa) chat_quality tur izine yazar.
+    from app.services.chat_quality.trace import TracedResults
+    structured_results: List[Dict[str, Any]] = TracedResults()
     used_tools = False
     successful_tool_runs = 0
     exec_ctx: Dict[str, Any] = {
@@ -981,6 +1060,22 @@ def run_read_only_tool_loop(
         return out
 
     _answer_started = False
+    _reminded = False
+    _leak_retried = False
+    _pn_live = False      # bu turun cevabı politikasız yolda canlı akıtıldı mı (Adım 14)
+
+    def _nudge_pending() -> bool:
+        """Bu turun araçsız cevabı nudge ile reddedilecek mi (kanıt / eksik cümle)?"""
+        try:
+            if not used_tools and not _nudged and _needs_tool_evidence():
+                return True
+            if used_tools and not _clause_nudged:
+                from app.services.chat_clause_check import uncovered_clause_labels
+                return bool(uncovered_clause_labels(user_message, tools_used))
+        except Exception:
+            return False
+        return False
+
     _think_on = bool(_pol) and _policy_supports_think(model)
     _obs_seen = 0
     _obs_last_note: Optional[str] = None
@@ -1020,7 +1115,129 @@ def run_read_only_tool_loop(
 
         step_specs = _active_specs(_step)
         if not _pol:
-            llm = chat_with_tools(model, messages, step_specs, timeout=90)
+            # Politikasız (unified / Linux / Windows / Sanallaştırma) araç turu:
+            #  - zaman aşımı çağrı sınıfına göre dinamik (alt sınır 90 sn = eski davranış),
+            #  - konservatif üretim tavanı (düşünme sınırsız uzayıp 90 sn'ye dayanmasın),
+            #  - sohbet önceliği (araç döngüsü havuz thread'inde koştuğu için bağlam burada atanır).
+            from app.services import llm_scheduler as _sched
+            _t_think, _t_np = _default_tool_budget(model)
+            _t_kw: Dict[str, Any] = {}
+            if _t_np is not None:       # bütçe kapalıysa (ayar 0) çağrı imzası eskisiyle aynı kalır
+                _t_kw["num_predict"] = _t_np
+                if _t_think:
+                    _t_kw["think"] = _t_think
+            if stream_final and final_reminder and used_tools and not _reminded:
+                _reminded = True
+                _names = ", ".join(sorted(set(tools_used))[:12])
+                messages.append({"role": "system", "content": final_reminder + (
+                    f"\nBu turda çalışan araç adlarını ({_names}) ve veri alanı adlarını cevapta ASLA yazma."
+                    if _names else "")})
+            _pn_live = bool(stream_final) and used_tools and not _nudge_pending()
+            if stream_final or forward_thinking:
+                # Adım 14: akışlı çağrı — thinking (yetkiliyse) ve (son turda) cevap canlı iletilir.
+                from app.services.agent.llm import chat_with_tools_stream
+
+                def _pn_turn(_live_turn: bool, _specs=step_specs, _kw=_t_kw):
+                    """Tek akışlı LLM turu; thinking/cevap olaylarını yield eder, `llm` sonucunu döner.
+                    Akıl yürütme sızıntısı: sonuçta `_leak=True` (hiçbir token kullanıcıya gitmedi)."""
+                    nonlocal _answer_started
+                    _llm = {"content": "", "tool_calls": [], "error": "stream sonuç üretmedi"}
+                    _tbuf = ""
+                    _tlast = time.monotonic()
+                    _lead, _lead_ok, _leak = "", False, False
+                    _gen = chat_with_tools_stream(
+                        model, messages, _specs, timeout=_tool_turn_timeout(),
+                        emit_thinking=bool(forward_thinking), **_kw,
+                    )
+                    with _sched.chat_priority():
+                        for _ev in _gen:
+                            _et = _ev.get("type")
+                            if _et == "thinking":
+                                _tbuf += _ev.get("text") or ""
+                                _now = time.monotonic()
+                                if len(_tbuf) >= 40 or (_tbuf and _now - _tlast >= 0.3):
+                                    yield {"type": "thinking", "text": _tbuf}
+                                    _tbuf = ""
+                                    _tlast = _now
+                            elif _et == "token":
+                                if _live_turn and not _leak:
+                                    _piece = _ev.get("text") or ""
+                                    if not _lead_ok:
+                                        # Cevabın ilk ~80 karakteri tutulur: akıl yürütme sızıntısı kullanıcıya gitmesin
+                                        _lead += _piece
+                                        if len(_lead) < _LEAD_HOLD_CHARS:
+                                            continue
+                                        if looks_like_reasoning_leak(_lead):
+                                            _leak = True
+                                            # Sızan metin aslında akıl yürütme: yetkiliye düşünme olarak göster, akışı HEMEN kes
+                                            # (kalanını beklemek 15–30 sn sessizlik demek; yeniden deneme çözer)
+                                            if forward_thinking:
+                                                yield {"type": "thinking", "text": _lead}
+                                            _lead = ""
+                                            _llm = {"content": "", "tool_calls": [], "error": None, "streamed_chars": 0}
+                                            break
+                                        _lead_ok = True
+                                        _piece, _lead = _lead, ""
+                                    if not _answer_started:
+                                        _answer_started = True
+                                        yield {"type": "answer_start"}
+                                    yield {"type": "token", "text": _piece}
+                            elif _et == "result":
+                                _llm = _ev
+                    try:
+                        _gen.close()      # erken kesildiyse Ollama bağlantısı kapanır, GPU boşa üretmez
+                    except Exception:
+                        pass
+                    if _tbuf:
+                        yield {"type": "thinking", "text": _tbuf}
+                    if _live_turn and not _leak and not _lead_ok and _lead \
+                            and not _llm.get("tool_calls") and not _llm.get("error"):
+                        # kısa cevap (<80 kr): sızıntı denetimi sonra, kalan metni bırak
+                        if looks_like_reasoning_leak(_lead):
+                            _leak = True
+                        else:
+                            _answer_started = True
+                            yield {"type": "answer_start"}
+                            yield {"type": "token", "text": _lead}
+                    if _leak and not _llm.get("tool_calls"):
+                        _llm = dict(_llm)
+                        _llm["_leak"] = True
+                    return _llm
+
+                llm = yield from _pn_turn(_pn_live)
+                _retry_why = (
+                    "leak" if llm.get("_leak")
+                    else ("stream_error" if llm.get("done_reason") == "stream_error" and not llm.get("tool_calls") else "")
+                )
+                if _retry_why and _pn_live and not _leak_retried:
+                    # Sızıntı / akış ortası Ollama 500 ("error parsing tool call"): ikinci üretim (30–200 sn, sessiz) yerine
+                    # AYNI turu bir kez yeniden dene (~10–20 sn, canlı akar).
+                    _leak_retried = True
+                    logger.warning(
+                        "[UnifiedToolChat] canlı cevap kesildi (%s) → son tur bir kez yeniden deneniyor", _retry_why,
+                    )
+                    if _answer_started:
+                        yield {"type": "answer_reset"}      # ekrandaki kısmi metin geri alınır
+                        _answer_started = False
+                    messages.append({"role": "system", "content": _LEAK_RETRY_NOTE})
+                    # sızıntıda araçlar korunur (ölçüm: yeniden deneme çoğunlukla temiz çıkıyor); akış-ortası 500'de
+                    # sorun araç ayrıştırıcısı olduğundan araçsız denenir
+                    llm = yield from _pn_turn(_pn_live, _specs=([] if _retry_why == "stream_error" else step_specs))
+                if llm.get("_leak"):
+                    # ikinci kez de sızdı → cevap kullanıcıya gitmedi; çağıran ikinci üretime düşer
+                    logger.warning("[UnifiedToolChat] canlı cevapta akıl yürütme sızıntısı sürdü → ikinci üretime düşülüyor")
+                    llm = dict(llm)
+                    llm["streamed_chars"] = 0
+                    llm["done_reason"] = "reasoning_leak"
+                if _answer_started and (llm.get("tool_calls") or llm.get("error")):
+                    # Canlı akıtılan ön metinden sonra model araç çağırdı / hata verdi → ekrandaki metni geri al
+                    yield {"type": "answer_reset"}
+                    _answer_started = False
+            else:
+                with _sched.chat_priority():
+                    llm = chat_with_tools(
+                        model, messages, step_specs, timeout=_tool_turn_timeout(), **_t_kw,
+                    )
         else:
             from app.services import llm_chat_policy as _lcp
             _depth = _pol.get("depth") or "default"
@@ -1138,10 +1355,10 @@ def run_read_only_tool_loop(
                     )
                 except Exception as _cm_e:
                     logger.debug("coverage miss kaydı atlandı: %s", _cm_e)
-            if _pol:
+            if _pol or stream_final:
                 _final_info.update(
                     text=llm.get("content") or "",
-                    streamed=bool(llm.get("streamed_chars")),
+                    streamed=bool(llm.get("streamed_chars")) and (bool(_pol) or _pn_live),
                     done_reason=llm.get("done_reason"),
                 )
             yield _finalize()

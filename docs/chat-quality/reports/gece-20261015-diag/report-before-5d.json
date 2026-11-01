@@ -1,0 +1,219 @@
+{
+ "calc:openshift_virt_host_metrics:ZZ-FAKE-OpenShift:running_canonical": 443,
+ "calc:openshift_virt_host_metrics:ZZ-FAKE-OpenShift:running_old_expr('on' in ps)": 103,
+ "calc:openshift_virt_host_metrics:ZZ-FAKE-OpenShift:vm_total": 500,
+ "calc:openshift_virt_host_metrics:oVirt (OpenShift Virt):running_canonical": 5,
+ "calc:openshift_virt_host_metrics:oVirt (OpenShift Virt):running_old_expr('on' in ps)": 5,
+ "calc:openshift_virt_host_metrics:oVirt (OpenShift Virt):vm_total": 5,
+ "kpi:hypervisors.get_quick_stats (vms_powered_on)": {
+  "vms_powered_on": 1018
+ },
+ "kpi:ops_center.executive_summary": {
+  "comparison#len": 6,
+  "critical_items#len": 19,
+  "open_incident_items#len": 6,
+  "platforms.linux.node_exporter_running": 0,
+  "platforms.virtualization.includes#len": 3,
+  "platforms.virtualization.vm_running_count": 1448,
+  "platforms.windows.windows_exporter_running": 0,
+  "top_alerts#len": 15,
+  "warning_items#len": 104
+ },
+ "kpi:virt_monitoring.build_overview": {
+  "alerts#len": 60,
+  "capacity#len": 7,
+  "chart_defaults.ranges#len": 9,
+  "esxi#len": 22,
+  "inventory.vms_running": 1018,
+  "timeline#len": 40,
+  "top_consumers.host_cpu#len": 5,
+  "top_consumers.host_memory#len": 5,
+  "top_consumers.vm_cpu#len": 8,
+  "top_consumers.vm_memory#len": 8,
+  "top_consumers.vm_network#len": 8,
+  "top_problems#len": 8
+ },
+ "kpi:virt_ops_center.build_virt_command_center": {
+  "critical_hosts#len": 3,
+  "platform_logs#len": 70,
+  "platforms#len": 5,
+  "totals.vm_running": 1129,
+  "warning_hosts#len": 3
+ },
+ "report:anomaly": {
+  "power_fields": {
+   "host_metric_anomalies#len": 0,
+   "top_anomaly_servers#len": 2,
+   "top_event_types#len": 6
+  },
+  "sha": "3b765fe9ec86c574"
+ },
+ "report:audit_evidence": {
+  "power_fields": {
+   "controls#len": 7,
+   "manual_review#len": 4,
+   "platforms#len": 3
+  },
+  "sha": "aa39b12878ee2f5f"
+ },
+ "report:business_impact": {
+  "power_fields": {
+   "high_risk_candidates#len": 10
+  },
+  "sha": "1240769e8f4aea52"
+ },
+ "report:capacity": {
+  "power_fields": {
+   "capacity_items#len": 41,
+   "datastore_vm_disk.FAKE-DS-01.vms#len": 20,
+   "datastore_vm_disk.FAKE-DS-02.vms#len": 20,
+   "datastore_vm_disk.FAKE-DS-03.vms#len": 20,
+   "datastore_vm_disk.FAKE-DS-04.vms#len": 20,
+   "datastore_vm_disk.FAKE-DS-05.vms#len": 20,
+   "datastore_vm_disk.FAKE-DS-06.vms#len": 20,
+   "datastore_vm_disk.FAKE-DS-07.vms#len": 20,
+   "datastore_vm_disk.FAKE-DS-08.vms#len": 20,
+   "datastore_vm_disk.FAKE-DS-09.vms#len": 20,
+   "datastore_vm_disk.FAKE-DS-10.vms#len": 20,
+   "datastore_vm_disk.Hypervisor: ZZ-FAKE-OpenShift.vms#len": 20,
+   "datastore_vm_disk.Hypervisor: oVirt (OpenShift Virt).vms#len": 5,
+   "datastore_vm_disk.ISO_DS.vms#len": 1,
+   "datastore_vm_disk.NVME_DS.vms#len": 20,
+   "datastore_vm_disk.datastore1.vms#len": 1,
+   "datastore_vm_disk.datastore2.vms#len": 15,
+   "datastore_vm_disk.oracle_nvme.vms#len": 6,
+   "narrative#len": 3,
+   "warnings#len": 6
+  },
+  "sha": "fbc123d40a28df97"
+ },
+ "report:capacity_plan": {
+  "power_fields": {
+   "clusters#len": 9,
+   "datastores#len": 17
+  },
+  "sha": "4157ebc49acce6e4"
+ },
+ "report:consolidation": {
+  "power_fields": {
+   "consolidation_potential.idle_candidate_ram_gb": 893.4,
+   "consolidation_potential.idle_candidate_vcpu": 189,
+   "consolidation_potential.reclaimable_disk_gb": 73788,
+   "consolidation_potential.reclaimable_ram_gb": 8205.4,
+   "consolidation_potential.reclaimable_vcpu": 2371,
+   "idle_vms.candidate_ram_gb": 893.4,
+   "idle_vms.candidate_vcpu": 189,
+   "idle_vms.count": 36,
+   "idle_vms.note": "Son 7 gün ortalama CPU < %8 ve anlamlı tahsis (vCPU≥2 veya RAM≥4GB). virt_vm_metrics tabanlı; metrik yoksa listelenmez.",
+   "idle_vms.vms#len": 25,
+   "narrative#len": 6,
+   "oversized_vms.vms#len": 20,
+   "powered_off_vms.count": 534,
+   "powered_off_vms.vms#len": 30,
+   "powered_off_vms.wasted_disk_gb": 73788,
+   "powered_off_vms.wasted_ram_gb": 8205.4,
+   "powered_off_vms.wasted_vcpu": 2371,
+   "usage_metrics_coverage.powered_on_vms": 1018
+  },
+  "sha": "9e43b3a25195d822"
+ },
+ "report:executive_summary": {
+  "power_fields": {
+   "data_quality.hypervisor_sync#len": 5,
+   "data_quality.warnings#len": 1,
+   "hosts_detail#len": 41,
+   "infrastructure.vm_powered_off": 534,
+   "infrastructure.vm_powered_on": 1018,
+   "recommendations#len": 4
+  },
+  "sha": "8265a3b291bf4ca3"
+ },
+ "report:finance": {
+  "power_fields": {
+   "powered_off_savings": 282658.0,
+   "top_cost_vms#len": 20
+  },
+  "sha": "cd356f0b253ce14e"
+ },
+ "report:forecast": {
+  "power_fields": {
+   "forecasts#len": 41,
+   "narrative#len": 2
+  },
+  "sha": "d7da16f1ea880991"
+ },
+ "report:lifecycle": {
+  "power_fields": {
+   "old_hw_vms.vms#len": 2
+  },
+  "sha": "59aecc163d540e7d"
+ },
+ "report:operations": {
+  "power_fields": {
+   "daily_trend#len": 30,
+   "event_breakdown#len": 20,
+   "virt_platform.breakdown#len": 13,
+   "virt_platform.recent_logs#len": 25
+  },
+  "sha": "6a46fef58158288a"
+ },
+ "report:performance_bottleneck": {
+  "power_fields": {
+   "bottlenecks#len": 41
+  },
+  "sha": "ba1231b945747377"
+ },
+ "report:resource_usage": {
+  "power_fields": {
+   "summary.powered_on_vms": 1018,
+   "top_cpu_allocators#len": 10,
+   "top_cpu_consumers#len": 10,
+   "top_disk_consumers#len": 10,
+   "top_ram_consumers#len": 10
+  },
+  "sha": "4253a03dbf2a5129"
+ },
+ "report:risk": {
+  "power_fields": {
+   "narrative#len": 7,
+   "risks.high_cpu_hosts#len": 4,
+   "risks.high_memory_hosts#len": 1,
+   "risks.high_storage_hosts#len": 3,
+   "risks.maintenance_hosts#len": 0,
+   "risks.no_tools_vms#len": 8,
+   "risks.top_alarm_servers#len": 1
+  },
+  "sha": "9db54458d86f18b3"
+ },
+ "report:riskiest_assets": {
+  "power_fields": {
+   "riskiest_hosts#len": 4,
+   "riskiest_vms#len": 15
+  },
+  "sha": "2ac3431fb50c33c2"
+ },
+ "report:security_compliance": {
+  "power_fields": {
+   "issues#len": 2,
+   "vmware_tools.non_compliant_vms#len": 8,
+   "vmware_tools.powered_on_non_compliant": 8
+  },
+  "sha": "28a3f97bf0f9ff5e"
+ },
+ "report:sla": {
+  "power_fields": {
+   "sla_items#len": 30
+  },
+  "sha": "c1bf94b0e91d62c9"
+ },
+ "report:vm_health": {
+  "power_fields": {
+   "critical_vms#len": 0,
+   "vm_scores#len": 1552
+  },
+  "sha": "694506d6ee57097e"
+ },
+ "sql-replica:hypervisors.py (old IN list)": 1018,
+ "sql-replica:ops_center.py (old lower IN)": 1448,
+ "sql-replica:virt_monitoring.py (old ilike %on%)": 1018
+}

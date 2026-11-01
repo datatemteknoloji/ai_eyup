@@ -11,7 +11,7 @@ export function Separator({
     <SeparatorPrimitive.Root
       orientation={orientation}
       className={cn(
-        "shrink-0 bg-[var(--color-border)]",
+        "shrink-0 bg-(--color-border)",
         orientation === "horizontal" ? "h-px w-full" : "h-full w-px",
         className,
       )}

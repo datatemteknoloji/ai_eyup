@@ -58,20 +58,20 @@ export function RebootPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold tracking-tight">{t("wizard_reboot")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">
         Güvenli reboot · Talep ID ve sunucu adı onayı zorunlu
       </p>
 
-      <div className="mt-4 max-w-xl rounded-xl border border-[var(--error)]/35 bg-[var(--error-bg)] px-3.5 py-2.5 text-sm text-[var(--error)]">
+      <div className="mt-4 max-w-xl rounded-xl border border-(--error)/35 bg-(--error-bg) px-3.5 py-2.5 text-sm text-(--error)">
         Bu işlem sunucuyu yeniden başlatır. Yanlış hedefte çalıştırmayın.
       </div>
 
       <form
         onSubmit={onSubmit}
-        className="mt-4 max-w-xl space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
+        className="mt-4 max-w-xl space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-5"
       >
         <div>
-          <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Talep ID</label>
+          <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Talep ID</label>
           <Input className="h-9" value={talepId} onChange={(e) => setTalepId(e.target.value)} required />
         </div>
         <SingleServerField
@@ -82,7 +82,7 @@ export function RebootPage() {
           label="Sunucu"
         />
         <div>
-          <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">
             Onay — sunucu adını yazın ({selected?.hostname || "…"})
           </label>
           <Input
@@ -92,8 +92,8 @@ export function RebootPage() {
             required
           />
         </div>
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
-        <div className="flex justify-end border-t border-[var(--color-border)] pt-3">
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
+        <div className="flex justify-end border-t border-(--color-border) pt-3">
           <Button type="submit" variant="destructive" className="h-9 px-4" disabled={busy}>
             {busy ? "…" : "Değişiklikleri Önizle"}
           </Button>

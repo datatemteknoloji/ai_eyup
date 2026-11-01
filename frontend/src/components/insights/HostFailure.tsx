@@ -131,7 +131,7 @@ export function HostFailureResult({ res }: { res: any }) {
       {res.memory && <MemoryCompare res={res} />}
       {res.cpu && <CpuBlock cpu={res.cpu} />}
       {unplaced.length > 0 && (
-        <div className="rounded border border-red-500/30 bg-red-500/5 p-2 text-xs space-y-1" data-testid="hf-unplaced">
+        <div className="rounded-sm border border-red-500/30 bg-red-500/5 p-2 text-xs space-y-1" data-testid="hf-unplaced">
           <div className="text-red-300 font-medium">{t('vi_hf_unplaced', { n: unplaced.length })}</div>
           {unplaced.map(u => (
             <div key={u.vm} className="font-mono text-slate-300">
@@ -200,7 +200,7 @@ export function HostFailureMatrix({ mat, onOpen, active, selected, onToggle }:
   return (
     <div className="space-y-2" data-testid="hf-matrix">
       {mat.single_host && (
-        <div className="rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300" data-testid="hf-single-host">
+        <div className="rounded-sm border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300" data-testid="hf-single-host">
           {t('vi_hf_no_remaining')}
         </div>
       )}
@@ -325,7 +325,7 @@ export default function HostFailure({ clusters, initialKey, initialHost }: { clu
       </div>
       <label className="flex flex-col gap-1 text-xs text-slate-400 max-w-md">{t('vi_scope_cluster')}
         <select data-testid="hf-cluster" value={key} onChange={e => setKey(e.target.value)}
-          className="rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white">
+          className="rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white">
           <option value="">{t('vi_hf_pick_cluster')}</option>
           {clusters.map(c => <option key={`${c.hypervisor_id}:${c.cluster}`} value={`${c.hypervisor_id}:${c.cluster}`}>{c.cluster} · {c.hypervisor}</option>)}
         </select>
@@ -339,7 +339,7 @@ export default function HostFailure({ clusters, initialKey, initialHost }: { clu
           onOpen={h => (detail && detail.hosts.length === 1 && detail.hosts[0] === h) ? setDetail(null) : void open(t('vi_hf_detail_one', { host: h }), [h])} />
       )}
       {sel && chipHosts.length > 0 && (
-        <div className="space-y-2 rounded border border-white/[0.06] p-3" data-testid="hf-multi">
+        <div className="space-y-2 rounded-sm border border-white/[0.06] p-3" data-testid="hf-multi">
           <div className="flex flex-wrap items-center gap-2" data-testid="hf-host-chips">
             <span className="text-xs text-slate-400 inline-flex items-center">{t('vi_hf_down_hosts')}<TermHint k="hf_hosts" /></span>
             {chipHosts.map(h => (
@@ -351,7 +351,7 @@ export default function HostFailure({ clusters, initialKey, initialHost }: { clu
           <div className="flex flex-wrap items-center gap-3">
             <button type="button" data-testid="hf-run-selected" disabled={noneSelected}
               onClick={() => void open(t('vi_hf_detail_multi', { n: hosts.length }), hosts)}
-              className="rounded border border-blue-500/40 bg-blue-600/10 px-3 py-1.5 text-xs font-medium text-blue-200 hover:bg-blue-600/20 disabled:opacity-40 disabled:cursor-not-allowed">
+              className="rounded-sm border border-blue-500/40 bg-blue-600/10 px-3 py-1.5 text-xs font-medium text-blue-200 hover:bg-blue-600/20 disabled:opacity-40 disabled:cursor-not-allowed">
               {t('vi_hf_run_selected')}
             </button>
             {noneSelected && <span className="text-xs text-amber-300" data-testid="hf-select-warning">{t('vi_hf_select_warn')}</span>}
@@ -359,7 +359,7 @@ export default function HostFailure({ clusters, initialKey, initialHost }: { clu
         </div>
       )}
       {detail && (
-        <div className="rounded border border-white/[0.08] p-3 space-y-2" data-testid="hf-detail">
+        <div className="rounded-sm border border-white/[0.08] p-3 space-y-2" data-testid="hf-detail">
           <div className="text-xs font-medium text-slate-300">{detail.title}</div>
           {detail.busy && <div className="text-xs text-slate-500">{t('vi_hf_matrix_busy')}</div>}
           {detail.err && <div className="text-red-300 text-xs">{detail.err}</div>}

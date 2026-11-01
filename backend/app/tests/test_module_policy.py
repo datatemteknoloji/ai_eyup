@@ -142,6 +142,16 @@ def test_executive_sees_only_its_own_page_and_chat():
     assert not _d(modules=("linux",), path="/api/v1/ops/executive-summary").allowed
 
 
+def test_executive_reports_only_for_executive():
+    p = "/api/v1/executive-reports/catalog"
+    assert _d(modules=("executive",), path=p).allowed
+    assert _d(modules=("executive",), method="POST", path="/api/v1/executive-reports/generate").allowed
+    for mods in (("linux",), ("openshift",), ("virtualization", "exadata"), ("windows",)):
+        assert not _d(modules=mods, path=p).allowed, mods
+    # yönetici OpenShift ekip raporlarını platform-reports üzerinden okuyamaz
+    assert not _d(modules=("executive",), path="/api/v1/platform-reports/openshift/catalog").allowed
+
+
 def test_monitoring_module_gets_everything_on_its_hub_but_nothing_else():
     mon = ("monitoring",)
     hub = [
@@ -229,6 +239,15 @@ def test_mcp_admin_only():
 
 def test_min_role_for_no_rule():
     assert min_role_for("GET", "/servers/") is None
+
+
+def test_server_edit_requires_operator():
+    """Linux sunucu düzenleme (PUT /servers/{id}) en az operatör; okuma ve listeleme etkilenmez."""
+    assert min_role_for("PUT", "/api/v1/servers/12") == "operator"
+    assert not _d(role="viewer", modules=("linux",), path="/api/v1/servers/12", method="PUT").allowed
+    assert _d(role="operator", modules=("linux",), path="/api/v1/servers/12", method="PUT").allowed
+    assert _d(role="viewer", modules=("linux",), path="/api/v1/servers/12", method="GET").allowed
+    assert min_role_for("PUT", "/api/v1/servers/12/other") is None
 
 
 def test_unclassified_path_is_admin_only():

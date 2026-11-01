@@ -1,19 +1,4 @@
-/** OS pretty-name kısaltma + ikon anahtarı (offline UI). */
-
-export type OsIconKey =
-  | 'rhel'
-  | 'oracle'
-  | 'centos'
-  | 'rocky'
-  | 'alma'
-  | 'ubuntu'
-  | 'debian'
-  | 'suse'
-  | 'fedora'
-  | 'windows'
-  | 'vmware'
-  | 'linux'
-  | 'unknown'
+/** OS sınıflandırma (logo türü) + pretty-name kısaltma (offline UI). Tek kaynak: resolveOsLogoKind. */
 
 export type OsLabelInput = {
   os_type?: string | null
@@ -94,8 +79,11 @@ export function normalizeGuestOs(raw: string): string {
     const v = compact.match(/(\d+(?:\.\d+)*)/)
     return v ? `Fedora ${v[1]}` : 'Fedora'
   }
-  if (/^windows/i.test(compact) || /^win/i.test(compact)) {
-    return compact.replace(/_/g, ' ')
+  if (/^windows/i.test(compact) || /^win\d/i.test(compact)) {
+    // windows_2019x64 / windows2019srv_64Guest → "Windows Server 2019"
+    const y = compact.match(/^windows\s?(20\d{2})/i)
+    if (y) return `Windows Server ${y[1]}`
+    return compact.replace(/^windows/i, 'Windows')
   }
 
   // RHEL_9_64 tarzı tek token
@@ -121,9 +109,87 @@ export function normalizeGuestOs(raw: string): string {
   return cleanPretty(compact)
 }
 
+// ── Sınıflandırma (logo türü) ────────────────────────────────────────────────
+
+export type LogoKind =
+  | 'windows'
+  | 'suse'
+  | 'oracle'
+  | 'redhat'
+  | 'rhcos'
+  | 'centos'
+  | 'rocky'
+  | 'almalinux'
+  | 'fedora'
+  | 'ubuntu'
+  | 'debian'
+  | 'vmware'
+  | 'linux'
+
+/**
+ * Tek metin → logo türü. Kural sırası önemlidir (ör. "CoreOS" RHEL'den, "Oracle Linux" generic linux'tan önce).
+ * Kısa ID'ler (ol, alma) yalnızca bağımsız token olarak eşlenir: "protocol", "tall" yanlış eşleşmez.
+ * 'linux' genel (generic) sonuçtur — daha spesifik bir kaynak varsa o kazanır (bkz. resolveOsLogoKind).
+ */
+function kindFromText(raw: string): LogoKind | null {
+  const t = (raw || '').toLowerCase()
+  if (!t.trim()) return null
+  // windows | win10 | win2019 — "darwin", "twin" eşleşmez
+  if (/(?:^|[^a-z])win(?:dows|\d)/.test(t)) return 'windows'
+  if (/vcenter|vcsa|vsphere|vmware|photon|(?:^|[^a-z])esxi?(?:[^a-z]|$)/.test(t)) return 'vmware'
+  if (/coreos|rhcos/.test(t)) return 'rhcos'
+  if (t.includes('ubuntu')) return 'ubuntu'
+  if (t.includes('debian')) return 'debian'
+  if (/suse|sles|(?:^|[^a-z])sled(?:[^a-z]|$)/.test(t)) return 'suse'
+  if (/oracle|(?:^|[^a-z])ol(?:[^a-z]|$)/.test(t)) return 'oracle'
+  if (/almalinux|(?:^|[^a-z])alma(?:[^a-z]|$)/.test(t)) return 'almalinux'
+  if (t.includes('rocky')) return 'rocky'
+  if (t.includes('centos')) return 'centos'
+  if (t.includes('fedora')) return 'fedora'
+  if (/red\s?hat|rhel/.test(t)) return 'redhat'
+  if (t.includes('linux')) return 'linux'
+  return null
+}
+
+function field(v: string | null | undefined): string {
+  return (v || '').trim()
+}
+
+/**
+ * Logo türü — tek sınıflandırma (ikon + etiket buradan beslenir).
+ *
+ * Öncelik: os_release_id > os_type / os_pretty / os_version > vm_guest_os_full > (en son) name / vm_name.
+ * Her katman kendi içinde değerlendirilir; ilk SPESİFİK sonuç kazanır. 'linux' (linuxGuest, "Linux 9.7")
+ * generic sayılır ve daha düşük katmanlarda spesifik sonuç aranır; hiçbiri yoksa 'linux' döner.
+ * Böylece adında "ubuntu" geçen ama OS'u RHEL olan sunucu RHEL ikonu alır.
+ */
+export function resolveOsLogoKind(os: OsLabelInput | string): LogoKind | null {
+  if (typeof os === 'string') return kindFromText(os)
+
+  const tiers = [
+    field(os.os_release_id),
+    [os.os_type, os.os_pretty, os.os_version].map(field).filter(Boolean).join(' '),
+    field(os.vm_guest_os_full),
+    [os.name, os.vm_name].map(field).filter(Boolean).join(' '),
+  ]
+  let generic: LogoKind | null = null
+  for (const text of tiers) {
+    const k = kindFromText(text)
+    if (!k) continue
+    if (k === 'linux') {
+      generic = 'linux'
+      continue
+    }
+    return k
+  }
+  return generic
+}
+
+// ── Etiket ───────────────────────────────────────────────────────────────────
+
 function bestPretty(s: OsLabelInput): string {
   // SSH PRETTY_NAME (os_version) hypervisor guest id'den önce — minor sürüm burada.
-  const candidates = [s.os_pretty, s.os_version, s.vm_guest_os_full]
+  const candidates = [s.os_pretty, s.os_version, s.os_type, s.vm_guest_os_full]
   let best = ''
   for (const c of candidates) {
     const n = normalizeGuestOs(c || '')
@@ -140,9 +206,9 @@ function bestPretty(s: OsLabelInput): string {
   if (best) return best
   if (s.vm_guest_os_full) {
     const n = normalizeGuestOs(s.vm_guest_os_full)
-    if (n) return n
+    if (n && !GENERIC_OS.has(n.toLowerCase().replace(/\s+/g, ''))) return n
   }
-  return cleanPretty(s.os_pretty || s.os_version || '')
+  return ''
 }
 
 function versionOf(s: OsLabelInput, pretty: string): string {
@@ -153,97 +219,60 @@ function versionOf(s: OsLabelInput, pretty: string): string {
   return m ? m[1] : ''
 }
 
-function idHint(s: OsLabelInput, prettyLower: string): string {
-  const rawId = (s.os_release_id || s.os_type || '').toLowerCase().replace(/\s+/g, '')
-  // Generic LINUX / linuxGuest → pretty / guest id'den çıkar
-  if (rawId && !GENERIC_OS.has(rawId) && rawId !== 'linuxguest') {
-    if (rawId.includes('rhel') || rawId === 'redhat') return 'rhel'
-    if (rawId === 'ol' || rawId.includes('oracle')) return 'ol'
-    if (rawId.includes('rocky')) return 'rocky'
-    if (rawId.includes('alma')) return 'almalinux'
-    if (rawId.includes('centos')) return 'centos'
-    if (rawId.includes('ubuntu')) return 'ubuntu'
-    if (rawId.includes('debian')) return 'debian'
-    if (
-      rawId.includes('vcenter') ||
-      rawId.includes('vcsa') ||
-      rawId.includes('vsphere') ||
-      rawId.includes('vmware') ||
-      rawId.includes('photon')
-    ) {
-      return 'vmware'
-    }
-    if (rawId.includes('suse') || rawId.includes('sles')) return 'sles'
-    if (rawId.includes('fedora')) return 'fedora'
-    if (rawId.includes('win')) return 'windows'
-    return rawId
-  }
-
-  const guest = `${s.vm_guest_os_full || ''} ${prettyLower} ${s.name || ''} ${s.vm_name || ''}`.toLowerCase()
-  if (
-    guest.includes('vcenter') ||
-    guest.includes('vcsa') ||
-    guest.includes('vsphere') ||
-    guest.includes('vmware') ||
-    guest.includes('photon')
-  ) {
-    return 'vmware'
-  }
-  if (guest.includes('oracle') || /\bol[_\s-]?\d/.test(guest) || guest.startsWith('ol_')) return 'ol'
-  if (guest.includes('red hat') || guest.includes('rhel') || /rhel[_\s-]?\d/i.test(guest)) return 'rhel'
-  if (guest.includes('rocky')) return 'rocky'
-  if (guest.includes('alma')) return 'almalinux'
-  if (guest.includes('centos')) return 'centos'
-  if (guest.includes('ubuntu')) return 'ubuntu'
-  if (guest.includes('debian')) return 'debian'
-  if (guest.includes('suse') || guest.includes('sles')) return 'sles'
-  if (guest.includes('fedora')) return 'fedora'
-  if (guest.includes('windows') || guest.includes('win')) return 'windows'
-  if (prettyLower.includes('linux') || rawId.includes('linux')) return 'linux'
-  return ''
+function windowsLabel(pretty: string): string {
+  const p = pretty || ''
+  if (/windows\s*11/i.test(p)) return 'Windows 11'
+  if (/windows\s*10/i.test(p)) return 'Windows 10'
+  const server = p.match(/server\s*(20\d{2})/i) || p.match(/windows\s*(20\d{2})/i)
+  if (server) return `Windows Server ${server[1]}`
+  if (/server/i.test(p)) return 'Windows Server'
+  return 'Windows'
 }
 
-/** Kısa etiket — tablo hücreleri için. */
+/** Kısa etiket — tablo hücreleri için. Anlamlı OS yoksa "—". */
 export function shortenOsLabel(s: OsLabelInput): string {
   const pretty = bestPretty(s)
-  const prettyLower = pretty.toLowerCase()
-  const id = idHint(s, prettyLower)
+  const kind = resolveOsLogoKind(s)
   const ver = versionOf(s, pretty)
-
-  if (id.includes('win') || prettyLower.includes('windows')) {
-    if (/server\s*202[25]/i.test(pretty)) return ver ? `Win Server ${ver}` : 'Win Server'
-    if (/server\s*2019/i.test(pretty)) return 'Win Server 2019'
-    if (/server\s*2016/i.test(pretty)) return 'Win Server 2016'
-    if (/windows\s*11/i.test(pretty)) return 'Windows 11'
-    if (/windows\s*10/i.test(pretty)) return 'Windows 10'
-    return ver ? `Windows ${ver}` : (pretty || 'Windows')
-  }
-
   const withVer = (name: string) => (ver ? `${name} ${ver}` : name)
+  const lower = pretty.toLowerCase()
 
-  if (id === 'rhel' || id === 'redhat' || prettyLower.includes('red hat enterprise') || /^rhel\b/i.test(pretty)) {
-    return withVer('RHEL')
-  }
-  if (id === 'ol' || id === 'oracle' || prettyLower.includes('oracle linux')) {
-    if (/server/i.test(pretty)) return withVer('Oracle Linux S')
-    return withVer('Oracle Linux')
-  }
-  if (id === 'centos' || prettyLower.includes('centos')) return withVer('CentOS')
-  if (id === 'rocky' || prettyLower.includes('rocky')) return withVer('Rocky')
-  if (id === 'almalinux' || id === 'alma' || prettyLower.includes('alma')) return withVer('AlmaLinux')
-  if (id === 'ubuntu' || prettyLower.includes('ubuntu')) return withVer('Ubuntu')
-  if (id === 'debian' || prettyLower.includes('debian')) return withVer('Debian')
-  if (id === 'vmware' || prettyLower.includes('photon')) {
-    if (/vcenter|vcsa/i.test(`${pretty} ${s.name || ''} ${s.vm_name || ''}`)) return 'vCenter'
-    if (/photon/i.test(pretty)) return withVer('Photon OS')
-    return 'VMware'
-  }
-  if (id === 'sles' || id === 'opensuse' || prettyLower.includes('suse')) return withVer('SLES')
-  if (id === 'fedora' || prettyLower.includes('fedora')) return withVer('Fedora')
-
-  // Generic linux aile — guest id yoksa
-  if (id === 'linux' || prettyLower === 'linux' || prettyLower === 'linuxguest') {
-    return 'Linux'
+  switch (kind) {
+    case 'windows':
+      return windowsLabel(pretty)
+    case 'vmware':
+      if (/vcenter|vcsa/i.test(`${pretty} ${s.name || ''} ${s.vm_name || ''}`)) return 'vCenter'
+      if (/photon/i.test(`${pretty} ${s.os_release_id || ''}`)) return withVer('Photon OS')
+      return 'VMware'
+    case 'redhat':
+      return withVer('RHEL')
+    case 'rhcos':
+      return withVer(lower.includes('fedora') ? 'Fedora CoreOS' : 'RHCOS')
+    case 'oracle':
+      // "Oracle Linux Server 8.9" → "Oracle Linux 8.9" (Server kelimesi atılır, kesilmez)
+      return withVer('Oracle Linux')
+    case 'centos':
+      return withVer(/stream/i.test(pretty) ? 'CentOS Stream' : 'CentOS')
+    case 'rocky':
+      return withVer('Rocky')
+    case 'almalinux':
+      return withVer('AlmaLinux')
+    case 'fedora':
+      return withVer('Fedora')
+    case 'ubuntu':
+      return withVer('Ubuntu')
+    case 'debian':
+      return withVer('Debian')
+    case 'suse': {
+      const sp = pretty.match(/\bSP\s?(\d+)\b/i)
+      const base = /opensuse/i.test(`${pretty} ${s.os_release_id || ''} ${s.os_type || ''}`) ? 'openSUSE' : 'SLES'
+      const v = withVer(base)
+      return sp ? `${v} SP${sp[1]}` : v
+    }
+    case 'linux':
+      return pretty ? withVer('Linux') : 'Linux'
+    default:
+      break
   }
 
   if (pretty) {
@@ -251,9 +280,7 @@ export function shortenOsLabel(s: OsLabelInput): string {
     const head = parts.slice(0, 2).join(' ')
     return ver && !head.includes(ver) ? `${head} ${ver}` : head
   }
-  const ot = (s.os_type || '').toString()
-  if (GENERIC_OS.has(ot.toLowerCase().replace(/\s+/g, ''))) return '—'
-  return ot || '—'
+  return '—'
 }
 
 /** Hover / title için tam metin. */
@@ -267,39 +294,8 @@ export function fullOsLabel(s: OsLabelInput): string {
     }
     return pretty
   }
-  const guest = (s.vm_guest_os_full || '').trim()
-  if (guest) return guest
   const short = shortenOsLabel(s)
   return short === '—' ? '' : short
-}
-
-export function osIconKey(s: OsLabelInput): OsIconKey {
-  const pretty = bestPretty(s).toLowerCase()
-  const id = idHint(s, pretty)
-  const guest = (s.vm_guest_os_full || '').toLowerCase()
-  const blob = `${id} ${pretty} ${guest} ${s.name || ''} ${s.vm_name || ''}`.toLowerCase()
-  if (blob.includes('win')) return 'windows'
-  if (
-    id === 'vmware' ||
-    blob.includes('vcenter') ||
-    blob.includes('vcsa') ||
-    blob.includes('vsphere') ||
-    blob.includes('vmware') ||
-    blob.includes('photon')
-  ) {
-    return 'vmware'
-  }
-  if (id === 'rhel' || id === 'redhat' || blob.includes('rhel') || blob.includes('red hat')) return 'rhel'
-  if (id === 'ol' || id === 'oracle' || blob.includes('oracle')) return 'oracle'
-  if (id === 'centos' || blob.includes('centos')) return 'centos'
-  if (id === 'rocky' || blob.includes('rocky')) return 'rocky'
-  if (id === 'almalinux' || id === 'alma' || blob.includes('alma')) return 'alma'
-  if (id === 'ubuntu' || blob.includes('ubuntu')) return 'ubuntu'
-  if (id === 'debian' || blob.includes('debian')) return 'debian'
-  if (id === 'sles' || id === 'opensuse' || blob.includes('suse')) return 'suse'
-  if (id === 'fedora' || blob.includes('fedora')) return 'fedora'
-  if (id === 'linux' || blob.includes('linux')) return 'linux'
-  return 'unknown'
 }
 
 export function serverTypeLabel(serverType?: string | null): string {

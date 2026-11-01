@@ -13,7 +13,7 @@ type Stat = { label: string; value: string | number; icon: React.ReactNode }
 function StatsRow({ stats }: { stats: Stat[] }) {
   if (!stats.length) return null
   return (
-    <div className="flex items-center gap-3 px-4 py-2 bg-slate-800/50 border-b border-slate-700/50 text-xs text-slate-400 overflow-x-auto flex-shrink-0">
+    <div className="flex items-center gap-3 px-3 py-1 bg-slate-800/50 border-b border-slate-700/50 text-[11px] text-slate-400 overflow-x-auto shrink-0">
       {stats.map(s => (
         <div key={s.label} className="flex items-center gap-1.5 whitespace-nowrap">
           <span className="text-slate-500">{s.icon}</span>

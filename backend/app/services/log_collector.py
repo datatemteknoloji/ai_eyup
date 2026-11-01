@@ -12,6 +12,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.models.server import Server
@@ -317,7 +318,7 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], sin
     # norm_key -> event id mapping
     existing_map: dict = {_normalize_for_dedup(e[1])[:120]: e[0] for e in existing_rows}
 
-    now = datetime.utcnow()
+    now = utc_now()
     saved = 0
     updated_ids: set = set()
     log_count_in_window: Optional[int] = None
@@ -390,7 +391,7 @@ def save_logs_to_db(db: Session, server: Server, logs: List[Dict[str, Any]], sin
     # Critical/emergency log eventler -> otomatik incident
     if saved > 0:
         # commit sonrası oluşan eventleri bul ve auto-incident kontrol et
-        since_batch = datetime.utcnow() - timedelta(seconds=5)
+        since_batch = utc_now() - timedelta(seconds=5)
         new_events = db.query(SystemEvent).filter(
             SystemEvent.server_id == server.id,
             SystemEvent.created_at >= since_batch,

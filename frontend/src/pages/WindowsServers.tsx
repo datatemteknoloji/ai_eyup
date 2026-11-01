@@ -9,7 +9,12 @@ import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobM
 import { OsIcon } from '../components/OsIcon'
 import { fullOsLabel, shortenOsLabel, serverTypeLabel } from '../lib/osLabel'
 import { useT } from '../i18n/LocaleProvider'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
+import { useHypervisorSelection } from '../hooks/useHypervisorSelection'
+import { HypervisorFilter } from '../components/HypervisorFilter'
 import HwServerCard from '../components/hardware/HwServerCard'
+import HwHostLogsCard from '../components/hardware/HwHostLogsCard'
+import HwBadge from '../components/hardware/HwBadge'
 
 const WIN_API = `${API_BASE_URL}/windows`
 
@@ -123,7 +128,7 @@ const EventLogPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
         <select
           value={logLevel}
           onChange={e => setLogLevel(Number(e.target.value))}
-          className="bg-slate-700 border border-slate-600 rounded-lg text-xs text-slate-200 px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="bg-slate-700 border border-slate-600 rounded-lg text-xs text-slate-200 px-2 py-1.5 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
           title={t('win_level_filter')}
         >
           <option value={4}>{t('win_level_all')}</option>
@@ -223,7 +228,7 @@ const UpdatesPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
             {(updatesQ.data.pending || []).map((u: UpdateItem, i: number) => (
               <div key={i} className="bg-slate-700/40 rounded-lg px-3 py-2">
                 <div className="flex items-start gap-2">
-                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded mt-0.5 flex-shrink-0 ${
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-sm mt-0.5 shrink-0 ${
                     u.Severity === 'Critical' ? 'bg-red-500/20 text-red-400' :
                     u.Severity === 'Important' ? 'bg-orange-500/20 text-orange-400' :
                     'bg-slate-600 text-slate-400'
@@ -242,11 +247,11 @@ const UpdatesPanel: React.FC<{ server: WindowsServer }> = ({ server }) => {
               <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">{t('win_recent_updates')}</h4>
               <div className="space-y-1 max-h-40 overflow-y-auto">
                 {updatesQ.data.installed.map((u: any, i: number) => (
-                  <div key={i} className="flex items-center gap-2 text-xs text-slate-400 bg-slate-700/30 rounded px-2 py-1">
-                    <CheckCircle size={11} className="text-green-400 flex-shrink-0" />
+                  <div key={i} className="flex items-center gap-2 text-xs text-slate-400 bg-slate-700/30 rounded-sm px-2 py-1">
+                    <CheckCircle size={11} className="text-green-400 shrink-0" />
                     <span className="font-mono">{u.HotFixID}</span>
                     <span className="flex-1 truncate">{u.Description}</span>
-                    <span className="text-slate-500 flex-shrink-0">{u.InstalledOn}</span>
+                    <span className="text-slate-500 shrink-0">{u.InstalledOn}</span>
                   </div>
                 ))}
               </div>
@@ -290,7 +295,7 @@ const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> 
   const hasIp = !!(server.ip_address || form.ip_address.trim())
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
       <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-5">
           <div>
@@ -309,30 +314,30 @@ const CredentialModal: React.FC<{ server: WindowsServer; onClose: () => void }> 
             <input
               value={form.ip_address}
               onChange={e => setForm(f => ({ ...f, ip_address: e.target.value }))}
-              className={`w-full bg-slate-700 border rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono ${!hasIp ? 'border-amber-500/60' : 'border-slate-600'}`}
+              className={`w-full bg-slate-700 border rounded-lg px-3 py-2 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-mono ${!hasIp ? 'border-amber-500/60' : 'border-slate-600'}`}
               placeholder="192.168.1.x" />
           </div>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">{t('win_username')}</label>
             <input value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-              className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500"
               placeholder="Administrator" />
           </div>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">{t('win_password')}</label>
             <input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-              className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500"
               placeholder="••••••••" />
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="text-xs text-slate-400 mb-1 block">WinRM Port</label>
               <input type="number" value={form.port} onChange={e => setForm(f => ({ ...f, port: Number(e.target.value) }))}
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
             </div>
             <div className="flex items-end pb-2 gap-2">
               <input type="checkbox" id="https" checked={form.use_https} onChange={e => setForm(f => ({ ...f, use_https: e.target.checked }))}
-                className="w-4 h-4 rounded" />
+                className="w-4 h-4 rounded-sm" />
               <label htmlFor="https" className="text-xs text-slate-300">HTTPS</label>
             </div>
           </div>
@@ -433,7 +438,7 @@ const ServerDetail: React.FC<{
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="flex-1 bg-black/50 backdrop-blur-xs" onClick={onClose} />
       <div className="w-full max-w-2xl bg-slate-800 border-l border-slate-700 flex flex-col shadow-2xl">
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-700">
@@ -477,6 +482,10 @@ const ServerDetail: React.FC<{
           {/* Donanım (Dell OME / HPE OneView) — entegrasyon/eşleşme/yetki yoksa render edilmez */}
           {tab === 'info' && (server.server_type || '').toUpperCase() !== 'VIRTUAL' && (
             <div className="mb-4"><HwServerCard kind="server" id={server.id} /></div>
+          )}
+          {/* Host donanım günlükleri (WHEA/disk/güç) — kayıt yoksa render edilmez */}
+          {tab === 'info' && (server.server_type || '').toUpperCase() !== 'VIRTUAL' && (
+            <div className="mb-4"><HwHostLogsCard kind="server" id={server.id} /></div>
           )}
 
           {/* Info Tab */}
@@ -566,7 +575,7 @@ const ServerDetail: React.FC<{
               <div className="relative">
                 <Search size={14} className="absolute left-3 top-2.5 text-slate-500" />
                 <input value={serviceSearch} onChange={e => setServiceSearch(e.target.value)}
-                  placeholder={t('win_search_service')} className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  placeholder={t('win_search_service')} className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
               </div>
               {servicesQ.isPending && <p className="text-slate-400 text-sm">{t('win_services_loading')}</p>}
               <div className="space-y-1 max-h-[500px] overflow-y-auto">
@@ -574,7 +583,7 @@ const ServerDetail: React.FC<{
                   const running = svc.Status?.toLowerCase() === 'running' || svc.Status === '4'
                   return (
                     <div key={svc.Name} className="flex items-center gap-3 bg-slate-700/40 rounded-lg px-3 py-2 hover:bg-slate-700/60">
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${running ? 'bg-green-400' : 'bg-slate-500'}`} />
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${running ? 'bg-green-400' : 'bg-slate-500'}`} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm text-white truncate">{svc.DisplayName}</div>
                         <div className="text-xs text-slate-500 font-mono">{svc.Name}</div>
@@ -583,18 +592,18 @@ const ServerDetail: React.FC<{
                       <div className="flex gap-1">
                         {!running && (
                           <button onClick={() => svcAction.mutate({ name: svc.Name, action: 'start' })}
-                            className="p-1 rounded hover:bg-green-500/20 text-green-400" title={t('win_start')}>
+                            className="p-1 rounded-sm hover:bg-green-500/20 text-green-400" title={t('win_start')}>
                             <Play size={12} />
                           </button>
                         )}
                         {running && (
                           <>
                             <button onClick={() => svcAction.mutate({ name: svc.Name, action: 'restart' })}
-                              className="p-1 rounded hover:bg-blue-500/20 text-blue-400" title={t('win_restart')}>
+                              className="p-1 rounded-sm hover:bg-blue-500/20 text-blue-400" title={t('win_restart')}>
                               <RotateCcw size={12} />
                             </button>
                             <button onClick={() => svcAction.mutate({ name: svc.Name, action: 'stop' })}
-                              className="p-1 rounded hover:bg-red-500/20 text-red-400" title="Durdur">
+                              className="p-1 rounded-sm hover:bg-red-500/20 text-red-400" title="Durdur">
                               <Square size={12} />
                             </button>
                           </>
@@ -742,7 +751,7 @@ const WinRmAiReadyButton: React.FC<{ onDone: () => void }> = ({ onDone }) => {
       >
         {loading ? (
           <>
-            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin shrink-0" />
             {t('starting')}
           </>
         ) : result ? (
@@ -808,11 +817,11 @@ const FocusedServerView: React.FC<{
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3 bg-slate-800 border border-slate-700 rounded-xl p-3">
-        <span className="text-xs text-slate-400 font-medium flex-shrink-0">{t('win_pick_server')}</span>
+        <span className="text-xs text-slate-400 font-medium shrink-0">{t('win_pick_server')}</span>
         <select
           value={selectedId ?? ''}
           onChange={e => setSelectedId(Number(e.target.value))}
-          className="bg-slate-700 border border-slate-600 rounded-lg text-sm text-white px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="bg-slate-700 border border-slate-600 rounded-lg text-sm text-white px-3 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
         >
           {configured.map(s => (
             <option key={s.id} value={s.id}>{s.name} ({s.ip_address || s.hostname || '—'})</option>
@@ -824,7 +833,7 @@ const FocusedServerView: React.FC<{
             <XCircle size={9} /> {t('win_ai_ready_conn_issue')}
           </span>
         )}
-        <Link to="/windows" className="ml-auto text-xs text-blue-400 hover:underline flex-shrink-0">
+        <Link to="/windows" className="ml-auto text-xs text-blue-400 hover:underline shrink-0">
           {t('win_all_servers')}
         </Link>
       </div>
@@ -885,7 +894,7 @@ const WindowsExporterInstallAllButton: React.FC<{ onDone: () => void; onJobStart
       >
         {loading ? (
           <>
-            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin shrink-0" />
             {t('starting')}
           </>
         ) : result ? (
@@ -915,14 +924,18 @@ const WindowsServers: React.FC = () => {
   const [selected, setSelected] = useState<WindowsServer | null>(null)
   const [credServer, setCredServer] = useState<WindowsServer | null>(null)
   const [search, setSearch] = useState('')
+  const debouncedSearch = useDebouncedValue(search.trim(), 300)
   const [page, setPage] = useState(1)
   const pageSize = 50
   const [showUnclassified, setShowUnclassified] = useState(false)
-  const [hvFilter, setHvFilter] = useState('all')
+  // Ortam (hypervisor) filtresi — seçim localStorage'da (platform=windows)
+  const hv = useHypervisorSelection('windows')
+  const hvKey = `${hv.ids.join(',')}|${hv.unassigned ? 1 : 0}`
   const [pageBulkJobId, setPageBulkJobId] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
-  useEffect(() => { setPage(1) }, [search, showUnclassified, hvFilter])
+  // Arama 300 ms debounce; debounce'lu değer değişince ilk sayfaya dön
+  useEffect(() => { setPage(1) }, [debouncedSearch, showUnclassified, hvKey])
 
   useEffect(() => {
     let cancelled = false
@@ -937,17 +950,16 @@ const WindowsServers: React.FC = () => {
   }, [pageBulkJobId])
 
   const { data: serversPage, isLoading, refetch } = useQuery({
-    queryKey: ['windows-servers', showUnclassified, page, pageSize, search, hvFilter],
+    queryKey: ['windows-servers', showUnclassified, page, pageSize, debouncedSearch, hvKey],
     queryFn: async () => {
       const sp = new URLSearchParams({
         include_unclassified: String(showUnclassified),
         page: String(page),
         page_size: String(pageSize),
       })
-      if (search.trim()) sp.set('q', search.trim())
-      if (hvFilter === 'physical') sp.set('unassigned_hypervisor', 'true')
-      else if (hvFilter.startsWith('type:')) sp.set('hypervisor_type', hvFilter.slice(5))
-      else if (hvFilter.startsWith('hv:')) sp.set('hypervisor_id', hvFilter.slice(3))
+      if (debouncedSearch) sp.set('q', debouncedSearch)
+      if (hv.ids.length) sp.set('hypervisor_ids', hv.ids.join(','))
+      if (hv.unassigned) sp.set('unassigned_hypervisor', 'true')
       const r = await fetch(`${WIN_API}/servers?${sp}`)
       if (!r.ok) throw new Error('Yüklenemedi')
       const data = await r.json()
@@ -960,12 +972,11 @@ const WindowsServers: React.FC = () => {
   })
 
   const { data: winSummary } = useQuery({
-    queryKey: ['windows-servers-summary', showUnclassified, hvFilter],
+    queryKey: ['windows-servers-summary', showUnclassified, hvKey],
     queryFn: async () => {
       const sp = new URLSearchParams({ include_unclassified: String(showUnclassified) })
-      if (hvFilter === 'physical') sp.set('unassigned_hypervisor', 'true')
-      else if (hvFilter.startsWith('type:')) sp.set('hypervisor_type', hvFilter.slice(5))
-      else if (hvFilter.startsWith('hv:')) sp.set('hypervisor_id', hvFilter.slice(3))
+      if (hv.ids.length) sp.set('hypervisor_ids', hv.ids.join(','))
+      if (hv.unassigned) sp.set('unassigned_hypervisor', 'true')
       const r = await fetch(`${WIN_API}/servers/summary?${sp}`)
       if (!r.ok) return null
       return r.json() as Promise<{
@@ -976,16 +987,6 @@ const WindowsServers: React.FC = () => {
     refetchInterval: 60_000,
   })
 
-  const { data: hvList } = useQuery({
-    queryKey: ['hypervisors', 'windows-filter'],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/hypervisors/`)
-      if (!r.ok) return [] as Array<{ id: number; name: string; type?: string }>
-      const data = await r.json()
-      return Array.isArray(data) ? data : []
-    },
-    staleTime: 60_000,
-  })
   const servers = serversPage?.items ?? []
   const totalServers = serversPage?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(totalServers / pageSize))
@@ -1044,7 +1045,7 @@ const WindowsServers: React.FC = () => {
                 onClick={() => setShowUnclassified(v => !v)}
                 className={`relative w-9 h-5 rounded-full transition-colors ${showUnclassified ? 'bg-blue-600' : 'bg-slate-600'}`}
               >
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${showUnclassified ? 'translate-x-4' : ''}`} />
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${showUnclassified ? 'translate-x-4' : ''}`} />
               </div>
               <span className="text-xs text-slate-400">{t('win_unclassified_vms')}</span>
             </label>
@@ -1090,7 +1091,7 @@ const WindowsServers: React.FC = () => {
       {/* Unclassified notice */}
       {showUnclassified && unclassified.length > 0 && (
         <div className="flex items-start gap-3 p-4 bg-amber-500/8 border border-amber-500/25 rounded-xl text-sm">
-          <Shield size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+          <Shield size={16} className="text-amber-400 mt-0.5 shrink-0" />
           <div>
             <span className="text-amber-300 font-medium">{unclassified.length} VM</span>
             <span className="text-amber-400/80">{t('win_unclassified_notice')}</span>
@@ -1098,32 +1099,20 @@ const WindowsServers: React.FC = () => {
         </div>
       )}
 
-      {/* Search */}
-      <div className="flex flex-wrap items-center gap-3">
-      <div className="relative max-w-xs">
-        <Search size={14} className="absolute left-3 top-2.5 text-slate-500" />
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder={t('win_search')} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-      </div>
-      <select
-        value={hvFilter}
-        onChange={e => setHvFilter(e.target.value)}
-        className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-      >
-        <option value="all">{t('filter_all_hypervisors')}</option>
-        <option value="physical">{t('filter_physical_hosts')}</option>
-        {(hvList || []).some((h: { type?: string }) => (h.type || '').toLowerCase() === 'kvm') && (
-          <option value="type:kvm">{t('filter_all_olvm')}</option>
-        )}
-        {(hvList || []).some((h: { type?: string }) => (h.type || '').toLowerCase() === 'vmware') && (
-          <option value="type:vmware">{t('filter_all_vcenter')}</option>
-        )}
-        {(hvList || []).map((h: { id: number; name: string; type?: string }) => (
-          <option key={h.id} value={`hv:${h.id}`}>
-            {h.name}{h.type ? ` (${h.type === 'kvm' ? 'OLVM/oVirt' : h.type})` : ''}
-          </option>
-        ))}
-      </select>
+      {/* Filtre çubuğu — flex-nowrap, her genişlikte tek satır */}
+      <div className="flex flex-nowrap items-center gap-2 w-full min-w-0" data-testid="windows-filter-bar">
+        <div className="relative flex-1 min-w-[160px] max-w-[288px]">
+          <Search size={14} className="absolute left-3 top-2.5 text-slate-500" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder={t('win_search')} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <HypervisorFilter
+          platform="windows"
+          selectedIds={hv.ids}
+          includeUnassigned={hv.unassigned}
+          onChange={hv.setSelection}
+          facetFilters={{ q: debouncedSearch || undefined, include_unclassified: showUnclassified }}
+        />
       </div>
 
       {/* Server List */}
@@ -1183,6 +1172,7 @@ const WindowsServers: React.FC = () => {
                     {(srv.server_type || '').toUpperCase() === 'PHYSICAL' ? t('type_physical')
                       : (srv.server_type || '').toUpperCase() === 'VIRTUAL' ? t('type_virtual')
                         : serverTypeLabel(srv.server_type)}
+                    {(srv.server_type || '').toUpperCase() !== 'VIRTUAL' && <div className="mt-1"><HwBadge kind="server" id={srv.id} /></div>}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap"><StatusBadge status={srv.status} /></td>
                   <td className="px-4 py-3 text-sm">

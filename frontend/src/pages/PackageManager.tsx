@@ -137,12 +137,12 @@ const ServerSelector = ({
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder={t('pkg_search_server')}
-          className="flex-1 min-w-[140px] bg-white/[0.07] text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+          className="flex-1 min-w-[140px] bg-white/[0.07] text-white text-sm px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
         />
         {/* AI Ready toggle */}
         <button
           onClick={() => setOnlyAiReady(!onlyAiReady)}
-          className={`flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors ${
+          className={`flex items-center gap-1 text-xs px-2 py-1 rounded-sm border transition-colors ${
             onlyAiReady
               ? 'bg-green-500/15 text-green-300 border-green-500/40'
               : 'bg-white/[0.07] text-slate-400 border-slate-600 hover:text-slate-200'
@@ -155,10 +155,10 @@ const ServerSelector = ({
 
       {/* Hızlı seçim */}
       <div className="bg-cyber-card/60 px-3 py-1.5 flex items-center gap-2 border-b border-white/[0.06]">
-        <button onClick={selectAiReady} className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('pkg_select_ai_ready')}</button>
-        <button onClick={selectOnline}  className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('pkg_select_online')}</button>
-        <button onClick={selectAll}     className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('filter_all')}</button>
-        <button onClick={clearAll}      className="text-xs text-slate-500 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded">{t('pkg_clear')}</button>
+        <button onClick={selectAiReady} className="text-xs text-green-400 hover:text-green-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded-sm">{t('pkg_select_ai_ready')}</button>
+        <button onClick={selectOnline}  className="text-xs text-blue-400 hover:text-blue-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded-sm">{t('pkg_select_online')}</button>
+        <button onClick={selectAll}     className="text-xs text-slate-400 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded-sm">{t('filter_all')}</button>
+        <button onClick={clearAll}      className="text-xs text-slate-500 hover:text-slate-300 px-2.5 py-1.5 hover:bg-white/[0.06] rounded-sm">{t('pkg_clear')}</button>
         <span className="text-xs text-slate-500 ml-auto">{t('selected_n', { n: selected.length })}</span>
       </div>
 
@@ -182,13 +182,13 @@ const ServerSelector = ({
               type="checkbox"
               checked={selected.includes(srv.id)}
               onChange={() => toggle(srv.id)}
-              className="accent-blue-500 w-4 h-4 flex-shrink-0"
+              className="accent-blue-500 w-4 h-4 shrink-0"
             />
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${srv.status === 'ONLINE' ? 'bg-green-400' : 'bg-slate-500'}`} />
+            <span className={`w-2 h-2 rounded-full shrink-0 ${srv.status === 'ONLINE' ? 'bg-green-400' : 'bg-slate-500'}`} />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className="text-sm text-white font-medium truncate">{srv.name}</span>
-                {srv.ai_ready && <span className="text-[10px] text-green-400 flex-shrink-0 font-bold">AI</span>}
+                {srv.ai_ready && <span className="text-[10px] text-green-400 shrink-0 font-bold">AI</span>}
               </div>
               <div className="text-xs text-slate-400">{srv.ip_address}{srv.os_type ? ` · ${srv.os_type}` : ''}</div>
             </div>
@@ -230,7 +230,7 @@ const JobResultRow = ({ result }: { sid: string; result: JobResult }) => {
         onClick={() => setOpen(!open)}
         className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.03] transition-colors text-left"
       >
-        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isOk ? 'bg-green-400' : 'bg-red-400'}`} />
+        <span className={`w-2 h-2 rounded-full shrink-0 ${isOk ? 'bg-green-400' : 'bg-red-400'}`} />
         <div className="flex-1 min-w-0">
           <span className="text-sm font-medium text-white">{result.server_name}</span>
           <span className="text-xs text-slate-400 ml-2">{result.server_ip}</span>
@@ -277,7 +277,7 @@ const JobCard = ({ job, onDelete, onExpand }: {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-mono text-slate-500 bg-white/[0.07] px-1.5 py-0.5 rounded">#{job.id}</span>
+            <span className="text-xs font-mono text-slate-500 bg-white/[0.07] px-1.5 py-0.5 rounded-sm">#{job.id}</span>
             <span className="text-xs text-slate-400">{JOB_TYPE_KEYS[job.job_type] ? t(JOB_TYPE_KEYS[job.job_type]) : job.job_type}</span>
             <StatusBadge status={job.status} />
             {isRunning && <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />}
@@ -285,7 +285,7 @@ const JobCard = ({ job, onDelete, onExpand }: {
           <div className="text-sm text-white font-medium mt-1 truncate">{job.title}</div>
           <div className="text-xs text-slate-500 mt-0.5">{fmtDate(job.created_at, locale)}</div>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => onExpand(job.id)}
             className="text-xs text-blue-400 hover:text-blue-300 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg transition-colors"
@@ -317,10 +317,10 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
 }) => {
   const t = useT()
   return (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
-        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center shrink-0 mt-0.5">
           <AlertTriangle size={16} strokeWidth={2} className="text-yellow-400" />
         </div>
         <div>
@@ -598,7 +598,7 @@ const PackageManager: React.FC = () => {
             onClick={() => setTab(tb.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
               tab === tb.key
-                ? 'bg-blue-600 text-white shadow'
+                ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-slate-400 hover:text-white hover:bg-white/[0.06]'
             }`}
           >
@@ -653,7 +653,7 @@ const PackageManager: React.FC = () => {
                 value={uploadDesc}
                 onChange={e => setUploadDesc(e.target.value)}
                 placeholder={t('pkg_desc_optional')}
-                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
               />
             </div>
 
@@ -683,7 +683,7 @@ const PackageManager: React.FC = () => {
                       </div>
                       <button
                         onClick={e => { e.stopPropagation(); handleDeleteFile(pkg.id) }}
-                        className="text-xs text-red-400 hover:text-red-300 px-2 py-1 hover:bg-red-500/10 rounded transition-colors flex-shrink-0"
+                        className="text-xs text-red-400 hover:text-red-300 px-2 py-1 hover:bg-red-500/10 rounded-sm transition-colors shrink-0"
                       >
                         {t('delete')}
                       </button>
@@ -728,7 +728,7 @@ const PackageManager: React.FC = () => {
                       : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                   }`}>
                     <input type="radio" checked={credMode === 'stored'} onChange={() => setCredMode('stored')}
-                      className="accent-green-500 w-4 h-4 mt-0.5 flex-shrink-0" />
+                      className="accent-green-500 w-4 h-4 mt-0.5 shrink-0" />
                     <div>
                       <div className="text-sm font-medium text-white">{t('pkg_use_stored')}</div>
                       <div className="text-xs text-slate-400 mt-0.5">{t('pkg_use_stored_hint')}</div>
@@ -742,7 +742,7 @@ const PackageManager: React.FC = () => {
                       : 'border-slate-600 hover:border-slate-500 bg-white/[0.02]'
                   }`}>
                     <input type="radio" checked={credMode === 'override'} onChange={() => setCredMode('override')}
-                      className="accent-blue-500 w-4 h-4 mt-0.5 flex-shrink-0" />
+                      className="accent-blue-500 w-4 h-4 mt-0.5 shrink-0" />
                     <div className="flex-1" onClick={e => e.stopPropagation()}>
                       <div className="text-sm font-medium text-white">{t('pkg_use_override')}</div>
                       <div className="text-xs text-slate-400 mt-0.5 mb-2">{t('pkg_use_override_hint')}</div>
@@ -753,7 +753,7 @@ const PackageManager: React.FC = () => {
                             <input
                               value={overrideUser} onChange={e => setOverrideUser(e.target.value)}
                               placeholder={t('pkg_username_ph')}
-                              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
                             />
                           </div>
                           <div className="grid grid-cols-2 gap-2">
@@ -762,7 +762,7 @@ const PackageManager: React.FC = () => {
                               <input
                                 type="password" value={overridePass} onChange={e => setOverridePass(e.target.value)}
                                 placeholder={t('pkg_ssh_password')}
-                                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
                               />
                             </div>
                             <div>
@@ -772,12 +772,12 @@ const PackageManager: React.FC = () => {
                               <input
                                 type="password" value={overrideSudo} onChange={e => setOverrideSudo(e.target.value)}
                                 placeholder={t('pkg_sudo_ph')}
-                                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
                               />
                             </div>
                           </div>
                           <div className="flex items-start gap-1.5 bg-blue-500/8 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
-                            <Lightbulb size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+                            <Lightbulb size={12} strokeWidth={2} className="shrink-0 mt-0.5" />
                             <span>{t('pkg_root_sudo_hint')}</span>
                           </div>
                         </div>
@@ -810,7 +810,7 @@ const PackageManager: React.FC = () => {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-300">{t('pkg_jobs', { n: jobs.length })}</h2>
-              <button onClick={loadJobs} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-white/[0.06] rounded transition-colors">
+              <button onClick={loadJobs} className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-white/[0.06] rounded-sm transition-colors">
                 {t('refresh_action')}
               </button>
             </div>
@@ -832,7 +832,7 @@ const PackageManager: React.FC = () => {
                 <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-mono text-slate-500 bg-white/[0.07] px-1.5 py-0.5 rounded">#{expandedJob.id}</span>
+                      <span className="text-xs font-mono text-slate-500 bg-white/[0.07] px-1.5 py-0.5 rounded-sm">#{expandedJob.id}</span>
                       <span className="text-xs text-slate-400">{JOB_TYPE_KEYS[expandedJob.job_type] ? t(JOB_TYPE_KEYS[expandedJob.job_type]) : expandedJob.job_type}</span>
                       <StatusBadge status={expandedJob.status} />
                     </div>

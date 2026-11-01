@@ -217,7 +217,7 @@ export default function AutomationOverview() {
           {d && d.status_distribution.by_code.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1">
               {d.status_distribution.by_code.slice(0, 8).map(c => (
-                <span key={c.status_code} className="rounded bg-slate-900/60 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                <span key={c.status_code} className="rounded-sm bg-slate-900/60 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
                   {c.status_code}: {fmtNumber(c.count)}
                 </span>
               ))}
@@ -284,7 +284,7 @@ export default function AutomationOverview() {
               {d.recent_failures.slice(0, 12).map(f => (
                 <Link key={`${f.client}-${f.run_id}`} to={executionPath(selected.id, f.client, f.run_id)}
                   className="flex items-start gap-3 px-1 py-2 hover:bg-white/[0.03] rounded-lg">
-                  <AlertTriangle size={14} className="mt-0.5 flex-shrink-0 text-red-400" />
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-400" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <span className="font-medium text-slate-100 break-all">{f.object_name}</span>
@@ -332,7 +332,7 @@ export default function AutomationOverview() {
               {h.last_error && <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-200">{h.last_error}</div>}
               <div className="flex flex-wrap gap-1 pt-1">
                 {Object.entries(h.features || {}).map(([k, v]) => (
-                  <span key={k} className={`rounded px-1.5 py-0.5 text-[10px] ${v === true || (typeof v === 'string' && v !== 'unavailable')
+                  <span key={k} className={`rounded-sm px-1.5 py-0.5 text-[10px] ${v === true || (typeof v === 'string' && v !== 'unavailable')
                     ? 'bg-green-500/10 text-green-300' : 'bg-slate-700/50 text-slate-500'}`}>{k}</span>
                 ))}
               </div>
@@ -416,7 +416,7 @@ export default function AutomationOverview() {
                       <td className="py-1.5 pr-2 text-slate-200 break-all">{o.object_name}</td>
                       <td className="text-center text-slate-300">{fmtDuration(o.duration_sec)}</td>
                       <td className="text-center text-slate-500">{fmtDuration(o.p95_sec)}</td>
-                      <td className="text-center"><span className="rounded bg-amber-500/15 px-1.5 text-amber-200">×{o.ratio}</span></td>
+                      <td className="text-center"><span className="rounded-sm bg-amber-500/15 px-1.5 text-amber-200">×{o.ratio}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -490,7 +490,7 @@ export default function AutomationOverview() {
             <div className="space-y-2 text-xs">
               <div className="flex flex-wrap gap-2">
                 {Object.entries(d.active_workflows.by_state).map(([k, v]) => (
-                  <span key={k} className="rounded bg-slate-800 px-2 py-0.5 text-slate-300">{k}: {v}</span>
+                  <span key={k} className="rounded-sm bg-slate-800 px-2 py-0.5 text-slate-300">{k}: {v}</span>
                 ))}
               </div>
               {(d.active_workflows.blocked.length ? d.active_workflows.blocked : d.active_workflows.workflows).slice(0, 8).map((w: any) => (
@@ -558,7 +558,7 @@ function Heatmap({ rows }: { rows: { dow: number; hour: number; total: number; f
                 const v = grid[`${iso}-${h}`] ?? 0
                 const a = v / max
                 return <div key={h} title={`${DOW[ui]} ${h}:00 — ${v}`}
-                  className="h-3.5 w-3.5 rounded-sm" style={{ background: `rgba(59,130,246,${0.08 + a * 0.85})` }} />
+                  className="h-3.5 w-3.5 rounded-xs" style={{ background: `rgba(59,130,246,${0.08 + a * 0.85})` }} />
               })}
             </React.Fragment>
           )
@@ -573,7 +573,7 @@ function Row({ k, v, tone }: { k: string; v: ReactNode; tone?: string }) {
   return (
     <div className="flex justify-between gap-3">
       <dt className="text-slate-500 whitespace-nowrap">{k}</dt>
-      <dd className={`text-right ${c} break-words min-w-0`}>{v}</dd>
+      <dd className={`text-right ${c} wrap-break-word min-w-0`}>{v}</dd>
     </div>
   )
 }

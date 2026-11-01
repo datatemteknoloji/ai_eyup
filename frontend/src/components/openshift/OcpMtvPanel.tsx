@@ -23,7 +23,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
-const input = 'w-full rounded-lg border border-white/[0.08] bg-cyber-deep px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan-500/50'
+const input = 'w-full rounded-lg border border-white/[0.08] bg-cyber-deep px-3 py-2 text-sm text-slate-200 outline-hidden focus:border-cyan-500/50'
 const button = 'rounded-lg border border-white/[0.08] px-2.5 py-1.5 text-xs text-slate-300 hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-40 inline-flex items-center gap-1.5'
 
 function sdkHost(urlOrHost: string): string {
@@ -196,7 +196,7 @@ function MigrationLogs({ clusterId, base, plan }: any) {
   useEffect(() => { if (pod && !pod.containers?.includes(container)) setContainer(pod.containers?.[0] || '') }, [pod, selected])
   useEffect(() => { if (!open || !selected || !data.namespace || !container) return; let alive = true; const pull = async () => { try { const d = await api<any>(`${API_BASE_URL}/openshift/clusters/${clusterId}/pods/${encodeURIComponent(data.namespace)}/${encodeURIComponent(selected)}/logs?container=${encodeURIComponent(container)}&tail=400`); if (alive) setLogs(d.logs || '') } catch (e: any) { if (alive) setLogs(t('ocp_mtv_log_fail', { msg: e.message })) } }; pull(); const timer = window.setInterval(pull, 4000); return () => { alive = false; clearInterval(timer) } }, [clusterId, data.namespace, selected, container, open])
   useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight }, [logs])
-  return <div className="border-t border-white/[0.06] pt-3"><button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-slate-300"><FileText size={14} className="text-cyan-400" /> {t('ocp_mtv_live_log')} {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>{open && <div className="mt-2 space-y-2">{!data.pods?.length ? <p className="text-[11px] text-slate-500">{t('ocp_mtv_no_pod')}</p> : <><div className="flex gap-1 flex-wrap">{data.pods.map((p: any) => <button key={p.name} onClick={() => setSelected(p.name)} className={`rounded border px-2 py-1 text-[10px] font-mono ${p.name === selected ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200' : 'border-white/[0.06] text-slate-500'}`}>{p.healthy ? '●' : '●'} {p.name}</button>)}</div>{pod?.containers?.length > 1 && <div className="flex gap-1">{pod.containers.map((c: string) => <button key={c} onClick={() => setContainer(c)} className={`text-[10px] ${c === container ? 'text-cyan-300' : 'text-slate-500'}`}>{c}</button>)}</div>}<pre ref={box} className="h-64 overflow-auto rounded-lg border border-white/[0.06] bg-black/30 p-3 text-[10px] text-cyan-100/80 whitespace-pre-wrap">{logs || t('ocp_mtv_log_wait')}</pre></>}</div>}</div>
+  return <div className="border-t border-white/[0.06] pt-3"><button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-slate-300"><FileText size={14} className="text-cyan-400" /> {t('ocp_mtv_live_log')} {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>{open && <div className="mt-2 space-y-2">{!data.pods?.length ? <p className="text-[11px] text-slate-500">{t('ocp_mtv_no_pod')}</p> : <><div className="flex gap-1 flex-wrap">{data.pods.map((p: any) => <button key={p.name} onClick={() => setSelected(p.name)} className={`rounded-sm border px-2 py-1 text-[10px] font-mono ${p.name === selected ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200' : 'border-white/[0.06] text-slate-500'}`}>{p.healthy ? '●' : '●'} {p.name}</button>)}</div>{pod?.containers?.length > 1 && <div className="flex gap-1">{pod.containers.map((c: string) => <button key={c} onClick={() => setContainer(c)} className={`text-[10px] ${c === container ? 'text-cyan-300' : 'text-slate-500'}`}>{c}</button>)}</div>}<pre ref={box} className="h-64 overflow-auto rounded-lg border border-white/[0.06] bg-black/30 p-3 text-[10px] text-cyan-100/80 whitespace-pre-wrap">{logs || t('ocp_mtv_log_wait')}</pre></>}</div>}</div>
 }
 
 function VddkModal({ base, provider, onClose, onSaved }: any) {
@@ -365,7 +365,7 @@ function PlanWizard({ clusterId, base, providers, hypervisors, onClose, onCreate
               </select>
               {selectedProvider && !selectedProvider.vddk && (
                 <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-300/90">
-                  <AlertTriangle className="mt-px h-3.5 w-3.5 flex-shrink-0" />
+                  <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
                   <span>
                     {t('ocp_mtv_vddk_warn')}
                   </span>
@@ -391,7 +391,7 @@ function PlanWizard({ clusterId, base, providers, hypervisors, onClose, onCreate
             <div className="mb-1 flex items-center gap-2">
               <p className="text-xs text-slate-500">{t('ocp_mtv_vms_sel', { n: selected.size })}</p>
               <input
-                className="ml-auto rounded border border-white/[0.08] bg-cyber-deep px-2 py-1 text-xs"
+                className="ml-auto rounded-sm border border-white/[0.08] bg-cyber-deep px-2 py-1 text-xs"
                 placeholder={t('search')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}

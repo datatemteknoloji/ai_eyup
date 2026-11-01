@@ -29,6 +29,8 @@ def sync_esx_metrics(db: Session) -> Dict[str, Any]:
         .filter(Hypervisor.hypervisor_type == HypervisorType.VMWARE)
         .all()
     )
+    # Sahte test envanteri (scripts/fake_virt_seed.py) gerçek vCenter'a bağlanamaz; metrikleri fake_refresh tazeler
+    vmware_hvs = [h for h in vmware_hvs if not (getattr(h, "meta_data", None) or {}).get("fake_seed")]
 
     if not vmware_hvs:
         logger.debug("ESX metric sync: VMware hypervisor kaydı yok, atlanıyor.")

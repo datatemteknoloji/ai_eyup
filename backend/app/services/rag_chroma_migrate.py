@@ -1,6 +1,11 @@
 """
 Eski Chroma PersistentClient → pgvector bir kerelik taşıma.
 chromadb yoksa veya volume boşsa no-op. Volume silinmez.
+
+NOT: `chromadb` paketi artık ürün imajının bağımlılığı DEĞİLDİR (düzeltmesi olmayan açıklar taşıyordu ve
+yalnızca bu bir kerelik taşıma için gerekiyordu; sistemin asıl RAG deposu pgvector'dır). Paket yoksa taşıma
+atlanır; pgvector BOŞ iken eski Chroma verisi (chroma.sqlite3) bulunursa açık bir UYARI loglanır ve veri
+dokunulmadan bırakılır. Eski veriyi taşımak için `pip install chromadb` ile geçici bir ortamda çalıştırın.
 """
 from __future__ import annotations
 
@@ -42,6 +47,17 @@ def _chroma_paths() -> list[str]:
     return out
 
 
+def _has_legacy_chroma_data() -> bool:
+    """Taşınmamış eski Chroma verisi var mı (chroma.sqlite3)? Salt okunur kontrol."""
+    for path in _chroma_paths():
+        try:
+            if os.path.isfile(os.path.join(path, "chroma.sqlite3")):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def migrate_chroma_if_needed(*, force: bool = False) -> dict:
     """
     pgvector boşsa (veya force) Chroma koleksiyonlarını upsert eder.
@@ -63,8 +79,17 @@ def migrate_chroma_if_needed(*, force: bool = False) -> dict:
         import chromadb
         from chromadb.config import Settings as ChromaSettings
     except Exception as e:
-        logger.info("chromadb yok, migrate atlandı: %s", e)
-        return {"skipped": True, "reason": "no_chromadb"}
+        legacy = _has_legacy_chroma_data()
+        if legacy:
+            logger.warning(
+                "pgvector boş ve eski Chroma verisi (chroma.sqlite3) var, ancak 'chromadb' paketi bu "
+                "sürümde yüklü değil — eski RAG verisi TAŞINMADI (veri silinmedi, yerinde duruyor). "
+                "Taşımak için geçici ortamda 'pip install chromadb' ile migrate_chroma_if_needed(force=True) "
+                "çalıştırın veya RAG seed/ingest ile yeniden oluşturun. (%s)", e,
+            )
+        else:
+            logger.info("chromadb yok, migrate atlandı: %s", e)
+        return {"skipped": True, "reason": "no_chromadb", "legacy_data": legacy}
 
     migrated = {}
     os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")

@@ -752,14 +752,14 @@ export function AsmPage() {
           if (side === "left") moveKeysToSelected([key]);
           else moveKeysToAvailable([key]);
         }}
-        className={`flex h-7 select-none items-center gap-2 rounded border px-2 text-[10px] leading-none ${
+        className={`flex h-7 select-none items-center gap-2 rounded-sm border px-2 text-[10px] leading-none ${
           canStart ? "cursor-grab active:cursor-grabbing" : "cursor-default"
         } ${
           isPicked
             ? "border-emerald-400 bg-emerald-500/15 ring-1 ring-emerald-400/50"
             : leftUsable(d, usableOpts)
-              ? "border-[var(--color-border)] bg-[var(--color-card)]"
-              : "border-[var(--color-border)] opacity-50"
+              ? "border-(--color-border) bg-(--color-card)"
+              : "border-(--color-border) opacity-50"
         } ${dragging ? "opacity-40" : ""}`}
         title={[
           d.alias,
@@ -777,10 +777,10 @@ export function AsmPage() {
           .join(" · ")}
       >
         <span className="shrink-0 font-mono font-medium">{d.alias}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[var(--color-muted-foreground)]">
+        <span className="min-w-0 flex-1 truncate font-mono text-(--color-muted-foreground)">
           {d.wwid || "—"}
         </span>
-        <span className="shrink-0 tabular-nums text-[var(--color-muted-foreground)]">{d.size || "—"}</span>
+        <span className="shrink-0 tabular-nums text-(--color-muted-foreground)">{d.size || "—"}</span>
         {cluster && side === "left" && d.scope === "shared" ? (
           <Badge variant="default" className="h-4 shrink-0 px-1 text-[9px]">
             Ortak
@@ -847,7 +847,7 @@ export function AsmPage() {
     if (!disks.length) return null;
     return (
       <div className="space-y-1">
-        <p className="sticky top-0 z-[1] bg-[var(--color-card)] py-0.5 text-[10px] font-medium text-[var(--color-muted-foreground)]">
+        <p className="sticky top-0 z-1 bg-(--color-card) py-0.5 text-[10px] font-medium text-(--color-muted-foreground)">
           {title} ({disks.length})
         </p>
         {disks.map((d) => renderCard(d, "left"))}
@@ -865,7 +865,7 @@ export function AsmPage() {
     >
       <form
         onSubmit={onSubmit}
-        className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-2.5"
+        className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden rounded-xl border border-(--color-border) bg-(--color-card) p-2.5"
       >
         {/* Başlık + Request ID + Label + Preview */}
         <div className="flex shrink-0 flex-wrap items-center gap-2 pr-8">
@@ -889,9 +889,9 @@ export function AsmPage() {
           <Button type="submit" size="sm" className="h-8" disabled={busy || !selected.length}>
             {busy ? "…" : t("preview")}
           </Button>
-          {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+          {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
           {loadingList ? (
-            <span className="text-xs text-[var(--color-muted-foreground)]">yükleniyor…</span>
+            <span className="text-xs text-(--color-muted-foreground)">yükleniyor…</span>
           ) : null}
         </div>
 
@@ -956,18 +956,18 @@ export function AsmPage() {
             ) : null}
           </div>
 
-          <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--theme-surface-deep)]">
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--color-border)] px-2.5 py-1.5">
-              <h3 className="truncate text-xs font-semibold text-[var(--color-foreground)]">
+          <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-(--color-border) bg-(--theme-surface-deep)">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-(--color-border) px-2.5 py-1.5">
+              <h3 className="truncate text-xs font-semibold text-(--color-foreground)">
                 Mevcut ASM grupları
               </h3>
-              <span className="shrink-0 text-[10px] font-medium text-[var(--color-muted-foreground)]">
+              <span className="shrink-0 text-[10px] font-medium text-(--color-muted-foreground)">
                 {asmGroups.length ? `${asmGroups.length} grup` : ""}
               </span>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
               {asmGroups.length === 0 ? (
-                <p className="px-1 text-xs text-[var(--color-muted-foreground)]">
+                <p className="px-1 text-xs text-(--color-muted-foreground)">
                   (oracleasm listdisks boş / grup yok)
                 </p>
               ) : (
@@ -982,14 +982,14 @@ export function AsmPage() {
                         type="button"
                         title={`${tip} — tıkla: alias öneki = ${g.label}`}
                         onClick={() => applyGroupAsPrefix(g.label)}
-                        className={`inline-flex max-w-full items-center gap-1.5 rounded-md border px-2.5 py-1.5 font-mono text-sm font-semibold leading-none tracking-wide shadow-sm transition-all ${color} ${
+                        className={`inline-flex max-w-full items-center gap-1.5 rounded-md border px-2.5 py-1.5 font-mono text-sm font-semibold leading-none tracking-wide shadow-xs transition-all ${color} ${
                           active
-                            ? "ring-2 ring-offset-1 ring-offset-[var(--theme-surface-deep)] ring-[var(--color-foreground)] scale-[1.03]"
-                            : "hover:brightness-110 hover:shadow"
+                            ? "ring-2 ring-offset-1 ring-offset-(--theme-surface-deep) ring-(--color-foreground) scale-[1.03]"
+                            : "hover:brightness-110 hover:shadow-sm"
                         }`}
                       >
                         <span className="truncate">{g.label}</span>
-                        <span className="shrink-0 rounded bg-black/10 px-1 py-0.5 text-[11px] font-bold tabular-nums dark:bg-white/15">
+                        <span className="shrink-0 rounded-sm bg-black/10 px-1 py-0.5 text-[11px] font-bold tabular-nums dark:bg-white/15">
                           {g.count}
                         </span>
                       </button>
@@ -998,7 +998,7 @@ export function AsmPage() {
                 </div>
               )}
             </div>
-            <p className="shrink-0 border-t border-[var(--color-border)] px-2.5 py-1 text-[10px] text-[var(--color-muted-foreground)]">
+            <p className="shrink-0 border-t border-(--color-border) px-2.5 py-1 text-[10px] text-(--color-muted-foreground)">
               Tıklayınca alias öneki dolar · renk = disk türü
             </p>
           </aside>
@@ -1011,10 +1011,10 @@ export function AsmPage() {
             className={`flex min-h-0 flex-col overflow-hidden rounded-lg border border-dashed p-2 ${
               dropTarget === "left"
                 ? "border-sky-400 bg-sky-500/10"
-                : "border-[var(--color-border)]"
+                : "border-(--color-border)"
             }`}
           >
-            <p className="mb-1.5 shrink-0 text-xs font-medium text-[var(--color-muted-foreground)]">
+            <p className="mb-1.5 shrink-0 text-xs font-medium text-(--color-muted-foreground)">
               Bulunan diskler ({available.length})
               {cluster && viewHostname ? ` — ${viewHostname}` : ""}
               {wwidGate && matchedWwids === null ? " — WWID kontrolü gerekli" : ""} — sürükle →
@@ -1023,8 +1023,8 @@ export function AsmPage() {
               <p
                 className={`mb-1 shrink-0 text-[10px] ${
                   unmatchedPaste.length
-                    ? "text-[var(--color-destructive)]"
-                    : "text-[var(--theme-success-strong)]"
+                    ? "text-(--color-destructive)"
+                    : "text-(--theme-success-strong)"
                 }`}
               >
                 {wwidCheckMsg}
@@ -1043,7 +1043,7 @@ export function AsmPage() {
                 available.map((d) => renderCard(d, "left"))
               )}
               {!available.length ? (
-                <p className="text-xs text-[var(--color-muted-foreground)]">Liste boş</p>
+                <p className="text-xs text-(--color-muted-foreground)">Liste boş</p>
               ) : null}
             </div>
           </div>
@@ -1116,7 +1116,7 @@ export function AsmPage() {
               onClick={() => moveKeysToAvailable([...picked])}
             />
             {picked.size > 0 ? (
-              <span className="text-[9px] tabular-nums text-[var(--color-muted-foreground)]">{picked.size}</span>
+              <span className="text-[9px] tabular-nums text-(--color-muted-foreground)">{picked.size}</span>
             ) : null}
           </div>
 
@@ -1134,7 +1134,7 @@ export function AsmPage() {
             <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
               {selected.map((d) => renderCard(d, "right"))}
               {!selected.length ? (
-                <p className="text-xs text-[var(--color-muted-foreground)]">Buraya sürükleyin</p>
+                <p className="text-xs text-(--color-muted-foreground)">Buraya sürükleyin</p>
               ) : null}
             </div>
           </div>
@@ -1146,20 +1146,20 @@ export function AsmPage() {
           <DialogHeader>
             <DialogTitle>Storage WWID listesi</DialogTitle>
           </DialogHeader>
-          <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
+          <p className="mb-2 text-xs text-(--color-muted-foreground)">
             Storage ekibinden gelen WWID listesini yapıştırın. Her değer en az 16 karakter olmalı;
             eşleşme sunucudaki WWID&apos;nin <span className="font-medium">son 16 hanesi</span> ile
             yapılır (yapıştırılanın da son 16 hanesi kullanılır).
           </p>
           <textarea
-            className="min-h-[140px] w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 font-mono text-xs text-[var(--color-foreground)] outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+            className="min-h-[140px] w-full resize-y rounded-md border border-(--color-border) bg-(--color-background) px-3 py-2 font-mono text-xs text-(--color-foreground) outline-hidden focus:ring-1 focus:ring-(--color-primary)"
             placeholder={"…son16haneler\n…veya_daha_uzun_wwid"}
             value={wwidPasteText}
             onChange={(e) => setWwidPasteText(e.target.value)}
             spellCheck={false}
           />
           {unmatchedPaste.length > 0 && matchedWwids ? (
-            <div className="mt-2 max-h-24 overflow-y-auto rounded border border-[var(--color-destructive)]/40 bg-[var(--color-destructive)]/5 px-2 py-1 font-mono text-[10px] text-[var(--color-destructive)]">
+            <div className="mt-2 max-h-24 overflow-y-auto rounded-sm border border-(--color-destructive)/40 bg-(--color-destructive)/5 px-2 py-1 font-mono text-[10px] text-(--color-destructive)">
               Taramada yok: {unmatchedPaste.join(", ")}
             </div>
           ) : null}
@@ -1176,7 +1176,7 @@ export function AsmPage() {
 
       {dragUi?.active ? (
         <div
-          className="pointer-events-none fixed z-[9999] rounded-md border border-emerald-400 bg-[var(--color-card)] px-3 py-2 text-xs shadow-lg"
+          className="pointer-events-none fixed z-9999 rounded-md border border-emerald-400 bg-(--color-card) px-3 py-2 text-xs shadow-lg"
           style={{ left: dragUi.x + 12, top: dragUi.y + 12 }}
         >
           {dragUi.keys.length} disk taşınıyor…

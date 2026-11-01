@@ -223,7 +223,7 @@ export default function OcpVmAdminActions({ clusterId, vm, onConsole, contextPos
         type="button"
         title={t('ocp_more')}
         onClick={toggleMenu}
-        className="p-1 rounded text-slate-400 hover:bg-white/[0.06]"
+        className="p-1 rounded-sm text-slate-400 hover:bg-white/[0.06]"
       >
         <MoreHorizontal size={12} />
       </button>
@@ -264,7 +264,7 @@ export default function OcpVmAdminActions({ clusterId, vm, onConsole, contextPos
       )}
 
       {panel && panel !== 'iso' && createPortal(
-        <div className="fixed inset-0 bg-black/55 z-[90] flex items-center justify-center p-4" onClick={() => !busy && setPanel(null)} onContextMenu={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/55 z-90 flex items-center justify-center p-4" onClick={() => !busy && setPanel(null)} onContextMenu={(e) => e.stopPropagation()}>
           <div className="bg-cyber-card border border-white/[0.08] rounded-xl w-full max-w-sm p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <div className="text-sm text-white font-medium">

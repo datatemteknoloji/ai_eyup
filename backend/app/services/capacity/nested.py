@@ -103,7 +103,7 @@ def underlay_for_ocp(db, node_names: Sequence[str]) -> Optional[Dict[str, Any]]:
     from app.services import virt_insights_data as vd
     if not node_names:
         return None
-    cap = vcp.build_capacity(db, with_forecast=False)
+    cap = vcp.build_capacity(db, with_forecast=False, with_reclaim=False)
     ids = sorted({c["hypervisor_id"] for c in cap["clusters"]})
     if not ids:
         return None

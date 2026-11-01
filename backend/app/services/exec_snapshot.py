@@ -17,7 +17,7 @@ from app.core.database import SessionLocal
 from app.models.infrastructure_report import InfrastructureReport
 from app.services.exec_facts import build_executive_facts, save_monthly_snapshot
 from app.services.exec_summary_text import compose_summary
-from app.services.exec_view import build_view, demo_cards
+from app.services.exec_view import build_view, demo_cards, landscape_summary, template_from_view
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +91,46 @@ def lock_elapsed_month(db: Session, now: Optional[datetime] = None) -> Optional[
     return snap.id
 
 
+def _try_lock(db: Session):
+    """Oturum düzeyi advisory kilidi için ÖZEL bağlantı (açılmazsa None döner = kilit dolu).
+
+    Kilit `db` oturumunun bağlantısında alınırsa, `db.rollback()/commit()` bağlantıyı havuza bırakır; sonraki
+    `pg_advisory_unlock` BAŞKA bir havuz bağlantısında çalışıp başarısız olur ve kilit havuzdaki boş bağlantıda
+    sızar (sonraki üretimler «kilit dolu» ile None döner — tam takımda sıra bağımlı hata + canlıda takılma).
+    """
+    bind = db.get_bind()
+    engine = getattr(bind, "engine", bind)
+    conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        if conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _LOCK}).scalar():
+            return conn
+    except Exception:
+        conn.invalidate()
+        conn.close()
+        raise
+    conn.close()
+    return None
+
+
+def _unlock(conn) -> None:
+    try:
+        ok = conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK}).scalar()
+        if not ok:
+            conn.invalidate()      # kilit bu bağlantıda değilse bağlantıyı kapat → sunucu kilidi bırakır
+    except Exception:
+        logger.exception("executive bundle lock bırakılamadı")
+        try:
+            conn.invalidate()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+
 def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]:
     """Kilidi alır, mevcut ayın gerçeklerini kilitler. Kilit doluysa None."""
-    locked = db.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _LOCK}).scalar()
-    if not locked:
+    lock_conn = _try_lock(db)
+    if lock_conn is None:
         return None
     try:
         lock_elapsed_month(db, now)
@@ -103,17 +139,9 @@ def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]
         db.rollback()
         summary = compose_summary(facts)
         view = build_view(db, facts, summary)
-        if summary.get("source") == "template":
-            notes = []
-            for area in view.get("areas") or []:
-                if area.get("status") != "Kritik":
-                    continue
-                count = next((m["value"] for m in area.get("metrics") or [] if "kritik" in m["label"].lower()), None)
-                if count and count != "—":
-                    notes.append(f"{area['name']} alanında {count} varlıkta kritik uyarı açık.")
-            if notes:
-                summary = {**summary, "text": (summary.get("text") or "").rstrip() + " " + " ".join(notes)}
-                view["summary"] = summary
+        if summary.get("source") == "template" and landscape_summary(view.get("landscape") or {}):
+            summary = {"text": template_from_view(facts, view), "source": "template"}
+            view["summary"] = summary
         row = InfrastructureReport(
             report_type=BUNDLE,
             report_title="Yönetici raporları",
@@ -135,11 +163,7 @@ def produce_bundle(db: Session, now: Optional[datetime] = None) -> Optional[int]
         db.rollback()
         raise
     finally:
-        try:
-            db.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK})
-            db.commit()
-        except Exception:
-            logger.exception("executive bundle lock bırakılamadı")
+        _unlock(lock_conn)
 
 
 def _row_for_month(db: Session, month: Optional[str]) -> Optional[InfrastructureReport]:
@@ -193,6 +217,8 @@ def bundle_payload(db: Session, month: Optional[str] = None) -> Dict[str, Any]:
         }
     data = row.data or {}
     generated = row.generated_at.isoformat() if row.generated_at else None
+    # Sayfa açılışta HESAPLAMAZ: kilitli paketin sayfa modeli aynen döner. Güncellik «Şimdi yenile» ve
+    # günlük üretimle sağlanır; yaşı ekranda `generated_at` ile görünür.
     return {
         "reports": data.get("facts") or [],
         "generated_at": generated,

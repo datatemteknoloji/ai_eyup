@@ -81,12 +81,12 @@ export function PathPermsPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("wizard_path")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">
         Sunucudaki gerçek path · chown/chmod · kritik sistem dizinleri yasak
       </p>
       <form
         onSubmit={onSubmit}
-        className="mt-6 max-w-xl space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
+        className="mt-6 max-w-xl space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-5"
       >
         <Input
           placeholder={t("talep_id")}
@@ -101,7 +101,7 @@ export function PathPermsPage() {
           onChange={setServerId}
         />
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Path</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">Path</label>
           <Input
             className="font-mono"
             placeholder="/opt/uygulama veya /home/appuser/data"
@@ -109,7 +109,7 @@ export function PathPermsPage() {
             onChange={(e) => setPath(e.target.value)}
             required
           />
-          <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+          <p className="mt-1 text-xs text-(--color-muted-foreground)">
             Path sunucuda var olmalı; önizlemede kontrol edilir.
           </p>
         </div>
@@ -145,7 +145,7 @@ export function PathPermsPage() {
           <Checkbox checked={recursive} onCheckedChange={(v) => setRecursive(!!v)} />
           Alt klasörlere de uygula (dikkat)
         </label>
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
         <Button type="submit" disabled={busy}>
           {busy ? "…" : t("preview")}
         </Button>

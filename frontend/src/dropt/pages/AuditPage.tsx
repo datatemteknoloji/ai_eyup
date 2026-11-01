@@ -107,7 +107,7 @@ export function AuditPage() {
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold">{t("audit_title")}</h2>
-            <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("audit_subtitle")}</p>
+            <p className="mt-1 text-sm text-(--color-muted-foreground)">{t("audit_subtitle")}</p>
           </div>
           {toolbar}
         </div>
@@ -115,7 +115,7 @@ export function AuditPage() {
 
       <div className="mb-4 flex flex-wrap gap-3">
         <div className="relative min-w-[240px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted-foreground)" />
           <Input
             className="pl-9"
             placeholder="Talep ID, aksiyon, kullanıcı…"
@@ -140,11 +140,11 @@ export function AuditPage() {
         </Button>
       </div>
 
-      {error ? <p className="mb-3 text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="mb-3 text-sm text-(--color-destructive)">{error}</p> : null}
 
-      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/80">
+      <div className="overflow-hidden rounded-xl border border-(--color-border) bg-(--color-card)/80">
         <table className="w-full text-sm">
-          <thead className="border-b border-[var(--color-border)] text-[var(--color-muted-foreground)]">
+          <thead className="border-b border-(--color-border) text-(--color-muted-foreground)">
             <tr>
               <th className="px-3 py-3 text-left">
                 <SortHeader
@@ -199,26 +199,26 @@ export function AuditPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-[var(--color-muted-foreground)]">
+                <td colSpan={6} className="px-3 py-8 text-center text-(--color-muted-foreground)">
                   {t("loading")}
                 </td>
               </tr>
             ) : sorted.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-[var(--color-muted-foreground)]">
+                <td colSpan={6} className="px-3 py-8 text-center text-(--color-muted-foreground)">
                   {t("no_records")}
                 </td>
               </tr>
             ) : (
               sorted.map((a) => (
-                <tr key={a.id} className="border-t border-[var(--color-border)] align-top">
-                  <td className="px-3 py-2.5 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+                <tr key={a.id} className="border-t border-(--color-border) align-top">
+                  <td className="px-3 py-2.5 font-mono text-[11px] text-(--color-muted-foreground)">
                     {new Date(a.created_at).toLocaleString("tr-TR")}
                   </td>
                   <td className="px-3 py-2.5 font-mono text-xs">{a.talep_id || "—"}</td>
                   <td className="px-3 py-2.5 text-xs">
                     {a.username}
-                    <div className="text-[var(--color-muted-foreground)]">{a.role}</div>
+                    <div className="text-(--color-muted-foreground)">{a.role}</div>
                   </td>
                   <td className="px-3 py-2.5 font-mono text-[11px]">{a.action}</td>
                   <td className="px-3 py-2.5">

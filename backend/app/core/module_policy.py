@@ -116,6 +116,7 @@ RULES: List[Rule] = [
     _m("/ops", *_P),
     _m("/ops/executive-summary", "executive"),
     _m("/ops/executive-report", "executive"),
+    _m("/executive-reports", "executive"),   # Tüm Ortamlar hazır raporları
     _m("/ai", *_P),
     _m("/collectors", *_P),
 
@@ -174,6 +175,13 @@ GRANTS: List[Grant] = [
     _g("windows", r"^/hypervisors/?$", _GET, "Windows sunucular › VM/host bilgisi"),
     _g("openshift", r"^/hypervisors/?$", _GET, "OpenShift MTV paneli › VMware kaynakları"),
 
+    # ── Donanım: platform sayfaları yalnız ÖZET (sağlık/model/garanti) okur; BMC/seri yalnız `hardware` modülünde ──
+    *[_g(m, r"^/hw/(servers/by-target|targets-health)$", _GET, "Linux/Windows/Sanallaştırma › donanım özeti (BMC/seri YOK)")
+      for m in ("linux", "windows", "virtualization")],
+    # Faz 3a: hedef kartındaki host donanım logları (metin maskeli; hedefsiz filo görünümü uçta `hardware` ister)
+    *[_g(m, r"^/hw/host-logs$", _GET, "Linux/Windows/Sanallaştırma › host donanım logları (maskeli)")
+      for m in ("linux", "windows", "virtualization")],
+
     # ── Sanallaştırma sayfası VM detay/arama için snapshot ve sunucu uçlarını kullanır ──
     _g("virtualization", r"^/snapshots/server/.*$", why="Hypervisors › VM detay / arama"),
 
@@ -199,6 +207,7 @@ ROLE_RULES: List[Tuple[Optional[FrozenSet[str]], "re.Pattern[str]", str]] = [
     (frozenset({"POST"}), re.compile(r"^/ansible/(adhoc|playbook)$"), "operator"),
     (frozenset({"POST", "PUT", "DELETE"}), re.compile(r"^/settings/credentials(/.*)?$"), "admin"),
     (frozenset({"POST"}), re.compile(r"^/servers/[^/]+/credentials$"), "operator"),
+    (frozenset({"PUT"}), re.compile(r"^/servers/[^/]+$"), "operator"),   # Linux sunucu düzenleme (ad/IP/CPU/Memory/AI Ready)
     (frozenset({"POST"}), re.compile(r"^/events/bulk-delete$"), "operator"),
     (frozenset({"POST", "PUT", "DELETE"}), re.compile(r"^/centrify-mgmt/.*$"), "operator"),
     (frozenset({"POST", "DELETE"}), re.compile(r"^/centrify-mgmt/demo/seed$"), "admin"),   # DEMO veri: yalnız admin
@@ -207,6 +216,8 @@ ROLE_RULES: List[Tuple[Optional[FrozenSet[str]], "re.Pattern[str]", str]] = [
     (frozenset({"POST"}), re.compile(r"^/monitoring/prometheus/sync.*$"), "operator"),
     (frozenset({"POST", "PUT", "DELETE"}), re.compile(r"^/automation/systems(/.*)?$"), "operator"),
     (frozenset({"POST"}), re.compile(r"^/anomalies/run-cycle$"), "operator"),
+    (frozenset({"POST", "PUT", "DELETE"}), re.compile(r"^/hw/bmc(/.*)?$"), "admin"),   # BMC kimlik/uç nokta yazma + test
+    (frozenset({"POST", "DELETE"}), re.compile(r"^/hw/(links|firmware/(references|accept))(/.*)?$"), "operator"),   # ainew-içi elle eşleştirme (donanıma yazılmaz)
     # OpenShift › Planlama ve Denetim sayfaları yalnız admin (özet/değişiklik/olay zaman çizelgesi diğer sayfalarca kullanılır)
     (None, re.compile(r"^/ocp-insights/(capacity|reclaim|findings|node-risk|run|baseline)(/.*)?$"), "admin"),
 ]

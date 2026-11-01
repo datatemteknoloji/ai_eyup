@@ -4,7 +4,7 @@ TimescaleDB'deki metric_data'yi analiz eder.
 """
 import logging
 import statistics
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -101,7 +101,7 @@ def detect_anomalies_for_server(
     ``{metric_name: {"recent": [(ts,val),...], "history": [(ts,val),...]}}``
     """
     anomalies = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)  # metrics.timestamp timestamptz → tz-aware karşılaştırma
     lookback_start = now - timedelta(minutes=lookback_minutes)
     history_start = now - timedelta(minutes=history_minutes)
 
@@ -171,7 +171,7 @@ def detect_anomalies_for_server(
                     "severity": severity,
                     "threshold_warning": cfg.get("warning"),
                     "threshold_critical": cfg.get("critical"),
-                    "detected_at": now.isoformat(),
+                    "detected_at": now.replace(tzinfo=None).isoformat(),
                     "message": _build_message(metric_name, current_value, severity, z, cfg),
                 })
         except Exception as e:
@@ -219,7 +219,7 @@ def detect_all_anomalies(db: Session) -> List[Dict[str, Any]]:
     if not servers:
         return []
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)  # metrics.timestamp timestamptz → tz-aware karşılaştırma
     lookback_minutes = 60
     history_minutes = 1440
     lookback_start = now - timedelta(minutes=lookback_minutes)

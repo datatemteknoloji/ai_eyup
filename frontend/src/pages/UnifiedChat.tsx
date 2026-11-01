@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { API_BASE_URL } from '../config/api'
 import { FileDown, Globe, Wrench } from 'lucide-react'
+import ThinkingTrace from '../components/ThinkingTrace'
 import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { pairChatMessages, useChatPdfSelect } from '../lib/chatPdfSelect'
 import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
@@ -29,6 +30,7 @@ import {
 } from '../lib/chatStreamStore'
 import { useChatStickToBottom } from '../lib/chatScroll'
 import { useT, useLocale } from '../i18n/LocaleProvider'
+import { chatReportQuestions } from '../config/chatReportQuestions'
 import { useAuth } from '../auth/AuthContext'
 import type { ChatUsage } from '../lib/chatStreamStore'
 
@@ -132,7 +134,7 @@ const ThinkingDots = () => (
 const StreamingText = ({ text }: { text: string }) => (
   <div className={chatResponseBody}>
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{text}</ReactMarkdown>
-    <span className="inline-block w-1.5 h-4 bg-sky-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
+    <span className="inline-block w-1.5 h-4 bg-sky-400 animate-pulse ml-0.5 align-text-bottom rounded-xs" />
   </div>
 )
 
@@ -145,7 +147,7 @@ const ConfirmDialog: React.FC<{
   const t = useT()
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
       <div className="bg-cyber-card border border-white/[0.08] rounded-[10px] shadow-2xl p-6 w-80 max-w-[90vw]">
         <p className="text-sm text-slate-200 mb-6 text-center leading-relaxed">{message}</p>
         <div className="flex gap-3 justify-center">
@@ -183,6 +185,8 @@ const UnifiedChat: React.FC<{
   const pendingUserMessage = stream.pendingUserMessage
   const streamingText = stream.streamingText
   const thinkingPhase = stream.thinkingPhase
+  const progressText = stream.progress?.text ?? ''
+  const thinkingTrace = stream.thinkingText ?? ''
   const toolCalls = stream.toolCalls
   const clarifyOptions = stream.clarifyOptions
   const suggestions = stream.suggestions
@@ -204,6 +208,8 @@ const UnifiedChat: React.FC<{
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const streamSessionRef = useRef<number | null>(null)
+  // Yeni açılan oturum liste yenilenene kadar "listede yoksa sessions[0]" effect'i tarafından ezilmesin
+  const justCreatedSessionIdRef = useRef<number | null>(null)
   const initialHandled = useRef(false)
 
   useEffect(() => {
@@ -301,10 +307,17 @@ const UnifiedChat: React.FC<{
       return res.json()
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['unified-chat-sessions'] })
       abortChatStream(streamChannel, { keepPartial: false })
+      justCreatedSessionIdRef.current = data.id
+      queryClient.setQueryData<ChatSession[]>(['unified-chat-sessions'], (prev) => [
+        data as ChatSession,
+        ...(prev ?? []).filter((s) => s.id !== data.id),
+      ])
+      persistSessionId(streamChannel, data.id)
       setSelectedSessionId(data.id)
       setInput('')
+      pdfSelect.reset()
+      queryClient.invalidateQueries({ queryKey: ['unified-chat-sessions'] })
     }
   })
 
@@ -343,7 +356,12 @@ const UnifiedChat: React.FC<{
 
   useEffect(() => {
     if (!sessionsFetched) return
-    if (selectedSessionId != null && sessions.some((s) => s.id === selectedSessionId)) return
+    if (selectedSessionId != null && sessions.some((s) => s.id === selectedSessionId)) {
+      if (justCreatedSessionIdRef.current === selectedSessionId) justCreatedSessionIdRef.current = null
+      return
+    }
+    // Yeni oluşturulan oturum henüz listede değilse (liste yenilenirken) seçimi geri alma
+    if (selectedSessionId != null && selectedSessionId === justCreatedSessionIdRef.current) return
     setSelectedSessionId(sessions.length > 0 ? sessions[0].id : null)
   }, [sessionsFetched, sessions, selectedSessionId])
 
@@ -479,6 +497,9 @@ const UnifiedChat: React.FC<{
                 icon={<Globe size={24} className="text-white" />}
                 description={t('chat_empty_unified')}
                 suggestions={SUGGESTED_QUESTIONS}
+                reportSuggestions={chatReportQuestions('executive', locale)}
+                reportTitle={t('chat_report_qs')}
+                sampleTitle={t('chat_sample_qs')}
                 onSelectSuggestion={sendMessage}
               />
             ) : (
@@ -512,7 +533,7 @@ const UnifiedChat: React.FC<{
                                   subtitle: msg.created_at ? new Date(msg.created_at).toLocaleString(locale === 'en' ? 'en-GB' : 'tr-TR') : undefined,
                                   filename: `ai_yanit_${(msg.created_at || '').slice(0, 10) || 'export'}`,
                                 }, msg.meta?.charts)}
-                                className="text-xs px-2 py-1.5 rounded bg-red-700/40 hover:bg-red-600/50 text-red-100 border border-red-500/40 flex items-center gap-1"
+                                className="text-xs px-2 py-1.5 rounded-sm bg-red-700/40 hover:bg-red-600/50 text-red-100 border border-red-500/40 flex items-center gap-1"
                               >
                                 <FileDown size={12} /> PDF
                               </button>
@@ -522,14 +543,14 @@ const UnifiedChat: React.FC<{
                                 <button
                                   type="button"
                                   onClick={() => downloadTableAsCsv(getFirstMarkdownTable(msg.content)!, 'tablo.csv')}
-                                  className="text-xs px-2 py-1.5 rounded bg-slate-700/70 hover:bg-slate-700 text-slate-200 border border-slate-600/50 flex items-center gap-1"
+                                  className="text-xs px-2 py-1.5 rounded-sm bg-slate-700/70 hover:bg-slate-700 text-slate-200 border border-slate-600/50 flex items-center gap-1"
                                 >
                                   {t('chat_csv')}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => downloadTableAsXlsx(getFirstMarkdownTable(msg.content)!, 'tablo.xlsx')}
-                                  className="text-xs px-2 py-1.5 rounded bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1"
+                                  className="text-xs px-2 py-1.5 rounded-sm bg-green-700/60 hover:bg-green-600/70 text-green-200 border border-green-600/50 flex items-center gap-1"
                                 >
                                   {t('chat_xlsx')}
                                 </button>
@@ -570,6 +591,7 @@ const UnifiedChat: React.FC<{
                 {isLoading && streamBelongsHere && (
                   <div className="flex justify-start">
                     <div className={nlAssistantBubbleClass}>
+                      <ThinkingTrace text={thinkingTrace} live={!streamingText} />
                       {toolCalls.length > 0 && (
                         <div className="space-y-1 mb-2">
                           {toolCalls.map((tc, i) => (
@@ -584,8 +606,8 @@ const UnifiedChat: React.FC<{
                       {thinkingPhase === 'context' && (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-slate-400">
-                            <div className="w-3 h-3 border-2 border-sky-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                            <span>{thinkingLabel}</span>
+                            <div className="w-3 h-3 border-2 border-sky-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                            <span>{progressText || thinkingLabel}</span>
                           </div>
                           <ThinkingDots />
                         </div>
@@ -593,8 +615,8 @@ const UnifiedChat: React.FC<{
                       {thinkingPhase === 'tools' && (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-cyan-400/90">
-                            <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                            <span>{thinkingLabel}</span>
+                            <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                            <span>{progressText || thinkingLabel}</span>
                           </div>
                           <ThinkingDots />
                         </div>
@@ -602,13 +624,23 @@ const UnifiedChat: React.FC<{
                       {thinkingPhase === 'streaming' && streamingText && (
                         <div>
                           <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-2">
-                            <div className="w-2.5 h-2.5 border-2 border-green-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                            <div className="w-2.5 h-2.5 border-2 border-green-400 border-t-transparent rounded-full animate-spin shrink-0" />
                             <span>{t('chat_generating')}</span>
                           </div>
                           <StreamingText text={streamingText} />
                         </div>
                       )}
-                      {thinkingPhase === 'streaming' && !streamingText && <ThinkingDots />}
+                      {thinkingPhase === 'streaming' && !streamingText && (
+                        <div className="space-y-2">
+                          {progressText && (
+                            <div className="flex items-center gap-2 text-xs text-slate-400">
+                              <div className="w-3 h-3 border-2 border-sky-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                              <span>{progressText}</span>
+                            </div>
+                          )}
+                          <ThinkingDots />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

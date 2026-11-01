@@ -15,7 +15,7 @@ export const DropdownMenuContent = React.forwardRef<
       sideOffset={sideOffset}
       collisionPadding={collisionPadding}
       className={cn(
-        "pointer-events-auto z-[110] max-h-[min(85vh,var(--radix-dropdown-menu-content-available-height,85vh))] min-w-[12rem] overflow-y-auto overscroll-contain rounded-xl border p-1.5 shadow-2xl",
+        "pointer-events-auto z-110 max-h-[min(85vh,var(--radix-dropdown-menu-content-available-height,85vh))] min-w-[12rem] overflow-y-auto overscroll-contain rounded-xl border p-1.5 shadow-2xl",
         className,
       )}
       style={{
@@ -38,7 +38,7 @@ export const DropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none focus:bg-[var(--color-accent)] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-default select-none items-center gap-2 rounded-xs px-2 py-1.5 text-sm outline-hidden focus:bg-(--color-accent) data-disabled:pointer-events-none data-disabled:opacity-50",
       className,
     )}
     {...props}
@@ -52,7 +52,7 @@ export const DropdownMenuLabel = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.Label
     ref={ref}
-    className={cn("px-2 py-1.5 text-xs text-[var(--color-muted-foreground)]", className)}
+    className={cn("px-2 py-1.5 text-xs text-(--color-muted-foreground)", className)}
     {...props}
   />
 ));
@@ -64,7 +64,7 @@ export const DropdownMenuSeparator = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.Separator
     ref={ref}
-    className={cn("-mx-1 my-1 h-px bg-[var(--color-border)]", className)}
+    className={cn("-mx-1 my-1 h-px bg-(--color-border)", className)}
     {...props}
   />
 ));
@@ -78,7 +78,7 @@ export const DropdownMenuSubTrigger = React.forwardRef<
   <DropdownMenuPrimitive.SubTrigger
     ref={ref}
     className={cn(
-      "flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none focus:bg-[var(--color-accent)] data-[state=open]:bg-[var(--color-accent)]",
+      "flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden focus:bg-(--color-accent) data-[state=open]:bg-(--color-accent)",
       className,
     )}
     {...props}
@@ -111,7 +111,7 @@ export const DropdownMenuSubContent = React.forwardRef<
       sideOffset={sideOffset}
       collisionPadding={collisionPadding}
       className={cn(
-        "z-[110] max-h-[min(85vh,var(--radix-dropdown-menu-content-available-height,85vh))] min-w-[12rem] overflow-y-auto overscroll-contain rounded-xl border border-[var(--color-border)] bg-[var(--color-popover)] p-1.5 text-[var(--color-popover-foreground)] shadow-xl",
+        "z-110 max-h-[min(85vh,var(--radix-dropdown-menu-content-available-height,85vh))] min-w-[12rem] overflow-y-auto overscroll-contain rounded-xl border border-(--color-border) bg-(--color-popover) p-1.5 text-(--color-popover-foreground) shadow-xl",
         className,
       )}
       {...props}

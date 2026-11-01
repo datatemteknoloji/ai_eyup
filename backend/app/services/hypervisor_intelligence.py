@@ -28,13 +28,18 @@ import requests
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.services.chat_rules import NUMBER_RULE_TR
+from app.services.chat_quality import power_state as _cq_power
+from app.services.chat_rules import NUMBER_RULE_TR, ADVICE_RULE_TR, HONESTY_RULE_TR, USER_LANGUAGE_RULE_TR
 from app.core.config import settings, get_active_model
 from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor
 from app.models.infrastructure_report import BusinessServiceMap
 from app.models.server import Server
 from app.services import llm_gateway
+from app.services.chat_live_final import (   # Adım 17: canlı akış (sink yoksa eski bloklayan yola eşdeğer)
+    current_sink as _current_live_sink,
+    generate_live_sync as _generate_live_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +108,9 @@ _VIRTUALIZATION_PERSONA = (
     "VERİ DİSİPLİNİ — KRİTİK:\n"
     "- Ortamda vCenter/hypervisor bağlantısı vardır; cevapları SAĞLANAN CANLI VERİYE dayandır.\n"
     "- 'Bilinmiyor', 'bu veriye erişimim yok', 'collector yok', 'senkronize edilmiyor' deme — "
-    "veri blokunda yoksa yalnızca bağlantı/sorgu hatasını veya 'canlı sorguda kayıt dönmedi'yi söyle.\n"
+    "bu turda veri alınamadıysa 'bu kaynak bu turda sorgulanamadı', ainew'de hiç tutulmayan bilgi "
+    "için 'ainew verisinde yok', aralıkta kayıt yoksa 'bu aralıkta kayıt yok' de ('veri bloku', "
+    "'canlı sorgu', 'dönmedi' gibi iç jargon KULLANMA).\n"
     "- Tahmin etme, uydurma; eksik alan için boş bırak veya 'sorguda gelmedi' yaz.\n"
     "- Salt okuma: power off/on, destroy, reconfig, migrate gibi değişiklik önerme veya "
     "yapma iddiasında bulunma; yalnız gözlem/analiz.\n\n"
@@ -114,7 +121,10 @@ _VIRTUALIZATION_PERSONA = (
     "değerlendirmesi yap' derse ya da soru gerçekten kapasite/sağlık değerlendirmesi "
     "gerektiriyorsa kapasite riskini, olası kök nedeni ve somut aksiyon önerisini de ekle."
 )
-_VIRTUALIZATION_PERSONA = _VIRTUALIZATION_PERSONA + "\n\n" + NUMBER_RULE_TR  # Dilim T: ortak SAYI KURALI
+_VIRTUALIZATION_PERSONA = (
+    _VIRTUALIZATION_PERSONA + "\n\n" + NUMBER_RULE_TR + "\n\n" + ADVICE_RULE_TR
+    + "\n\n" + HONESTY_RULE_TR + "\n\n" + USER_LANGUAGE_RULE_TR
+)  # Dilim T: ortak SAYI + ÖNERİ KURALI; Adım 8: DÜRÜSTLÜK + KULLANICI DİLİ
 
 # ── Intent keywords ───────────────────────────────────────────────────────────
 INTENT_PATTERNS = {
@@ -240,6 +250,71 @@ def _parse_days_from_question(question: str, default: int = 7) -> int:
     return default
 
 
+def _tw_ctx(db: Session, question: str, default_days: int, source: str = "live"):
+    """Adım 5c — zaman penceresi bağlamı. → (days, window|None, early_answer|None, note).
+
+    window None  → eski davranış (`_parse_days_from_question`), başlıklar değişmez.
+    window var   → takvim penceresi; gelecek/saklama dışı → «veri yok + kapsam» (early_answer);
+                   kısmen dışı → eksik olabilir notu. source: 'live' (vCenter olay geçmişi) | 'db' (system_events).
+    """
+    from app.services.chat_quality import time_window as _tw, clock as _clk
+    window = _tw.resolve_for_chat(question)
+    if window is None:
+        return _parse_days_from_question(question, default=default_days), None, None, ""
+    now = _clk.now()
+    now_l = _tw._aware(now, window.start.tzinfo)
+    days = window.days_back(now)
+    if source == "db":
+        try:
+            earliest = db.execute(text("SELECT min(created_at) FROM system_events")).scalar()
+        except Exception:
+            earliest = None
+        src_label, policy = "Olay kaydı (system_events)", False
+    else:
+        try:
+            from app.services import runtime_settings as _rs
+            ret = _rs.get_int("virt_live_event_retention_days")
+        except Exception:
+            ret = 30
+        earliest = now_l - timedelta(days=ret)
+        src_label, policy = "vCenter olay geçmişi", True
+    if window.start >= now_l:
+        return days, window, _tw.no_data_text(window, src_label, earliest, earliest_is_policy=policy, future=True), ""
+    st = _tw.retention_status(window, earliest, now)
+    if st == "outside":
+        return days, window, _tw.no_data_text(window, src_label, earliest, earliest_is_policy=policy), ""
+    note = _tw.partial_note(window, src_label, earliest) if st == "partial" else ""
+    return days, window, None, note
+
+
+def _sp_t(days: int, window) -> str:
+    """Başlık öneki: «Son N Günde» ya da «Dün: 2026-… (Europe/Istanbul) —»."""
+    return f"Son {days} Günde" if window is None else f"{window.title} —"
+
+
+def _sp_in(days: int, window) -> str:
+    """Boş-sonuç cümlesi öneki."""
+    return f"Son {days} günde" if window is None else f"{window.title} penceresinde"
+
+
+def _tw_note(note: str) -> str:
+    return f"\n\n{note}" if note else ""
+
+
+def _default_since(days: float) -> datetime:
+    """Pencere verilmeyen varsayılan yol: tz-aware «şimdi − gün» (5c-tz düzeltmesi; eski: naif `utcnow()` → 3 saat geniş)."""
+    from app.services.chat_quality import clock as _clk
+    return _clk.default_since(days)
+
+
+def _db_window(window):
+    """system_events sorguları için (since, until): pencere varsa tz'li, yoksa eski naif since + ileri until."""
+    if window is not None:
+        return window.start, window.end
+    return None, None
+
+
+
 def detect_intent(question: str) -> List[str]:
     """Sorudan intent listesi çıkar (birden fazla olabilir)."""
     q = _tr_lower(question)
@@ -313,6 +388,8 @@ def _get_esx_hosts(db: Session) -> List[Dict[str, Any]]:
         """)).all()
     except Exception:
         return []
+    from app.services.host_freshness import fresh_hosts
+    rows = fresh_hosts(rows)
 
     result = []
     from app.services.virt_scope import count_names, disambiguate
@@ -758,7 +835,7 @@ def _cluster_summary_block(vms: List[Dict], esx_hosts: List[Dict]) -> str:
         "_Not: vCenter Cluster objesi ayrı sync edilmiyor; VM `vm_cluster` alanına göre gruplanır._",
     ]
     for name, group in sorted(groups.items(), key=lambda x: -len(x[1])):
-        on = sum(1 for v in group if str(v.get("power_state") or "").lower() in ("powered_on", "poweredon", "up", "running"))
+        on = sum(1 for v in group if _cq_power.is_on(v.get("power_state")))
         cpu = sum(int(v.get("cpu_count") or 0) for v in group)
         ram = sum(float(v.get("memory_gb") or 0) for v in group)
         lines.append(
@@ -786,7 +863,7 @@ def _environment_totals_block(
     on = sum(
         1
         for v in vms
-        if str(v.get("power_state") or "").lower() in ("powered_on", "poweredon", "up", "running")
+        if _cq_power.is_on(v.get("power_state"))
     )
     scope_line = (
         f"  NOT: Yukarıdaki detay bölümleri '{scope_note}' kapsamına daraltıldı; "
@@ -947,7 +1024,7 @@ def _datastore_vm_disk_summary(
         allocated_gb = sum((v.get("disk_gb") or 0) for v in group_vms)
         powered_on = sum(
             1 for v in group_vms
-            if v.get("power_state") in ("POWERED_ON", "up", "running", "poweredOn")
+            if _cq_power.is_on(v.get("power_state"))
         )
         cap = live_idx.get(group_name.lower()) if not group_name.startswith("Hypervisor:") else None
 
@@ -1003,7 +1080,7 @@ def _vm_list_block(vms: List[Dict], hv_map: Dict, intents: List[str]) -> str:
     # Filtreler
     filtered = vms
     if "powered_off" in intents:
-        filtered = [v for v in vms if v["power_state"] not in ("POWERED_ON", "up", "running")]
+        filtered = [v for v in vms if not _cq_power.is_on(v["power_state"])]
     elif "tools_status" in intents:
         q_lower = " ".join(intents)
         if "olmayan" in q_lower or "yüklü değil" in q_lower:
@@ -1073,16 +1150,17 @@ def _pstate(v: Dict[str, Any]) -> str:
     return (v.get("power_state") or "").lower()
 
 
+# Güç durumu sınıfları tek kaynaktan (Adım 5a): chat_quality.power_state — VMware/KubeVirt/oVirt/Proxmox ham değerleri
 def _is_on(v: Dict[str, Any]) -> bool:
-    return _pstate(v) in ("powered_on", "up", "running", "poweredon")
+    return _cq_power.is_on(v.get("power_state"))
 
 
 def _is_off(v: Dict[str, Any]) -> bool:
-    return _pstate(v) in ("powered_off", "down", "poweredoff", "off")
+    return _cq_power.is_off(v.get("power_state"))
 
 
 def _is_suspended(v: Dict[str, Any]) -> bool:
-    return "suspend" in _pstate(v)
+    return _cq_power.is_suspended(v.get("power_state"))
 
 
 def _md_table(headers: List[str], rows: List[List[Any]], empty_msg: str = "_Kayıt bulunamadı._") -> str:
@@ -1107,6 +1185,50 @@ def _na(detail: str) -> str:
         "_Not: Ortam bağlantısı varsa veri çekilir; 'bilinmiyor' demek yerine "
         "yukarıdaki sorgu/bağlantı sonucuna bakın._"
     )
+
+
+def _ev_failed_sources(errors) -> List[str]:
+    """vCenter olay sorgusu hatalarından (``ad: mesaj``) ulaşılamayan kaynak adları (sıralı, tekil)."""
+    names: List[str] = []
+    for e in errors or []:
+        n = str(e).split(":", 1)[0].strip()
+        if n and n not in names:
+            names.append(n)
+    return names
+
+
+def _ev_unreachable(errors) -> str:
+    return ("**Canlı sorgu sonucu:** hiçbir vCenter kaynağına ulaşılamadı (" + "; ".join(str(e) for e in list(errors)[:3])
+            + "). Bu pencere için olay verisi alınamadı — sonuç **bilinmiyor** (olay yok anlamına gelmez).")
+
+
+def _ev_src_note(errors, *, vmware_only: bool = False) -> str:
+    """Olay tabanlı cevaplara kaynak durumu notu: ulaşılamayan vCenter'lar + (isteğe bağlı) kapsam sınırı.
+
+    Boş/«tespit edilmedi» sonucu, kaynak hatasında «olay yok» anlamına gelmez — bunu açıkça yazar.
+    """
+    parts: List[str] = []
+    if errors:
+        detail = "; ".join(str(e) for e in list(errors)[:5])
+        parts.append(
+            "> **Kaynak durumu:** şu vCenter kaynaklarına ulaşılamadı → " + detail + ". "
+            "Yukarıdaki sonuç yalnız erişilebilen kaynakları kapsar; ulaşılamayan kaynak için sonuç **bilinmiyor** "
+            "(olay yok anlamına gelmez)."
+        )
+    try:
+        from app.services.vcenter_vm_lifecycle import pop_truncation
+        trunc = pop_truncation()
+    except Exception:
+        trunc = []
+    if trunc:
+        parts.append(
+            "> **Sonuç kesildi:** " + ", ".join(f"{t['hypervisor']} (ilk {t['max_events']} olay)" for t in trunc)
+            + " — olay sorgusu üst sınıra ulaştı; pencerenin daha eski kısmı okunmadı, sayılar eksik olabilir "
+            "(toplam bilinmiyor). Daha dar bir zaman aralığıyla sorun."
+        )
+    if vmware_only:
+        parts.append("> _Kapsam: yalnız VMware (vCenter) olayları; OLVM / OpenShift Virtualization VM'leri için olay kaynağı yok._")
+    return ("\n\n" + "\n".join(parts)) if parts else ""
 
 
 # ── VM Durumu ────────────────────────────────────────────────────────────────
@@ -1141,26 +1263,36 @@ def h_capacity_n1(db: Session, question: str = "") -> str:
 
 def h_restart_week(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=7)
-    r = lc.restart_report(db, days=days)
-    if r["errors"] and not r["restarts"] and not r["raw_event_count"]:
-        return _na(f"vCenter event sorgusu başarısız oldu: {'; '.join(r['errors'][:2])}")
+    days, win, early, note = _tw_ctx(db, question, 7)
+    if early:
+        return early
+    r = lc.restart_report(db, days=days, window=win)
+    head = f"### {_sp_t(days, win)} Restart Edilen VM'ler\n\n"
+    ok_n = max(0, int(r.get("hypervisors") or 0) - len(_ev_failed_sources(r["errors"])))
+    if r["errors"] and not r["restarts"] and not r["raw_event_count"] and ok_n == 0:
+        return head + _ev_unreachable(r["errors"]) + _ev_src_note(None, vmware_only=True)
     rows = [[x["vm_name"], x["restart_count"], _fmt_ts(x["last_event_at"]), x["hypervisor"]] for x in r["restarts"][:30]]
     return (
-        f"### Son {days} Günde Restart Edilen VM'ler\n\n"
-        f"**Toplam restart olayı:** {r['total_restart_events']} | **Etkilenen VM sayısı:** {r['vm_count']}\n\n"
-        + _md_table(["VM", "Restart Sayısı", "Son Olay", "Hypervisor"], rows, f"Son {days} günde restart tespit edilmedi.")
+        head
+        + f"**Toplam restart olayı:** {r['total_restart_events']} | **Etkilenen VM sayısı:** {r['vm_count']}\n\n"
+        + _md_table(["VM", "Restart Sayısı", "Son Olay", "Hypervisor"], rows, f"{_sp_in(days, win)} restart tespit edilmedi.")
+        + _tw_note(note)
+        + _ev_src_note(r["errors"], vmware_only=True)
     )
 
 
 def h_toggle_24h(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=1)
-    r = lc.power_toggle_last_24h(db, days=days)
+    days, win, early, note = _tw_ctx(db, question, 1)
+    if early:
+        return early
+    r = lc.power_toggle_last_24h(db, days=days, window=win)
     rows = [[x["vm_name"], x["event_count"]] for x in r["toggled"]]
     return (
-        f"### Son {days} Günde Kapatılıp Açılan VM'ler\n\n"
-        + _md_table(["VM", "Olay Sayısı"], rows, f"Son {days} günde kapanıp açılan VM tespit edilmedi.")
+        f"### {_sp_t(days, win)} Kapatılıp Açılan VM'ler\n\n"
+        + _md_table(["VM", "Olay Sayısı"], rows, f"{_sp_in(days, win)} kapanıp açılan VM tespit edilmedi.")
+        + _tw_note(note)
+        + _ev_src_note(r.get("errors"), vmware_only=True)
     )
 
 
@@ -1177,33 +1309,64 @@ def h_longest_uptime(db: Session, question: str = "") -> str:
 
 def h_created_30d(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=30)
-    r = lc.creation_events(db, days=days)
+    days, win, early, note = _tw_ctx(db, question, 30)
+    if early:
+        return early
+    r = lc.creation_events(db, days=days, window=win)
     rows = [[e["vm_name"], _fmt_ts(e.get("timestamp")), e.get("hypervisor")] for e in r["created"][:50]]
     return (
-        f"### Son {days} Günde Oluşturulan VM'ler\n\n"
+        f"### {_sp_t(days, win)} Oluşturulan VM'ler\n\n"
         f"**Toplam:** {len(r['created'])}\n\n"
-        + _md_table(["VM", "Oluşturma Zamanı", "Hypervisor"], rows, f"Son {days} günde yeni VM oluşturulmamış.")
+        + _md_table(["VM", "Oluşturma Zamanı", "Hypervisor"], rows, f"{_sp_in(days, win)} yeni VM oluşturulmamış.")
+        + _tw_note(note)
+        + _ev_src_note(r.get("errors"))
     )
 
 
 def h_removed_30d(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=30)
-    r = lc.removal_events(db, days=days)
+    days, win, early, note = _tw_ctx(db, question, 30)
+    if early:
+        return early
+    r = lc.removal_events(db, days=days, window=win)
     rows = [[e["vm_name"], _fmt_ts(e.get("timestamp")), e.get("hypervisor")] for e in r["removed"][:50]]
     return (
-        f"### Son {days} Günde Silinen / Envanterden Çıkarılan VM'ler\n\n"
+        f"### {_sp_t(days, win)} Silinen / Envanterden Çıkarılan VM'ler\n\n"
         f"**Toplam:** {len(r['removed'])}\n\n"
-        + _md_table(["VM", "Silinme Zamanı", "Hypervisor"], rows, f"Son {days} günde silinen VM tespit edilmedi.")
+        + _md_table(["VM", "Silinme Zamanı", "Hypervisor"], rows, f"{_sp_in(days, win)} silinen VM tespit edilmedi.")
+        + _tw_note(note)        + _ev_src_note(r.get("errors"))
     )
 
 
 def h_powered_off_count(db: Session, question: str = "") -> str:
     vms = _get_vms(db)
+    scope_line = ""
+    # Soruda hypervisor/cluster/tür adı geçiyorsa («office vCenter'daki kapalı VM'leri listele») kapsama daralt;
+    # sayım kuralıyla (count_rules) aynı katalog/kapsam çözümü — kapsam dışı VM listelenmez (bench v11).
+    try:
+        from app.services.chat_quality import count_rules as _cr, count_scope as _cs
+        cat = _cr.get_catalog()
+        if cat is not None and cat.ok and (question or "").strip():
+            sc = _cs.resolve_virt(question, cat, neutral=_cr._NEUTRAL)
+            if not sc.is_all and sc.hv_ids is not None:
+                ids = set(sc.hv_ids)
+                vms = [v for v in vms if v.get("hypervisor_id") in ids]
+                if sc.cluster_names:
+                    cl = {c.lower() for c in sc.cluster_names}
+                    vms = [v for v in vms if (v.get("cluster") or "").lower() in cl]
+                scope_line = f"Kapsam: {_cs.scope_label(sc, cat, domain='virt')}\n\n"
+    except Exception:
+        logger.warning("[h_powered_off_count] kapsam çözülemedi; tüm envanter", exc_info=True)
+        vms = _get_vms(db)
+        scope_line = ""
     off = [v for v in vms if _is_off(v)]
-    return f"### Powered Off Durumda Bekleyen VM Sayısı\n\n**{len(off)}** VM kapalı durumda (toplam {len(vms)} VM içinde).\n\n" + _md_table(
-        ["VM", "Datastore", "RAM (GB)"], [[v["name"], v["datastore"] or "-", v["memory_gb"]] for v in off[:30]]
+    shown = off[:30]
+    more = f"\n\n_İlk {len(shown)} VM gösteriliyor ({len(off)} kapalı VM var)._" if len(off) > len(shown) else ""
+    return (
+        f"### Powered Off Durumda Bekleyen VM Sayısı\n\n**{len(off)}** VM kapalı durumda (kapsamdaki toplam {len(vms)} VM içinde).\n\n"
+        + scope_line
+        + _md_table(["VM", "Datastore", "RAM (GB)"], [[v["name"], v["datastore"] or "-", v["memory_gb"]] for v in shown])
+        + more
     )
 
 
@@ -1308,10 +1471,9 @@ def _vm_host_breakdown_table(vms: List[Dict[str, Any]]) -> str:
 
 def h_count_vms(db: Session, question: str = "") -> str:
     vms = _get_vms(db)
-    on = sum(1 for v in vms if _is_on(v))
-    off = sum(1 for v in vms if _is_off(v))
-    sus = sum(1 for v in vms if _is_suspended(v))
-    other = len(vms) - on - off - sus
+    _ps = _cq_power.summarize(v.get("power_state") for v in vms)
+    on, off, sus = _ps["on"], _ps["off"], _ps["suspended"]
+    other = _ps["transitional"] + _ps["unknown"]
     qn = (question or "").lower()
     want_hosts = bool(re.search(
         r"hangi\s+host|host.?ta|host\s*dağılım|hangi\s+esx|nerede|hangi\s+sunucu",
@@ -1323,7 +1485,7 @@ def h_count_vms(db: Session, question: str = "") -> str:
         f"- Çalışan (powered on): **{on}**\n"
         f"- Kapalı (powered off): **{off}**\n"
         f"- Suspended: **{sus}**\n"
-        + (f"- Diğer/bilinmeyen power state: **{other}**\n" if other else "")
+        + (f"- Diğer/bilinmeyen power state: **{other}** ({_cq_power.other_note(_ps['other_raw'])})\n" if other else "")
     )
     # Her zaman kısa host kırılımı; soru host istiyorsa başlığı belirginleştir
     body += (
@@ -1432,36 +1594,46 @@ def h_suspended_vms(db: Session, question: str = "") -> str:
 
 def h_power_state_changes_7d(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=7)
-    r = lc.power_state_changes(db, days=days)
+    days, win, early, note = _tw_ctx(db, question, 7)
+    if early:
+        return early
+    r = lc.power_state_changes(db, days=days, window=win)
     rows = [[name, cnt] for name, cnt in r["changed"][:30]]
-    return f"### Son {days} Günde Power State Değiştiren VM'ler\n\n" + _md_table(["VM", "Olay Sayısı"], rows, f"Son {days} günde power state değişikliği tespit edilmedi.")
+    return (f"### {_sp_t(days, win)} Power State Değiştiren VM'ler\n\n"
+            + _md_table(["VM", "Olay Sayısı"], rows, f"{_sp_in(days, win)} power state değişikliği tespit edilmedi.") + _tw_note(note))
 
 
 def h_last_reboot_top20(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=90)
-    r = lc.last_reboot_times(db, days=days)
+    days, win, early, note = _tw_ctx(db, question, 90)
+    if early:
+        return early
+    r = lc.last_reboot_times(db, days=days, window=win)
     items = sorted(r["last_reboot"].items(), key=lambda x: x[1], reverse=True)
     rows = [[name, _fmt_ts(ts)] for name, ts in items[:20]]
+    span = f"son {days} gün penceresi" if win is None else win.title
     return (
-        f"### Son Reboot Tarihine Göre İlk 20 VM (son {days} gün penceresi)\n\n"
-        + _md_table(["VM", "Son Reboot"], rows, f"Son {days} günde reboot kaydı bulunamadı.")
+        f"### Son Reboot Tarihine Göre İlk 20 VM ({span})\n\n"
+        + _md_table(["VM", "Son Reboot"], rows, f"{_sp_in(days, win)} reboot kaydı bulunamadı.")
+        + _tw_note(note)
     )
 
 
 def h_never_rebooted(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=90)
+    days, win, early, note = _tw_ctx(db, question, 90)
+    if early:
+        return early
     vms = [v for v in _get_vms(db) if _is_on(v)]
-    r = lc.last_reboot_times(db, days=days)
+    r = lc.last_reboot_times(db, days=days, window=win)
     rebooted_names = {n.lower() for n in r["last_reboot"].keys()}
     never = [v for v in vms if v["name"].lower() not in rebooted_names]
     return (
-        f"### Hiç Reboot Edilmemiş VM'ler (son {days} günlük event penceresinde reboot kaydı yok)\n\n"
+        f"### Hiç Reboot Edilmemiş VM'ler ({f'son {days} günlük event penceresinde' if win is None else win.title + ' penceresinde'} reboot kaydı yok)\n\n"
         f"_Not: Bu, {days} günden daha önce en son yeniden başlatılmış olabileceği veya event geçmişinin "
         "o kadar geriye gitmediği anlamına da gelebilir — kesin 'hiç' garantisi değildir._\n\n"
-        + _md_table(["VM"], [[v["name"]] for v in never[:40]], f"Tüm çalışan VM'ler son {days} günde en az bir kez yeniden başlatılmış.")
+        + _md_table(["VM"], [[v["name"]] for v in never[:40]], f"Tüm çalışan VM'ler {_sp_in(days, win)} en az bir kez yeniden başlatılmış.")
+        + _tw_note(note)
     )
 
 
@@ -1910,7 +2082,7 @@ def h_idle_disks(db: Session, question: str = "") -> str:
         return _na("Disk IOPS verisi yok — sync veya vCenter bağlantısını kontrol edin.")
     powered = [
         v for v in r["vms"]
-        if str(v.get("power_state") or "").lower() in ("poweredon", "powered_on", "on")
+        if _cq_power.is_on(v.get("power_state"))
     ]
     idle = [
         v for v in powered
@@ -2010,26 +2182,32 @@ def h_network_not_available(db: Session, topic: str) -> str:
 
 def h_network_errors(db: Session, question: str = "") -> str:
     """system_events + adapter disconnected + düşük trafik özeti."""
-    days = _parse_days_from_question(question, default=7)
-    since = datetime.utcnow() - timedelta(days=days)
+    days, win, early, note = _tw_ctx(db, question, 7, "db")
+    if early:
+        return early
+    since = _default_since(days)
+    until = None
+    if win is not None:
+        since, until = win.start, win.end
     rows_q = db.execute(text("""
         SELECT title, severity, source, created_at FROM system_events
-        WHERE created_at >= :since
+        WHERE created_at >= :since AND (CAST(:until AS timestamptz) IS NULL OR created_at < CAST(:until AS timestamptz))
           AND (
             lower(title) LIKE '%network%' OR lower(title) LIKE '%nic%'
             OR lower(title) LIKE '%vlan%' OR lower(title) LIKE '%link%'
             OR lower(title) LIKE '%disconnect%' OR lower(title) LIKE '%ağ%'
           )
         ORDER BY created_at DESC LIMIT 40
-    """), {"since": since}).all()
+    """), {"since": since, "until": until}).all()
     rows = [
         [r.title[:80], r.severity, r.source, r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "-"]
         for r in rows_q
     ]
     disc = h_adapter_disconnected(db, question)
     return (
-        f"### Son {days} Günde Ağ ile İlgili Olaylar\n\n"
-        + _md_table(["Olay", "Önem", "Kaynak", "Zaman"], rows, f"Son {days} günde ağ olayı yok.")
+        f"### {_sp_t(days, win)} Ağ ile İlgili Olaylar\n\n"
+        + _md_table(["Olay", "Önem", "Kaynak", "Zaman"], rows, f"{_sp_in(days, win)} ağ olayı yok.")
+        + _tw_note(note)
         + "\n\n"
         + disc
     )
@@ -2156,12 +2334,15 @@ def h_host_most_vms(db: Session, question: str = "") -> str:
 
 def h_host_events_30d(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=30)
-    r = lc.host_lifecycle_events(db, days=days)
+    days, win, early, note = _tw_ctx(db, question, 30)
+    if early:
+        return early
+    r = lc.host_lifecycle_events(db, days=days, window=win)
     if r["errors"] and not r["events"]:
         return _na(f"vCenter host event sorgusu başarısız: {'; '.join(r['errors'][:2])}")
     rows = [[e.get("host_ref") or "-", e.get("event_type_id"), _fmt_ts(e.get("timestamp"))] for e in r["events"][:40]]
-    return f"### Son {days} Günde Host Olayları (bağlantı/reboot/maintenance/HA)\n\n" + _md_table(["Host", "Olay Tipi", "Zaman"], rows, f"Son {days} günde host olayı tespit edilmedi.")
+    return (f"### {_sp_t(days, win)} Host Olayları (bağlantı/reboot/maintenance/HA)\n\n"
+            + _md_table(["Host", "Olay Tipi", "Zaman"], rows, f"{_sp_in(days, win)} host olayı tespit edilmedi.") + _tw_note(note))
 
 
 def h_cluster_imbalance(db: Session, question: str = "") -> str:
@@ -2868,16 +3049,22 @@ def h_free_resources(db: Session, question: str = "") -> str:
 
 
 def h_storage_alarms_30d(db: Session, question: str = "") -> str:
-    days = _parse_days_from_question(question, default=30)
-    since = datetime.utcnow() - timedelta(days=days)
+    days, win, early, note = _tw_ctx(db, question, 30, "db")
+    if early:
+        return early
+    since = _default_since(days)
+    until = None
+    if win is not None:
+        since, until = win.start, win.end
     rows_q = db.execute(text("""
         SELECT title, severity, created_at FROM system_events
-        WHERE source IN ('vcenter_alarm','vcenter_event') AND created_at >= :since
+        WHERE source IN ('vcenter_alarm','vcenter_event') AND created_at >= :since AND (CAST(:until AS timestamptz) IS NULL OR created_at < CAST(:until AS timestamptz))
           AND (lower(title) LIKE '%datastore%' OR lower(title) LIKE '%storage%' OR lower(title) LIKE '%disk%')
         ORDER BY created_at DESC LIMIT 40
-    """), {"since": since}).all()
+    """), {"since": since, "until": until}).all()
     rows = [[r.title[:80], r.severity, r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "-"] for r in rows_q]
-    return f"### Son {days} Günde Storage Alarmları\n\n" + _md_table(["Olay", "Önem", "Zaman"], rows, f"Son {days} günde storage ile ilgili alarm bulunmuyor.")
+    return (f"### {_sp_t(days, win)} Storage Alarmları\n\n"
+            + _md_table(["Olay", "Önem", "Zaman"], rows, f"{_sp_in(days, win)} storage ile ilgili alarm bulunmuyor.") + _tw_note(note))
 
 
 def h_storage_not_available(db: Session, topic: str) -> str:
@@ -2989,29 +3176,42 @@ def h_datastore_vm_map(db: Session, question: str = "") -> str:
 # ── Olaylar ve Alarm ──────────────────────────────────────────────────────────
 
 def h_critical_alarms_24h(db: Session, question: str = "") -> str:
-    days = _parse_days_from_question(question, default=1)
-    since = datetime.utcnow() - timedelta(days=days)
+    days, win, early, note = _tw_ctx(db, question, 1, "db")
+    if early:
+        return early
+    since = _default_since(days)
+    until = None
+    if win is not None:
+        since, until = win.start, win.end
     rows_q = db.execute(text("""
         SELECT id, title, severity, source, created_at, server_id FROM system_events
-        WHERE severity IN ('critical','emergency') AND created_at >= :since
+        WHERE severity IN ('critical','emergency') AND created_at >= :since AND (CAST(:until AS timestamptz) IS NULL OR created_at < CAST(:until AS timestamptz))
         ORDER BY created_at DESC LIMIT 40
-    """), {"since": since}).all()
+    """), {"since": since, "until": until}).all()
     rows = [[r.title[:80], r.source, r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "-"] for r in rows_q]
     label = "24 Saatte" if days <= 1 else f"{days} Günde"
-    return f"### Son {label} Oluşan Kritik Alarmlar\n\n" + _md_table(["Olay", "Kaynak", "Zaman"], rows, f"Belirtilen sürede kritik alarm bulunmuyor.")
+    head = f"Son {label} Oluşan Kritik Alarmlar" if win is None else f"Kritik Alarmlar — {win.title}"
+    return f"### {head}\n\n" + _md_table(["Olay", "Kaynak", "Zaman"], rows, f"Belirtilen sürede kritik alarm bulunmuyor.") + _tw_note(note)
 
 
 def h_vm_most_alarms_7d(db: Session, question: str = "") -> str:
-    days = _parse_days_from_question(question, default=7)
-    since = datetime.utcnow() - timedelta(days=days)
+    days, win, early, note = _tw_ctx(db, question, 7, "db")
+    if early:
+        return early
+    since = _default_since(days)
+    until = None
+    if win is not None:
+        since, until = win.start, win.end
     rows_q = db.execute(text("""
         SELECT s.name, COUNT(*) AS cnt FROM system_events e
         JOIN servers s ON e.server_id = s.id
-        WHERE e.created_at >= :since AND e.source IN ('vcenter_alarm','vcenter_event')
+        WHERE e.created_at >= :since AND (CAST(:until AS timestamptz) IS NULL OR e.created_at < CAST(:until AS timestamptz))
+          AND e.source IN ('vcenter_alarm','vcenter_event')
         GROUP BY s.name ORDER BY cnt DESC LIMIT 15
-    """), {"since": since}).all()
+    """), {"since": since, "until": until}).all()
     rows = [[r.name, r.cnt] for r in rows_q]
-    return f"### Son {days} Günde En Fazla Alarm/Olay Üreten VM'ler\n\n" + _md_table(["VM", "Olay Sayısı"], rows, "VM'e bağlı alarm/olay bulunmuyor (event'ler henüz VM ile eşleşmemiş olabilir).")
+    return (f"### {_sp_t(days, win)} En Fazla Alarm/Olay Üreten VM'ler\n\n"
+            + _md_table(["VM", "Olay Sayısı"], rows, "VM'e bağlı alarm/olay bulunmuyor (event'ler henüz VM ile eşleşmemiş olabilir).") + _tw_note(note))
 
 
 def h_unresolved_alarm_vms(db: Session, question: str = "") -> str:
@@ -3027,21 +3227,27 @@ def h_unresolved_alarm_vms(db: Session, question: str = "") -> str:
 
 def h_migration_events(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=30)
-    r = lc.migration_events(db, days=days)
+    days, win, early, note = _tw_ctx(db, question, 30)
+    if early:
+        return early
+    r = lc.migration_events(db, days=days, window=win)
     if r["errors"] and not r["migrations"] and not r["failed"]:
         return _na(f"vCenter migration event sorgusu başarısız: {'; '.join(r['errors'][:2])}")
     fail_rows = [[e["vm_name"], _fmt_ts(e.get("timestamp")), e.get("hypervisor")] for e in r["failed"][:20]]
-    return f"### Son {days} Günde Başarısız Migration'lar\n\n" + _md_table(["VM", "Zaman", "Hypervisor"], fail_rows, f"Son {days} günde başarısız migration tespit edilmedi.")
+    return (f"### {_sp_t(days, win)} Başarısız Migration'lar\n\n"
+            + _md_table(["VM", "Zaman", "Hypervisor"], fail_rows, f"{_sp_in(days, win)} başarısız migration tespit edilmedi.") + _tw_note(note))
 
 
 def h_host_disconnect_events(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=30)
-    r = lc.host_lifecycle_events(db, days=days)
+    days, win, early, note = _tw_ctx(db, question, 30)
+    if early:
+        return early
+    r = lc.host_lifecycle_events(db, days=days, window=win)
     disc = [e for e in r["events"] if "disconnect" in (e.get("event_type_id") or "").lower()]
     rows = [[e.get("host_ref") or "-", _fmt_ts(e.get("timestamp")), e.get("hypervisor")] for e in disc[:30]]
-    return f"### Son {days} Günde Host Disconnect Olayları\n\n" + _md_table(["Host", "Zaman", "Hypervisor"], rows, f"Son {days} günde host disconnect olayı tespit edilmedi.")
+    return (f"### {_sp_t(days, win)} Host Disconnect Olayları\n\n"
+            + _md_table(["Host", "Zaman", "Hypervisor"], rows, f"{_sp_in(days, win)} host disconnect olayı tespit edilmedi.") + _tw_note(note))
 
 
 def h_events_not_available(db: Session, topic: str) -> str:
@@ -3052,8 +3258,13 @@ def h_events_not_available(db: Session, topic: str) -> str:
 def h_events_keyword_search(db: Session, question: str = "") -> str:
     """Backup / crash / snapshot silme vb. için system_events + vCenter event taraması."""
     q = (question or "").lower()
-    days = _parse_days_from_question(question, default=30)
-    since = datetime.utcnow() - timedelta(days=days)
+    days, win, early, note = _tw_ctx(db, question, 30, "db")
+    if early:
+        return early
+    since = _default_since(days)
+    until = None
+    if win is not None:
+        since, until = win.start, win.end
 
     from app.services import vcenter_vm_lifecycle as lc
 
@@ -3082,7 +3293,7 @@ def h_events_keyword_search(db: Session, question: str = "") -> str:
         title = f"Anahtar kelime araması: {', '.join(keywords) or '—'}"
 
     like_clauses = " OR ".join(f"lower(title) LIKE :k{i}" for i in range(len(keywords))) or "1=0"
-    params: Dict[str, Any] = {"since": since}
+    params: Dict[str, Any] = {"since": since, "until": until}
     for i, kw in enumerate(keywords):
         params[f"k{i}"] = f"%{kw}%"
 
@@ -3090,14 +3301,14 @@ def h_events_keyword_search(db: Session, question: str = "") -> str:
     if keywords:
         rows_q = db.execute(text(f"""
             SELECT title, severity, source, created_at FROM system_events
-            WHERE created_at >= :since AND ({like_clauses})
+            WHERE created_at >= :since AND (CAST(:until AS timestamptz) IS NULL OR created_at < CAST(:until AS timestamptz)) AND ({like_clauses})
             ORDER BY created_at DESC LIMIT 40
         """), params).all()
 
     vc_rows = []
     vc_err = ""
     try:
-        ev = lc.fetch_events(db, event_types, days=days, max_events=800)
+        ev = lc.fetch_events(db, event_types, days=days, max_events=800, window=win)
         for e in (ev.get("events") or []):
             msg = " ".join(str(x or "") for x in (
                 e.get("event_type_id"), e.get("message"), e.get("full_message"),
@@ -3125,7 +3336,7 @@ def h_events_keyword_search(db: Session, question: str = "") -> str:
         [r.title[:80], r.severity, r.source, r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "-"]
         for r in rows_q
     ]
-    out = [f"### {title} (son {days} gün)\n"]
+    out = [f"### {title} ({f'son {days} gün' if win is None else win.title})\n"]
     out.append("#### system_events\n")
     out.append(_md_table(["Olay", "Önem", "Kaynak", "Zaman"], db_rows, "Eşleşen kayıt yok."))
     out.append("\n#### vCenter event stream (canlı)\n")
@@ -3137,6 +3348,8 @@ def h_events_keyword_search(db: Session, question: str = "") -> str:
             "\n_Canlı sorgu çalıştı; eşleşme yok. Harici backup ürünü (Veeam vb.) entegre "
             "değilse backup başarı/hata olayları yalnızca o ürünün logunda olur._"
         )
+    if note:
+        out.append(_tw_note(note))
     return "\n".join(out)
 
 
@@ -3289,15 +3502,20 @@ def h_prod_marked_test(db: Session, question: str = "") -> str:
 
 def h_unbooted_1y(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=365)
+    days, win, early, note = _tw_ctx(db, question, 365)
+    if early:
+        return early
     off_vms = [v for v in _get_vms(db) if _is_off(v)]
-    r = lc.last_reboot_times(db, days=days)
+    r = lc.last_reboot_times(db, days=days, window=win)
     booted_recently = set(r["last_reboot"].keys())
     candidates = [v for v in off_vms if v["name"] not in booted_recently]
+    head = (f"Son {days} Gündür Açılmamış Olabilecek VM'ler" if win is None
+            else f"{win.title} — Bu Pencerede Açılmamış Olabilecek VM'ler")
     return (
-        f"### Son {days} Gündür Açılmamış Olabilecek VM'ler (kapalı + belirtilen pencerede PoweredOn kaydı yok)\n\n"
+        f"### {head} (kapalı + belirtilen pencerede PoweredOn kaydı yok)\n\n"
         f"_Not: Event geçmişi {days} günden az kapsıyorsa bu liste eksik/aşırı geniş olabilir — kesinlik garantisi yoktur._\n\n"
         + _md_table(["VM"], [[v["name"]] for v in candidates[:40]], "Bu kritere uyan VM tespit edilmedi.")
+        + _tw_note(note)
     )
 
 
@@ -3317,29 +3535,41 @@ def h_resource_optimization(db: Session, question: str = "") -> str:
 
 def h_restart_report_30d(db: Session, question: str = "") -> str:
     from app.services import vcenter_vm_lifecycle as lc
-    days = _parse_days_from_question(question, default=30)
-    r = lc.restart_report(db, days=days)
-    if r["errors"] and not r["restarts"] and not r["raw_event_count"]:
-        return _na(f"vCenter event sorgusu başarısız oldu: {'; '.join(r['errors'][:2])}")
+    days, win, early, note = _tw_ctx(db, question, 30)
+    if early:
+        return early
+    r = lc.restart_report(db, days=days, window=win)
+    head = f"Son {days} Gün VM Restart Raporu" if win is None else f"VM Restart Raporu — {win.title}"
+    ok_n = max(0, int(r.get("hypervisors") or 0) - len(_ev_failed_sources(r["errors"])))
+    if r["errors"] and not r["restarts"] and not r["raw_event_count"] and ok_n == 0:
+        return f"### {head}\n\n" + _ev_unreachable(r["errors"]) + _ev_src_note(None, vmware_only=True)
     rows = [[x["vm_name"], x["restart_count"], _fmt_ts(x["last_event_at"]), x["hypervisor"]] for x in r["restarts"][:40]]
     return (
-        f"### Son {days} Gün VM Restart Raporu\n\n"
+        f"### {head}\n\n"
         f"**Toplam restart olayı:** {r['total_restart_events']} | **Etkilenen VM sayısı:** {r['vm_count']}\n\n"
-        + _md_table(["VM", "Restart Sayısı", "Son Olay", "Hypervisor"], rows, f"Son {days} günde restart tespit edilmedi.")
+        + _md_table(["VM", "Restart Sayısı", "Son Olay", "Hypervisor"], rows, f"{_sp_in(days, win)} restart tespit edilmedi.")
+        + _tw_note(note)
+        + _ev_src_note(r["errors"], vmware_only=True)
     )
 
 
 def h_alarm_trend(db: Session, question: str = "") -> str:
-    days = _parse_days_from_question(question, default=30)
-    since = datetime.utcnow() - timedelta(days=days)
+    days, win, early, note = _tw_ctx(db, question, 30, "db")
+    if early:
+        return early
+    since = _default_since(days)
+    until = None
+    if win is not None:
+        since, until = win.start, win.end
     rows_q = db.execute(text("""
         SELECT COALESCE(event_type, source) AS etype, COUNT(*) AS cnt
         FROM system_events
-        WHERE created_at >= :since AND source IN ('vcenter_alarm','vcenter_event')
+        WHERE created_at >= :since AND (CAST(:until AS timestamptz) IS NULL OR created_at < CAST(:until AS timestamptz)) AND source IN ('vcenter_alarm','vcenter_event')
         GROUP BY etype ORDER BY cnt DESC LIMIT 15
-    """), {"since": since}).all()
+    """), {"since": since, "until": until}).all()
     rows = [[r.etype, r.cnt] for r in rows_q]
-    return f"### Son {days} Günde En Çok Tekrar Eden Alarm/Olay Tipleri\n\n" + _md_table(["Olay Tipi", "Adet"], rows, f"Son {days} günde alarm/olay bulunmuyor.")
+    return (f"### {_sp_t(days, win)} En Çok Tekrar Eden Alarm/Olay Tipleri\n\n"
+            + _md_table(["Olay Tipi", "Adet"], rows, f"{_sp_in(days, win)} alarm/olay bulunmuyor.") + _tw_note(note))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -3348,7 +3578,7 @@ def h_alarm_trend(db: Session, question: str = "") -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 QA_RULES: List[Tuple[str, Any]] = [
     # ── Envanter / sayım (önce — LLM'e düşmesin; spesifik kurallar genelden önce) ──
-    (r"restart\s*edilen\s*vm\s*say|kaç.*vm.*restart|son.*hafta.*restart\s*edil", h_restart_week),
+    (r"restart\s*edilen\s*vm\s*say|kaç.*vm.*(?:restart|yeniden\s*başla|reboot)|son.*hafta.*restart\s*edil", h_restart_week),
     # Karar katmanı kapasite — N+1 / host ihtiyacı (genel kapasite kalıplarından ÖNCE, dar kalıp)
     (r"\bn\s*\+\s*1\b|kaç\s*host\s*(daha\s*)?(lazım|gerek|eklem)|host\s*ihtiyac", h_capacity_n1),
     # Cluster kapsamı — genel "kaç host/vm" kurallarından ÖNCE
@@ -3361,7 +3591,7 @@ QA_RULES: List[Tuple[str, Any]] = [
      r"|as_of\s*(?:bilgisini|değeri|nedir)", h_named_vm_stats),
     (r"kaç\s*(adet\s*)?(çalışan|açık|aktif)\s*vm|powered\s*on\s*(vm\s*)?say|çalışan\s*\(?powered\s*on\)?\s*vm|powered\s*on.*kaç|kaç.*powered\s*on", h_count_powered_on),
     (r"kaç\s*(adet\s*)?(kapalı|powered\s*off)\s*vm|kapalı\s*vm\s*say|powered\s*off.*kaç", h_powered_off_count),
-    (r"kaç\s*(adet\s*)?vm(?!\s*restart)|vm\s*sayıs|toplam\s*vm(?!\s*restart)|how\s*many\s*vms?|vm\s*adedi|envanterde\s*kaç|kaç\s*sanal\s*makine", h_count_vms),
+    (r"^(?!.*(?:yeniden\s*başla|reboot|kapan(?:dı|an)|kapatıl|açıldı|oluşturul|silind|silinen|taşındı))(?:.*?)(?:kaç\s*(adet\s*)?vm(?!\s*restart)|vm\s*sayıs|toplam\s*vm(?!\s*restart)|how\s*many\s*vms?|vm\s*adedi|envanterde\s*kaç|kaç\s*sanal\s*makine)", h_count_vms),
     (r"hangi\s*host.?ta\s*kaç\s*vm|host.?ta\s*kaç\s*vm|host\s*bazında\s*vm|vm\s*dağılımı|esx.*kaç\s*vm|hangi\s*esx.*vm|hangi\s*host.?talar", h_vm_per_host),
     # Datastore → VM eşlemesi ("hangi datastore'da hangi VM var") — status kuralından ÖNCE,
     # yoksa geniş "hangi datastore" kalıbı bunu yutup kapasite/doluluk cevabı döner.
@@ -3401,6 +3631,9 @@ QA_RULES: List[Tuple[str, Any]] = [
     (r"en\s*uzun\s*süredir\s*çalışan\s*vm|longest.*uptime|en\s*eski\s*uptime", h_longest_uptime),
     (r"(son|geçen|bu)\s*\d*\s*(saat|gün|hafta|ay|yıl|sene)\w*.*(kurulan|oluşturulan|yeni|eklenen|yüklenen)\s*vm", h_created_30d),
     (r"(son|geçen|bu)\s*\d*\s*(saat|gün|hafta|ay|yıl|sene)\w*.*(silinen|kaldırılan)\s*vm", h_removed_30d),
+    # Adım 5c — olay biçimli sorular («hangi VM'ler silindi/oluşturuldu»): pencere çözümü + saklama dışı şablonu handler'da
+    (r"^(?!.*snapshot)(?=.*\bhangi\s*vm).*(silindi|silinmiş|kaldırıldı)", h_removed_30d),
+    (r"^(?!.*snapshot)(?=.*\bhangi\s*vm).*(oluşturuldu|oluşturulmuş|eklendi|kuruldu)", h_created_30d),
     (r"powered\s*off\s*durumda\s*bekleyen|kapalı\s*durumda\s*bekleyen\s*vm\s*say|kapalı\s*vm.?ler(\s*hangileri)?|hangi\s*vm.?ler\s*kapalı", h_powered_off_count),
     (r"suspended\s*durumda|suspend(ed)?\s*(kalan|olan|durum)|suspended\s*vm|suspend\s*edilmiş", h_suspended_vms),
     (r"power\s*state\s*değiş", h_power_state_changes_7d),
@@ -3586,13 +3819,8 @@ def _render_tool_evidence_fallback(
             logger.debug("evidence fallback deterministik denemesi: %s", e)
     if not block:
         return "Araç çıktısı bu turda boş döndü."
-    return (
-        "Model bu turda araç çıktısını özetleyemedi; toplanan canlı veriyi "
-        "olduğu gibi veriyorum:\n\n```\n"
-        + block[:max_chars]
-        + ("\n… (kısaltıldı)" if len(block) > max_chars else "")
-        + "\n```"
-    )
+    from app.services.chat_quality.evidence_summary import render
+    return render(block)   # Adım 8d: okunur özet / «özetlenemedi + kaynak türü»; ham JSON yok
 
 
 def try_deterministic_answer(db: Session, question: str) -> Optional[str]:
@@ -3612,6 +3840,11 @@ def try_deterministic_answer(db: Session, question: str) -> Optional[str]:
                 if isinstance(result, str) and result.strip():
                     # Datastore canlı sorgu → learned facts (canlı > learned > DB)
                     hname = getattr(handler, "__name__", "")
+                    try:
+                        from app.services.chat_quality import trace as _cq_trace
+                        _cq_trace.note_path("qa_rule", handler=hname, pattern=pattern[:80])
+                    except Exception:
+                        pass
                     if hname in ("h_datastore_status", "h_datastore_by_disk", "h_datastore_accessibility", "h_datastore_over_85", "h_datastore_vm_map"):
                         try:
                             from app.services.fact_learning import store_live_datastore_facts
@@ -3684,7 +3917,7 @@ Tabloları doğrudan kopyalama, anlamlı yorum ekle. Cevabı markdown formatınd
     answer = md_preview  # fallback
     error = None
     try:
-        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=120)
+        data = _generate_live_sync(model=active_model, prompt=prompt, timeout=120)
         if not data.get("error"):
             answer = (data.get("response") or "").strip() or md_preview
         else:
@@ -3841,7 +4074,7 @@ def _compute_hypervisor_answer(
         prompt = f"{conceptual_system}\n{_sections['history']}{protected_tail}"
         active_model = model or get_active_model(db)
         try:
-            data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=120)
+            data = _generate_live_sync(model=active_model, prompt=prompt, timeout=120)
             answer = (data.get("response") or "").strip() if not data.get("error") else data["error"]
             err = data.get("error")
         except Exception as e:
@@ -3929,8 +4162,15 @@ def _compute_hypervisor_answer(
         f"=== ARAÇ SONUÇLARI (bu turda çalıştırıldı — ÖNCELİKLİ) ===\n{evidence}\n"
         "=== ARAÇ SONUÇLARI SONU ===\n\n" if evidence else ""
     )
+    try:
+        from app.services.chat_quality.unavailable_info import hint as _ua_hint
+        _ua_h = _ua_hint(clean_question)
+    except Exception:
+        _ua_h = ""
     protected_tail = (
-        f"{evidence_section}Kullanıcı Sorusu: {clean_question}\n{_dir_addendum}\n\n"
+        f"{evidence_section}Kullanıcı Sorusu: {clean_question}\n"
+        + (f"{_ua_h}\n" if _ua_h else "")
+        + f"{_dir_addendum}\n\n"
         "Lütfen yanıtını Türkçe ver:"
     )
     _sections = budget_sections(
@@ -3953,7 +4193,7 @@ def _compute_hypervisor_answer(
     error = None
 
     try:
-        data = llm_gateway.generate_sync(model=active_model, prompt=prompt, timeout=120)
+        data = _generate_live_sync(model=active_model, prompt=prompt, timeout=120)
         if not data.get("error"):
             answer = (data.get("response") or "").strip()
         else:
@@ -3973,11 +4213,24 @@ def _compute_hypervisor_answer(
     # göster — yanlış "veri yok" cümlesini ASLA döndürme.
     if not error and _has_tool_evidence(question):
         from app.services.chat_coverage import looks_like_no_data_answer
-        if looks_like_no_data_answer(answer) or _answer_ignores_evidence(answer, evidence):
+        from app.services.chat_evidence import refusal_reason, ignore_reason
+        # Adım 15: kapsamlı (uzun + kanıt çapalı) cevabın içindeki tek «veri yok» satırı ret sayılmaz
+        # Adım 19: ret NEDENİ ve ilk cevabın başı loga yazılır (neden reddedildiğini ölçebilmek için)
+        _why = refusal_reason(answer, evidence) or ignore_reason(answer, evidence)
+        if _why:
             logger.warning(
-                "[HVIntelligence] kanıt varken 'veri yok' cevabı — katı talimatla "
-                "yeniden deneniyor (q=%r)", (user_question or question)[:100],
+                "[HVIntelligence] kanıt varken cevap reddedildi (neden=%s, len=%s) — katı talimatla "
+                "yeniden deneniyor (q=%r) ilk_cevap=%r",
+                _why, len(answer or ""), (user_question or question)[:100], (answer or "")[:200],
             )
+            _sk = _current_live_sink()
+            if _sk is not None:
+                _sk.reset()    # Adım 17: ekrandaki (kanıtı yok sayan) canlı cevap geri alınır
+                # Adım 19: silinen cevabın ve ~20 sn'lik beklemenin nedeni kullanıcıya söylenir
+                _sk.event({
+                    "type": "progress", "step": "evidence_retry",
+                    "text": "Cevap araç kanıtıyla uyuşmadı, yeniden üretiliyor…", "elapsed_s": 0,
+                })
             retry_prompt = (
                 prompt
                 + "\n\nUYARI: Yukarıdaki '=== ARAÇ SONUÇLARI ===' bölümü DOLU ve "
@@ -3986,7 +4239,8 @@ def _compute_hypervisor_answer(
                 "cevabında AYNEN kullan; varsa `verdict` cümlesini esas al."
             )
             try:
-                retry = llm_gateway.generate_sync(
+                # Adım 19: yeniden üretim de CANLI akar (önceden bloklayan çağrıydı → ~23 sn sessizlik)
+                retry = _generate_live_sync(
                     model=active_model, prompt=retry_prompt, timeout=120,
                 )
                 retry_answer = (retry.get("response") or "").strip()
@@ -4000,6 +4254,13 @@ def _compute_hypervisor_answer(
             ):
                 answer = retry_answer
             else:
+                logger.warning(
+                    "[HVIntelligence] yeniden üretilen cevap da reddedildi (neden=%s) → kanıt özeti gösteriliyor",
+                    (refusal_reason(retry_answer, evidence) or ignore_reason(retry_answer, evidence)
+                     or ("empty" if not retry_answer else "no_data")),
+                )
+                if _sk is not None:
+                    _sk.reset()          # canlı akan (reddedilen) yeniden üretim ekrandan geri alınır
                 answer = _render_tool_evidence_fallback(question, db=db)
                 intents = list(intents) + ["evidence_fallback"]
                 try:

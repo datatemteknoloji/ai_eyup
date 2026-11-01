@@ -390,7 +390,7 @@ const OpenShiftMonitoring: React.FC<{
       extraHeader={
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 flex-1 min-w-0">
           <Link to="/openshift" className="text-blue-400 hover:underline whitespace-nowrap">{t('nav_inventory')}</Link>
-          <Link to="/openshift/chat" className="text-blue-400 hover:underline whitespace-nowrap">{t('nav_assistant')}</Link>
+          <Link to="/openshift/chat" className="text-blue-400 hover:underline whitespace-nowrap">{t('nav_nl_assistant')}</Link>
           {dataMode === 'api' && (
             <>
               <span className="text-slate-600 hidden sm:inline">|</span>
@@ -519,7 +519,7 @@ const OpenShiftMonitoring: React.FC<{
                         onChange={(e) => setSearch(e.target.value)}
                         onMouseDown={(e) => e.stopPropagation()}
                         placeholder={t('ocpm_search')}
-                        className="flex-1 bg-transparent text-sm text-white outline-none"
+                        className="flex-1 bg-transparent text-sm text-white outline-hidden"
                       />
                     </div>
                     <div className="flex gap-2 p-2 border-b border-white/[0.06]">
@@ -552,7 +552,7 @@ const OpenShiftMonitoring: React.FC<{
                     </div>
                     <div className="max-h-72 overflow-y-auto p-1">
                       {filteredObjects.length > 0 && (
-                        <label className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/[0.04] cursor-pointer border-b border-white/[0.06] mb-0.5">
+                        <label className="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-white/[0.04] cursor-pointer border-b border-white/[0.06] mb-0.5">
                           <input
                             type="checkbox"
                             checked={
@@ -579,7 +579,7 @@ const OpenShiftMonitoring: React.FC<{
                         const on = selected.includes(o.id)
                         const idx = selected.indexOf(o.id)
                         return (
-                          <label key={o.id} className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-white/[0.04] cursor-pointer">
+                          <label key={o.id} className="flex items-start gap-2 px-2 py-1.5 rounded-sm hover:bg-white/[0.04] cursor-pointer">
                             <input type="checkbox" checked={on} onChange={() => toggle(o.id, objectLabel(o))} />
                             <span
                               className="mt-1 w-2 h-2 rounded-full shrink-0"
@@ -631,7 +631,7 @@ const OpenShiftMonitoring: React.FC<{
                           next[i] = e.target.value
                           return next
                         })}
-                        className="flex-1 bg-[#0d1422] text-sm text-white outline-none"
+                        className="flex-1 bg-[#0d1422] text-sm text-white outline-hidden"
                       >
                         {metricList.map((m) => (
                           <option key={m.id} value={m.id}>{METRIC_LABEL[m.id] || m.id}</option>

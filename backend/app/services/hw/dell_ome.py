@@ -381,24 +381,47 @@ class DellOmeProvider:
             c.http.close()
 
     def _firmware(self, c: OmeClient, snap: HwSnapshot) -> None:
+        """Cihaz başına `deviceSoftware` envanteri. Tur başına en fazla `firmware_max_per_run` cihaz; sıra SABİT (cihaz Id) ve
+        başlangıç `meta.firmware_cursors["ome"]` (önceki turun bıraktığı yer) → sınırdan fazla sunucuda bile art arda turlarda HEPSİ okunur.
+        Dell `bios_version` buradan türetilir (`SoftwareType=BIOS`, `Status=Installed`)."""
+        servers = sorted(snap.servers, key=lambda x: (0, int(x.provider_ref), "") if str(x.provider_ref).isdigit()
+                         else (1, 0, str(x.provider_ref)))
+        total = len(servers)
+        try:
+            cap = max(1, int(self.meta.get("firmware_max_per_run") or FIRMWARE_MAX_PER_RUN))
+        except (TypeError, ValueError):
+            cap = FIRMWARE_MAX_PER_RUN
+        try:
+            start = int((self.meta.get("firmware_cursors") or {}).get("ome") or 0)
+        except (TypeError, ValueError):
+            start = 0
+        start = start % total if total else 0
         n = 0
-        for s in snap.servers:
-            if n >= int(self.meta.get("firmware_max_per_run") or FIRMWARE_MAX_PER_RUN):
-                snap.warnings.append("Firmware envanteri üst sınıra ulaştı; kalanı sonraki turda.")
-                break
+        for k in range(min(cap, total)):
+            s = servers[(start + k) % total]
             try:
-                for it in c.device_software(s.provider_ref):
-                    snap.firmware.append(FirmwareRec(server_ref=s.provider_ref,
-                                                     name=str(it.get("DeviceDescription") or ""),
-                                                     component_type=it.get("SoftwareType"),
-                                                     version=it.get("Version")))
+                items = c.device_software(s.provider_ref)
             except HwApiError as e:
                 if e.kind in ("network", "server"):
-                    snap.warnings.append("Firmware okuması ağ/sunucu hatası nedeniyle kesildi.")
+                    snap.warnings.append("Firmware okuması ağ/sunucu hatası nedeniyle kesildi; kalan cihazlar sonraki turda.")
                     break
+                items = []              # cihaz bazlı hata (ör. 404): bu cihazı atla, imleç ilerler
+            for it in items:
+                cid = it.get("ComponentId")
+                snap.firmware.append(FirmwareRec(server_ref=s.provider_ref,
+                                                 name=str(it.get("DeviceDescription") or ""),
+                                                 component_type=it.get("SoftwareType"),
+                                                 version=it.get("Version"),
+                                                 status=it.get("Status"),
+                                                 component_id=(str(cid) if cid is not None else None)))
+                if (it.get("SoftwareType") == "BIOS" and it.get("Status") == "Installed" and it.get("Version")
+                        and not s.bios_version):
+                    s.bios_version = str(it["Version"])
             n += 1
             if c.throttle:
                 time.sleep(c.throttle)
+        snap.firmware_cursors["ome"] = (start + n) % total if total else 0
+        snap.firmware_progress["ome"] = {"read": n, "total": total}
 
 
 def _level_tr(level: str) -> str:

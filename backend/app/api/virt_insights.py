@@ -136,9 +136,14 @@ def run_now(body: RunRequest, request: Request, db: Session = Depends(get_db),
 def capacity(hypervisor_id: Optional[int] = None, cluster: Optional[str] = None,
              platform: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(_module)):
     from app.services.virt_capacity_planner import build_capacity
+    from app.services import virt_capacity_cache
     if platform:
         _platforms(platform)
-    return build_capacity(db, hypervisor_id=hypervisor_id, cluster=cluster, platform=platform)
+    # Büyük envanterde saniyeler süren hesap: kısa ömürlü önbellek (eşik/senkron sonrası geçersiz kılınır).
+    return virt_capacity_cache.get_or_compute(
+        "capacity", virt_capacity_cache.capacity_key(hypervisor_id, cluster, platform),
+        lambda: build_capacity(db, hypervisor_id=hypervisor_id, cluster=cluster, platform=platform),
+    )
 
 
 class SimulateRequest(BaseModel):
@@ -175,6 +180,8 @@ def capacity_policy_put(body: CapacityPolicyBody, request: Request, db: Session 
         capacity_policy.save(db, body.values, user=getattr(user, "username", "") or "")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    from app.services import virt_capacity_cache
+    virt_capacity_cache.invalidate()
     _audit(db, user, "capacity_policy_update", "Kapasite eşikleri güncellendi", request, values=body.values)
     return {"ok": True, **capacity_policy.payload(db)}
 
@@ -204,6 +211,8 @@ def capacity_policy_override_put(body: CapacityOverrideBody, request: Request, d
                                             user=getattr(user, "username", "") or "")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    from app.services import virt_capacity_cache
+    virt_capacity_cache.invalidate()
     _audit(db, user, "capacity_policy_override", "Kapasite eşik override'ı güncellendi", request,
            hypervisor_id=body.hypervisor_id, cluster=body.cluster, values=body.values)
     return {"ok": True, "effective": eff}
@@ -215,6 +224,8 @@ def capacity_policy_override_delete(request: Request, hypervisor_id: int, key: s
                                     user: User = Depends(require_role("admin"))):
     from app.services import capacity_policy
     n = capacity_policy.delete_override(db, hypervisor_id, cluster, key)
+    from app.services import virt_capacity_cache
+    virt_capacity_cache.invalidate()
     _audit(db, user, "capacity_policy_override", "Kapasite eşik override'ı silindi", request,
            hypervisor_id=hypervisor_id, cluster=cluster, key=key)
     return {"ok": True, "deleted": n, "effective": capacity_policy.effective(db, hypervisor_id, cluster)}
@@ -252,7 +263,11 @@ def capacity_host_failure_matrix(body: HostFailureMatrixRequest, db: Session = D
                                  user: User = Depends(_module)):
     """Cluster'daki her host için otomatik N+1 matrisi (salt okunur; satırlar `host-failure` ile aynı hesap)."""
     from app.services.virt_capacity_planner import host_failure_matrix
-    res = host_failure_matrix(db, **body.model_dump())
+    from app.services import virt_capacity_cache
+    res = virt_capacity_cache.get_or_compute(
+        "hf_matrix", f"{body.hypervisor_id}|{body.cluster}",
+        lambda: host_failure_matrix(db, **body.model_dump()),
+    )
     if not res.get("ok"):
         raise HTTPException(status_code=400, detail=res.get("error") or "Matris hesaplanamadı")
     return res
@@ -376,10 +391,12 @@ def list_vms_for_placement(
             "disk_gb": v.get("disk_gb"),
             "powered_on": v.get("powered_on"),
         })
-        if len(rows) >= lim:
-            break
+    # Önce sırala, sonra kes: eskiden envanter sırasındaki ilk `lim` kayıt alınıp sıralanıyordu
+    # (aramasız listede alfabetik ilk N değil, rastgele bir alt küme görünüyordu).
     rows.sort(key=lambda r: (r["name"] or "").lower())
-    return {"ok": True, "items": rows}
+    total = len(rows)
+    rows = rows[:lim]
+    return {"ok": True, "items": rows, "total": total}
 
 
 # ── Geri kazanım ─────────────────────────────────────────────────────────────
@@ -572,11 +589,25 @@ def changes(days: int = 30, platform: Optional[str] = None, hypervisor_id: Optio
     rows = [r for r in rows if r["platform"] in VIRT_PLATFORMS]
     from app.models.infra_finding import VirtConfigSnapshot
     from sqlalchemy import func
-    bq = db.query(func.count(VirtConfigSnapshot.id)).filter(
-        VirtConfigSnapshot.is_baseline.is_(True),
-        VirtConfigSnapshot.platform.in_(list(VIRT_PLATFORMS)),
+    kind_rows = (
+        db.query(VirtConfigSnapshot.entity_kind, func.count(VirtConfigSnapshot.id))
+        .filter(
+            VirtConfigSnapshot.is_baseline.is_(True),
+            VirtConfigSnapshot.platform.in_(list(VIRT_PLATFORMS)),
+        )
+        .group_by(VirtConfigSnapshot.entity_kind)
+        .all()
     )
-    baseline_count = int(bq.scalar() or 0)
+    baseline_by_kind = {str(k): int(n) for k, n in kind_rows}
+    baseline_count = sum(baseline_by_kind.values())
+    marked_at = (
+        db.query(func.max(VirtConfigSnapshot.baseline_at))
+        .filter(
+            VirtConfigSnapshot.is_baseline.is_(True),
+            VirtConfigSnapshot.platform.in_(list(VIRT_PLATFORMS)),
+        )
+        .scalar()
+    )
     suggested = []
     if baseline_count == 0:
         # İlk senkron / baseline yok: kullanıcıya önerilen türler
@@ -590,6 +621,8 @@ def changes(days: int = 30, platform: Optional[str] = None, hypervisor_id: Optio
         "changes": rows,
         "count": len(rows),
         "baseline_count": baseline_count,
+        "baseline_by_kind": baseline_by_kind,
+        "baseline_marked_at": marked_at.isoformat() if marked_at else None,
         "suggested_baseline": suggested,
         "empty_reason": None if rows or baseline_count else (
             "Henüz değişiklik yok. İlk taramada kayıtlar değişiklik sayılmaz; "
@@ -617,6 +650,32 @@ def baseline(body: BaselineRequest, request: Request, db: Session = Depends(get_
     db.commit()
     _audit(db, user, "virt_insights.baseline", f"Baseline işaretlendi ({n} varlık)", request,
            **body.model_dump())
+    return {"ok": True, "count": n}
+
+
+@router.delete("/baseline")
+def baseline_clear(request: Request, platform: Optional[str] = None, hypervisor_id: Optional[int] = None,
+                   entity_kind: Optional[str] = None, entity_ref: Optional[str] = None,
+                   clear_all: bool = Query(False, alias="all"),
+                   db: Session = Depends(get_db), user: User = Depends(require_role("operator"))):
+    """Baseline işaretini kaldırır (snapshot geçmişi korunur, yalnız sapma izleme durur).
+
+    Yanlışlıkla tüm baseline'ları silmemek için en az bir daraltıcı (`entity_kind` / `entity_ref` /
+    `hypervisor_id`) ya da açık `all=true` gerekir.
+    """
+    from app.services.virt_config_drift import clear_baseline
+    if platform:
+        _platforms(platform)
+    if not (entity_kind or entity_ref or hypervisor_id is not None or clear_all):
+        raise HTTPException(status_code=400,
+                            detail="Silme kapsamı belirtin: entity_kind, entity_ref, hypervisor_id veya all=true")
+    platforms = [platform] if platform else sorted(VIRT_PLATFORMS)
+    n = sum(clear_baseline(db, platform=p, source_id=hypervisor_id, entity_kind=entity_kind,
+                           entity_ref=entity_ref) for p in platforms)
+    db.commit()
+    _audit(db, user, "virt_insights.baseline_clear", f"Baseline kaldırıldı ({n} varlık)", request,
+           platform=platform, hypervisor_id=hypervisor_id, entity_kind=entity_kind, entity_ref=entity_ref,
+           all=clear_all)
     return {"ok": True, "count": n}
 
 

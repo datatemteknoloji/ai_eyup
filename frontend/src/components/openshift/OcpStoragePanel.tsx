@@ -39,7 +39,7 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
   })
 
   const badge = (phase: string) => (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 ${PHASE[phase] || 'text-slate-400 border-white/[0.08]'}`}>
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-sm border shrink-0 ${PHASE[phase] || 'text-slate-400 border-white/[0.08]'}`}>
       {phase || '—'}
     </span>
   )
@@ -90,7 +90,7 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
                 {openSc === sc.name ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />}
                 <span className="text-slate-100 font-medium">{sc.name}</span>
                 {sc.default && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300">{t('ocp_sc_default')}</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-sm bg-violet-500/15 text-violet-300">{t('ocp_sc_default')}</span>
                 )}
                 <span className="text-slate-500 ml-auto truncate">{sc.provisioner}</span>
               </button>
@@ -120,7 +120,7 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
                 <div className="flex items-center gap-2">
                   <span className="text-slate-100 font-mono truncate">{p.name}</span>
                   {badge(p.phase)}
-                  <span className="text-slate-500 ml-auto flex-shrink-0">
+                  <span className="text-slate-500 ml-auto shrink-0">
                     {p.capacity_gb != null ? `${p.capacity_gb} GB` : '—'}
                   </span>
                 </div>
@@ -144,7 +144,7 @@ export default function OcpStoragePanel({ clusterId }: { clusterId: number }) {
                 <div className="flex items-center gap-2">
                   <span className="text-slate-100 font-mono truncate">{p.name}</span>
                   {badge(p.phase)}
-                  <span className="text-slate-500 ml-auto flex-shrink-0">
+                  <span className="text-slate-500 ml-auto shrink-0">
                     {p.capacity_gb != null ? `${p.capacity_gb} GB` : '—'}
                   </span>
                 </div>

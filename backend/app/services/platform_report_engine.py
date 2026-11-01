@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import func
@@ -66,7 +67,7 @@ def _servers_for_platform(db: Session, platform: str) -> List[Server]:
 
 
 def _active_events(db: Session, platform: str, hours: int = 24) -> List[SystemEvent]:
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utc_now() - timedelta(hours=hours)
     q = db.query(SystemEvent).filter(
         SystemEvent.last_seen >= since,
         SystemEvent.resolved == False,  # noqa: E712

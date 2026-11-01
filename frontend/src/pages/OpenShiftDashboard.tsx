@@ -15,11 +15,12 @@ import { useT } from '../i18n/LocaleProvider'
 import type { TranslationKey } from '../i18n/messages'
 import OcpVmDetailDrawer from '../components/openshift/OcpVmDetailDrawer'
 import OcpResourceDetailDrawer from '../components/openshift/OcpResourceDetailDrawer'
+import { OcpClusterTree } from '../components/openshift/OcpClusterTree'
 
-type DashTab = 'overview' | 'clusters' | 'vms' | 'nodes' | 'projects' | 'workloads' | 'risks' | 'storage' | 'resources'
+type DashTab = 'overview' | 'clusters' | 'vms' | 'nodes' | 'projects' | 'workloads' | 'risks' | 'storage' | 'resources' | 'hierarchy'
 
-const VALID_TABS: DashTab[] = ['overview', 'clusters', 'vms', 'nodes', 'projects', 'workloads', 'risks', 'storage', 'resources']
-const INVENTORY_TABS: DashTab[] = ['overview', 'vms', 'projects', 'workloads', 'risks', 'storage', 'resources']
+const VALID_TABS: DashTab[] = ['overview', 'clusters', 'vms', 'nodes', 'projects', 'workloads', 'risks', 'storage', 'resources', 'hierarchy']
+const INVENTORY_TABS: DashTab[] = ['overview', 'hierarchy', 'vms', 'projects', 'workloads', 'risks', 'storage', 'resources']
 const INTEGRATION_TABS: DashTab[] = ['overview', 'clusters', 'nodes']
 
 function parseTab(raw: string | null | undefined): DashTab | null {
@@ -316,7 +317,7 @@ function ClusterOverviewPanel({ overview }: { overview: any }) {
           <div className="text-[10px] uppercase text-slate-500 mb-1">StorageClass</div>
           <div className="flex flex-wrap gap-1.5">
             {(overview.storage_classes || []).map((sc: any) => (
-              <span key={sc.name} className="text-[10px] px-2 py-0.5 rounded border border-white/[0.08] text-slate-300">
+              <span key={sc.name} className="text-[10px] px-2 py-0.5 rounded-sm border border-white/[0.08] text-slate-300">
                 {sc.name}{sc.default ? t('ocp_sc_default_paren') : ''}
               </span>
             ))}
@@ -374,7 +375,7 @@ function EditClusterModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
         <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">{t('ocp_edit_token')}</h2>
@@ -422,7 +423,7 @@ function EditClusterModal({
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg text-sm">{t('cancel')}</button>
             <button type="submit" disabled={saving}
-              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-rose-600 to-red-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+              className="flex-1 px-4 py-2.5 bg-linear-to-r from-rose-600 to-red-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
               {t('save')}
             </button>
           </div>
@@ -488,7 +489,7 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
         <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
@@ -501,7 +502,7 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
           <div>
             <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_name_req')}</label>
             <input type="text" required value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); setTestResult(null) }}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" placeholder="Production OCP" />
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-rose-500/50" placeholder="Production OCP" />
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_auth_method')}</label>
@@ -519,26 +520,26 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
           <div>
             <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_api_url_req')}</label>
             <input type="text" required value={form.api_url} onChange={e => { setForm({ ...form, api_url: e.target.value }); setTestResult(null) }}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" placeholder="https://api.cluster.example.com:6443 veya https://IP:6443" />
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-rose-500/50" placeholder="https://api.cluster.example.com:6443 veya https://IP:6443" />
             <p className="text-[11px] text-slate-500 mt-1">{t('ocp_api_hint')}</p>
           </div>
           {authMethod === 'token' ? (
             <div>
               <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_bearer_req')}</label>
               <textarea required rows={3} value={form.token} onChange={e => { setForm({ ...form, token: e.target.value }); setTestResult(null) }}
-                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50 font-mono" placeholder="oc create token … veya oc whoami -t" />
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-rose-500/50 font-mono" placeholder="oc create token … veya oc whoami -t" />
             </div>
           ) : (
             <>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_username_req')}</label>
                 <input type="text" required value={form.username} onChange={e => { setForm({ ...form, username: e.target.value }); setTestResult(null) }}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" placeholder="kubeadmin" />
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-rose-500/50" placeholder="kubeadmin" />
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">{t('ocp_password')}</label>
                 <input type="password" required value={form.password} onChange={e => { setForm({ ...form, password: e.target.value }); setTestResult(null) }}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500/50" />
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:border-rose-500/50" />
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
                 {t('ocp_oauth_hint')}
@@ -563,7 +564,7 @@ function AddClusterModal({ onClose, onCreate }: { onClose: () => void; onCreate:
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 text-sm">{t('cancel')}</button>
             <button type="submit" disabled={!testResult?.success}
-              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-rose-600 to-red-700 text-white rounded-lg hover:from-rose-500 hover:to-red-600 disabled:opacity-50 text-sm font-medium">
+              className="flex-1 px-4 py-2.5 bg-linear-to-r from-rose-600 to-red-700 text-white rounded-lg hover:from-rose-500 hover:to-red-600 disabled:opacity-50 text-sm font-medium">
               {t('add')}
             </button>
           </div>
@@ -892,6 +893,7 @@ export default function OpenShiftDashboard({
       ]
     : [
         { id: 'overview', label: t('ocp_tab_summary') },
+        { id: 'hierarchy', label: t('ocp_infra_tab') },
         { id: 'vms', label: t('nav_virtual_machines') },
         { id: 'projects', label: t('ocp_projects') },
         { id: 'workloads', label: t('ocp_tab_workloads') },
@@ -969,7 +971,7 @@ export default function OpenShiftDashboard({
               </Link>
               {canManageClusters ? (
                 <button onClick={() => setShowAddModal(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-600 to-red-700 text-white rounded-lg text-sm font-medium hover:from-rose-500 hover:to-red-600">
+                  className="flex items-center gap-2 px-4 py-2 bg-linear-to-r from-rose-600 to-red-700 text-white rounded-lg text-sm font-medium hover:from-rose-500 hover:to-red-600">
                   <Plus size={16} /> {t('ocp_add_cluster')}
                 </button>
               ) : (
@@ -1262,7 +1264,7 @@ export default function OpenShiftDashboard({
                     className="flex items-center gap-3 min-w-0 text-left flex-1"
                     onClick={() => setExpandedClusterId(c.id)}
                   >
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-rose-600 to-red-700 flex items-center justify-center flex-shrink-0">
+                    <div className="w-10 h-10 rounded-lg bg-linear-to-br from-rose-600 to-red-700 flex items-center justify-center shrink-0">
                       <Boxes size={18} className="text-white" />
                     </div>
                     <div className="min-w-0">
@@ -1282,7 +1284,7 @@ export default function OpenShiftDashboard({
                       </div>
                     </div>
                   </button>
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
                       onClick={() => setExpandedClusterId(c.id)}
@@ -1334,6 +1336,10 @@ export default function OpenShiftDashboard({
             )
           })}
         </div>
+      )}
+
+      {tab === 'hierarchy' && !isIntegration && (
+        <OcpClusterTree lockTab="hierarchy" />
       )}
 
       {tab === 'vms' && !isIntegration && (

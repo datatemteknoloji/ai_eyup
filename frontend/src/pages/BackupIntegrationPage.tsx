@@ -66,10 +66,10 @@ export default function BackupIntegrationPage() {
             <div className="space-y-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-white font-semibold">{i.label}</span>
-                {i.demo && <span className="px-1.5 text-[11px] rounded bg-fuchsia-500/20 text-fuchsia-300">DEMO</span>}
-                {i.demo_inactive && <span className="px-1.5 text-[11px] rounded bg-amber-500/15 text-amber-300">{t('bki_demo_inactive')}</span>}
-                <span className={`text-[11px] px-1.5 rounded ${i.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>{i.enabled ? t('bki_enabled') : t('bki_disabled')}</span>
-                <span className={`text-[11px] px-1.5 rounded ${i.last_status === 'ok' ? 'text-emerald-300' : i.last_status === 'never' ? 'text-slate-400' : 'bg-red-500/10 text-red-300'}`}>{i.last_status}</span>
+                {i.demo && <span className="px-1.5 text-[11px] rounded-sm bg-fuchsia-500/20 text-fuchsia-300">DEMO</span>}
+                {i.demo_inactive && <span className="px-1.5 text-[11px] rounded-sm bg-amber-500/15 text-amber-300">{t('bki_demo_inactive')}</span>}
+                <span className={`text-[11px] px-1.5 rounded-sm ${i.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>{i.enabled ? t('bki_enabled') : t('bki_disabled')}</span>
+                <span className={`text-[11px] px-1.5 rounded-sm ${i.last_status === 'ok' ? 'text-emerald-300' : i.last_status === 'never' ? 'text-slate-400' : 'bg-red-500/10 text-red-300'}`}>{i.last_status}</span>
               </div>
               <div className="text-xs text-slate-400">{i.demo ? t('bki_demo_desc') : `${i.endpoint}:${i.port} · API ${i.api_revision} · ${i.username || '—'}`}</div>
               <div className="text-xs text-slate-500">{t('bk_last_sync')}: {i.last_sync_at ? new Date(i.last_sync_at).toLocaleString() : '—'}
@@ -98,7 +98,7 @@ export default function BackupIntegrationPage() {
               </select></label>
             <label className="text-xs text-slate-400 flex flex-col gap-1">{t('bki_label')}
               <input className={inp} value={f.label} onChange={e => setF({ ...f, label: e.target.value })} /></label>
-            {isDemo ? <div className="md:col-span-2 text-xs text-fuchsia-300 rounded border border-fuchsia-500/30 bg-fuchsia-500/10 p-3">{t('bki_demo_desc')}</div> : (
+            {isDemo ? <div className="md:col-span-2 text-xs text-fuchsia-300 rounded-sm border border-fuchsia-500/30 bg-fuchsia-500/10 p-3">{t('bki_demo_desc')}</div> : (
               <>
                 <label className="text-xs text-slate-400 flex flex-col gap-1">{t('bki_server')}
                   <input className={inp} placeholder="vbr01.corp.local" value={f.endpoint} onChange={e => setF({ ...f, endpoint: e.target.value })} /></label>

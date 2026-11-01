@@ -80,10 +80,10 @@ export function CentrifySettings() {
   }
 
   return (
-    <div className="space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+    <div className="space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-5">
       <div>
         <h3 className="text-sm font-medium">Centrify (AD leave / join)</h3>
-        <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+        <p className="mt-1 text-xs text-(--color-muted-foreground)">
           Hostname değişikliğinde sunucudaki Current DC domain’i ile eşleşen hesap kullanılır. Leave:{" "}
           <span className="font-mono">adleave -f user</span> · Join:{" "}
           <span className="font-mono">echo pass | adjoin …</span>
@@ -131,10 +131,10 @@ export function CentrifySettings() {
         </div>
       </form>
 
-      {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
       {msg ? <p className="text-sm text-emerald-600">{msg}</p> : null}
 
-      <ul className="space-y-1 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+      <ul className="space-y-1 font-mono text-[11px] text-(--color-muted-foreground)">
         {rows.length === 0 ? (
           <li className="text-xs">(kayıt yok)</li>
         ) : (
@@ -146,7 +146,7 @@ export function CentrifySettings() {
                 {!r.enabled ? " · disabled" : ""}
               </span>
               <span className="flex gap-2">
-                <button type="button" className="text-[var(--theme-link)] hover:underline" onClick={() => startEdit(r)}>
+                <button type="button" className="text-(--theme-link) hover:underline" onClick={() => startEdit(r)}>
                   düzenle
                 </button>
                 <button

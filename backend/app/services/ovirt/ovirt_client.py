@@ -164,16 +164,35 @@ class OVirtClient:
             "vm_network_info": nics_to_network_info(nics, devices) if nics or devices else None,
         }
 
+    # Engine bazı sürümlerde belirli `follow` alanlarında HTTP 500 verir (örn. host,cluster ve
+    # guest_operating_system; yalnız nics çalışır). Önce tam liste, olmazsa azalan zincir, en sonda düz liste.
+    _LIST_VMS_FOLLOW_CHAIN = ("host,cluster,nics,guest_operating_system", "nics", None)
+
     def list_vms(self) -> List[Dict]:
-        """VM listesi — sayfalı. HTTP hatasında OVirtError (boş liste ≠ hata)."""
-        follow = "host,cluster,nics,guest_operating_system"
-        try:
-            raw = self._paged("vms", "vm", "vms", params={"follow": follow}, timeout=90)
-        except OVirtError as exc:
-            if exc.status_code in (400, 404):
-                raw = self._paged("vms", "vm", "vms", timeout=90)
-            else:
-                raise
+        """VM listesi — sayfalı. HTTP hatasında OVirtError (boş liste ≠ hata).
+
+        `follow` zinciri: herhangi bir OVirtError'da (400/404/500 dahil) bir sonraki daha hafif istek denenir;
+        eksik alanlar VM başına `fetch_full_details_parallel` ile tamamlanır. Zincirin sonu da hata verirse
+        son hata fırlatılır (sessiz boş liste yok).
+        """
+        raw = None
+        last_exc: Optional[OVirtError] = None
+        for follow in self._LIST_VMS_FOLLOW_CHAIN:
+            try:
+                if follow:
+                    raw = self._paged("vms", "vm", "vms", params={"follow": follow}, timeout=90)
+                else:
+                    raw = self._paged("vms", "vm", "vms", timeout=90)
+                if follow != self._LIST_VMS_FOLLOW_CHAIN[0]:
+                    logger.warning("oVirt/OLVM %s: VM listesi 'follow=%s' ile alındı (tam follow engine'de başarısız)",
+                                   self.host, follow or "-")
+                break
+            except OVirtError as exc:
+                last_exc = exc
+                logger.info("oVirt/OLVM %s: VM listesi follow=%s başarısız (HTTP %s)", self.host, follow or "-",
+                            getattr(exc, "status_code", "?"))
+        if raw is None:
+            raise last_exc if last_exc else OVirtError("VM listesi alınamadı")
         inventory = [self._inventory_row(vm) for vm in raw]
         logger.info("oVirt/OLVM %s: %s VM listelendi", self.host, len(inventory))
         return inventory

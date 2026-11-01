@@ -400,7 +400,7 @@ export default function OcpVmsPanel({
                       >
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2 min-w-0">
-                            <OsIcon os={osBlob || vm.name} size={22} className="flex-shrink-0" />
+                            <OsIcon os={osBlob || vm.name} size={22} className="shrink-0" />
                             <div className="min-w-0">
                               <div className="text-slate-100 font-medium truncate">{vm.name}</div>
                               {osBlob ? (
@@ -446,7 +446,7 @@ export default function OcpVmsPanel({
                                     type="button"
                                     title={t('ocp_console_novnc')}
                                     onClick={() => openVmConsole(clusterId, vm.namespace, vm.name)}
-                                    className="p-1 rounded text-violet-400 hover:bg-violet-500/15"
+                                    className="p-1 rounded-sm text-violet-400 hover:bg-violet-500/15"
                                   >
                                     <Monitor size={14} />
                                   </button>
@@ -458,7 +458,7 @@ export default function OcpVmsPanel({
                                         type="button"
                                         title={t('start')}
                                         onClick={() => power(vm, 'start')}
-                                        className="p-1 rounded text-emerald-400 hover:bg-emerald-500/15"
+                                        className="p-1 rounded-sm text-emerald-400 hover:bg-emerald-500/15"
                                       >
                                         <Play size={14} />
                                       </button>
@@ -469,7 +469,7 @@ export default function OcpVmsPanel({
                                           type="button"
                                           title={t('restart')}
                                           onClick={() => power(vm, 'restart')}
-                                          className="p-1 rounded text-sky-400 hover:bg-sky-500/15"
+                                          className="p-1 rounded-sm text-sky-400 hover:bg-sky-500/15"
                                         >
                                           <RotateCcw size={14} />
                                         </button>
@@ -477,7 +477,7 @@ export default function OcpVmsPanel({
                                           type="button"
                                           title={t('stop')}
                                           onClick={() => power(vm, 'stop')}
-                                          className="p-1 rounded text-red-400 hover:bg-red-500/15"
+                                          className="p-1 rounded-sm text-red-400 hover:bg-red-500/15"
                                         >
                                           <Square size={14} />
                                         </button>
@@ -512,7 +512,7 @@ export default function OcpVmsPanel({
                     type="button"
                     disabled={pageSafe <= 1}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="p-1 rounded border border-white/[0.08] disabled:opacity-30 hover:bg-white/[0.04]"
+                    className="p-1 rounded-sm border border-white/[0.08] disabled:opacity-30 hover:bg-white/[0.04]"
                   >
                     <ChevronLeft size={14} />
                   </button>
@@ -521,7 +521,7 @@ export default function OcpVmsPanel({
                     type="button"
                     disabled={pageSafe >= totalPages}
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    className="p-1 rounded border border-white/[0.08] disabled:opacity-30 hover:bg-white/[0.04]"
+                    className="p-1 rounded-sm border border-white/[0.08] disabled:opacity-30 hover:bg-white/[0.04]"
                   >
                     <ChevronRight size={14} />
                   </button>

@@ -127,6 +127,22 @@ def _extract_context_length(model: Dict[str, Any]) -> Optional[int]:
     return None
 
 
+def active_model_name() -> str:
+    """Etkin model adı (ayarlar). `get_active_model(db)` oturum ister; sağlık kartı `model` vermeden
+    çağrıldığında eskiden TypeError → /platform/llm-health ve /settings/ollama/health 500 oluyordu.
+    Hata → boş (çağıran varsayılan modele düşer)."""
+    try:
+        from app.core.config import get_active_model
+        from app.core.database import ThreadSessionLocal
+        db = ThreadSessionLocal()
+        try:
+            return str(get_active_model(db) or "")
+        finally:
+            db.close()
+    except Exception:
+        return ""
+
+
 def check_ollama_health(
     *,
     base_url: Optional[str] = None,
@@ -137,10 +153,10 @@ def check_ollama_health(
 
     Uyarılar erişimi engellemez: ``ok`` yalnızca bağlantı/temel erişim için False olur.
     """
-    from app.core.config import get_active_model, settings
+    from app.core.config import settings
 
     base = (base_url or settings.OLLAMA_URL or "").rstrip("/")
-    want = (model or get_active_model() or settings.OLLAMA_DEFAULT_MODEL or "").strip()
+    want = (model or active_model_name() or settings.OLLAMA_DEFAULT_MODEL or "").strip()
     configured_ctx = get_num_ctx()
     out: Dict[str, Any] = {
         "ok": False,

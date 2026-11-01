@@ -104,7 +104,9 @@ def test_maybe_fix_noop_when_answer_uses_evidence():
 
 def test_fallback_truncates():
     out = render_raw_evidence_fallback(EVIDENCE + "x" * 20000, max_chars=500)
-    assert "kısaltıldı" in out
+    # Adım 8d: kesik/okunamayan JSON ham basılmaz; Adım 15: başlık «model yazamadı; kısa döküm»
+    assert "kısa dökümü" in out
+    assert '"ok"' not in out and "{" not in out
     assert len(out) < 1200
 
 
@@ -143,3 +145,66 @@ def test_missing_host_names_while_talking_hosts_is_rejected():
         "Dolayısıyla VM'ler otomatik kurtarılamaz."
     )
     assert answer_ignores_evidence(bad, evidence)
+
+
+# ── Adım 15: kapsamlı cevap yanlış reddedilmez; koşul adı döner; "ha" alt-dize hatası yok ──
+_EV15 = (
+    "[Sanallaştırma sağlık özeti]\n"
+    '{"hosts": 15, "alarms": 622, "datastores": 48, "critical": 23, "vm_total": 1563, "ocp_pods": 2410}\n'
+    "[Linux]\n{\"servers\": 506, \"disk_high\": 37}\n" * 3
+)
+
+
+def _long_answer(extra: str = "") -> str:
+    return (
+        "## Genel altyapı durumu\n\n"
+        "- Sanallaştırma: 15 host, 622 alarm, 48 datastore izleniyor; 23 kritik uyarı var.\n"
+        "- Toplam 1563 sanal makine ve 506 Linux sunucu; 37 sunucuda disk doluluğu yüksek.\n"
+        "- OpenShift kümesinde 2410 pod çalışıyor.\n"
+        + extra
+        + "\n" + ("Ayrıntılar için ilgili modüllere bakabilirsiniz. " * 15)
+    )
+
+
+def test_long_rich_answer_with_one_no_data_line_is_kept():
+    from app.services.chat_evidence import evidence_retry_reason
+    ans = _long_answer("- Exadata: veri bulunamadı (entegrasyon kapalı).")
+    assert len(ans) > 700
+    assert evidence_retry_reason(ans, _EV15) == ""
+    assert not needs_evidence_retry(ans, _EV15)
+
+
+def test_short_refusal_still_retried_with_reason():
+    from app.services.chat_evidence import evidence_retry_reason
+    assert evidence_retry_reason("Bu konuda canlı veri mevcut değil.", _EV15) == "no_data"
+
+
+def test_long_refusal_without_anchors_still_retried():
+    from app.services.chat_evidence import evidence_retry_reason
+    ans = "Üzgünüm, ilgili verilere erişimim yok. " + ("Lütfen daha sonra tekrar deneyin. " * 30)
+    assert evidence_retry_reason(ans, _EV15) == "no_data"
+
+
+def test_ignore_reason_names_the_condition():
+    from app.services.chat_evidence import ignore_reason
+    assert ignore_reason("Sunucu 10.9.8.7 adresinde.", "esx-01.corp 192.168.1.5 " * 10) == "invented_ip"
+    ev = "esx-01.local ve esx-02.local hostları: cpu 91 ram 80 disk 70"
+    assert ignore_reason("Tek host var ve failover yok.", ev) == "no_names"
+    assert ignore_reason("Genel görünüm normal.", ev) == "no_anchor"
+    assert ignore_reason("esx-01.local cpu 91 görünüyor.", ev) == ""
+
+
+def test_ha_substring_no_longer_triggers_no_names():
+    """«hata» / «Hangi» içindeki 'ha' tam sözcük değildir → no_names tetiklenmez."""
+    from app.services.chat_evidence import ignore_reason
+    ev = "esx-01.local ve esx-02.local: cpu 91 ram 80 disk 70 sayaç 123"
+    ans = "Hangi sunucuda hata var? Kayıtlı hata yok; değerler 91 ve 80."
+    assert ignore_reason(ans, ev) == ""
+
+
+def test_no_names_not_raised_when_answer_uses_evidence_numbers():
+    from app.services.chat_evidence import ignore_reason
+    ev = "esx-01.local ve esx-02.local hostları: cpu 91 ram 803 disk 704 sayaç 1234"
+    ans = "Genel görünüm: host yükü yüksek; CPU 91, RAM 803, disk 704 ve sayaç 1234 değerleri öne çıkıyor."
+    assert ignore_reason(ans, ev) == ""
+    assert ignore_reason("Tek host var ve failover yok.", ev) == "no_names"   # eski koruma sürüyor

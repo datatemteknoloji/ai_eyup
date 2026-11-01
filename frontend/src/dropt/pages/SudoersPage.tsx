@@ -197,7 +197,7 @@ export function SudoersPage() {
     <div className={cn("flex min-h-0 flex-col", embedded ? "px-3 py-2" : "px-6 py-6")}>
       <div className="mb-3 shrink-0">
         <h2 className="text-lg font-semibold">{t("wizard_sudo")}</h2>
-        <p className="text-xs text-[var(--color-muted-foreground)]">
+        <p className="text-xs text-(--color-muted-foreground)">
           Kullanıcı/grup → runas (default root) → absolut komut · /etc/sudoers.d
           {hostname ? ` · ${hostname}` : ""}
         </p>
@@ -211,9 +211,9 @@ export function SudoersPage() {
 
       <div className="space-y-3">
         {/* Mevcut custom kurallar */}
-        <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4">
+        <section className="rounded-xl border border-(--color-border) bg-(--color-card) p-4">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-(--color-muted-foreground)">
               Tanımlı yetkiler (root / wheel / Defaults hariç)
             </h3>
             <Button
@@ -228,7 +228,7 @@ export function SudoersPage() {
             </Button>
           </div>
           {rules.length === 0 ? (
-            <p className="text-[11px] text-[var(--color-muted-foreground)]">
+            <p className="text-[11px] text-(--color-muted-foreground)">
               {rulesLoading ? "Okunuyor…" : "Custom kural yok veya okunamadı."}
             </p>
           ) : (
@@ -237,12 +237,12 @@ export function SudoersPage() {
                 <li key={`${r.source_file}-${i}`}>
                   <button
                     type="button"
-                    className="w-full rounded border border-transparent px-1.5 py-1 text-left hover:border-emerald-500/30 hover:bg-emerald-500/5"
+                    className="w-full rounded-sm border border-transparent px-1.5 py-1 text-left hover:border-emerald-500/30 hover:bg-emerald-500/5"
                     title="Forma kopyala"
                     onClick={() => applyPeerRule(r)}
                   >
                     <span className="text-emerald-200">{r.who}</span>
-                    <span className="text-[var(--color-muted-foreground)]">
+                    <span className="text-(--color-muted-foreground)">
                       {" "}
                       ({r.runas}) {r.nopasswd ? "NOPASSWD " : ""}
                       {r.commands.join(", ")}
@@ -255,8 +255,8 @@ export function SudoersPage() {
         </section>
 
         {/* Peer lookup */}
-        <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4">
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+        <section className="rounded-xl border border-(--color-border) bg-(--color-card) p-4">
+          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-(--color-muted-foreground)">
             Benzer sunucudan kopya
           </h3>
           <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
@@ -289,11 +289,11 @@ export function SudoersPage() {
                 <li key={`peer-${i}`}>
                   <button
                     type="button"
-                    className="w-full rounded border border-transparent px-1.5 py-1 text-left hover:border-sky-500/30 hover:bg-sky-500/5"
+                    className="w-full rounded-sm border border-transparent px-1.5 py-1 text-left hover:border-sky-500/30 hover:bg-sky-500/5"
                     onClick={() => applyPeerRule(r)}
                   >
                     <span className="text-sky-200">{r.who}</span>
-                    <span className="text-[var(--color-muted-foreground)]">
+                    <span className="text-(--color-muted-foreground)">
                       {" "}
                       ({r.runas}) {r.commands.join(", ")}
                     </span>
@@ -304,11 +304,11 @@ export function SudoersPage() {
             </ul>
           ) : null}
 
-          <div className="mt-3 border-t border-[var(--color-border)]/60 pt-3">
-            <h4 className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+          <div className="mt-3 border-t border-(--color-border)/60 pt-3">
+            <h4 className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-(--color-muted-foreground)">
               Path sorgula (which)
             </h4>
-            <p className="mb-2 text-[10px] text-[var(--color-muted-foreground)]">
+            <p className="mb-2 text-[10px] text-(--color-muted-foreground)">
               Kısa ad (örn. systemctl). Önce formdaki kullanıcı login PATH’i; yoksa/bulunamazsa root
               fallback.
             </p>
@@ -340,12 +340,12 @@ export function SudoersPage() {
             {whichResult?.path ? (
               <button
                 type="button"
-                className="mt-2 w-full rounded border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5 text-left font-mono text-[11px] hover:bg-emerald-500/10"
+                className="mt-2 w-full rounded-sm border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5 text-left font-mono text-[11px] hover:bg-emerald-500/10"
                 title="Komut listesine ekle"
                 onClick={() => appendPathToCommands(whichResult.path)}
               >
                 <span className="text-emerald-200">{whichResult.path}</span>
-                <span className="ml-2 text-[10px] text-[var(--color-muted-foreground)]">
+                <span className="ml-2 text-[10px] text-(--color-muted-foreground)">
                   {whichResult.source === "user"
                     ? `← ${whichResult.as_user}`
                     : whichResult.fallback
@@ -364,7 +364,7 @@ export function SudoersPage() {
         {/* Grant form */}
         <form
           onSubmit={onSubmit}
-          className="space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4"
+          className="space-y-3 rounded-xl border border-(--color-border) bg-(--color-card) p-4"
         >
           <Input
             className="h-8"
@@ -376,7 +376,7 @@ export function SudoersPage() {
           />
 
           <div>
-            <label className="mb-0.5 block text-[10px] text-[var(--color-muted-foreground)]">
+            <label className="mb-0.5 block text-[10px] text-(--color-muted-foreground)">
               1. Kullanıcı / Grup
             </label>
             <div className="grid gap-2 sm:grid-cols-[8rem_1fr]">
@@ -404,7 +404,7 @@ export function SudoersPage() {
           </div>
 
           <div>
-            <label className="mb-0.5 block text-[10px] text-[var(--color-muted-foreground)]">
+            <label className="mb-0.5 block text-[10px] text-(--color-muted-foreground)">
               2. Kimin yetkisiyle? (varsayılan: root)
             </label>
             <Input
@@ -418,7 +418,7 @@ export function SudoersPage() {
 
           <div>
             <div className="mb-0.5 flex flex-wrap items-center justify-between gap-2">
-              <label className="text-[10px] text-[var(--color-muted-foreground)]">
+              <label className="text-[10px] text-(--color-muted-foreground)">
                 3. Komut (tam yol) — satır başına bir komut
               </label>
               {templates.length > 0 ? (
@@ -437,7 +437,7 @@ export function SudoersPage() {
               ) : null}
             </div>
             <textarea
-              className="min-h-[5.5rem] w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500/40"
+              className="min-h-[5.5rem] w-full rounded-md border border-(--color-border) bg-transparent px-3 py-2 font-mono text-xs outline-hidden focus:border-emerald-500/40"
               placeholder={"/usr/bin/systemctl restart httpd\n/usr/bin/systemctl status httpd"}
               value={commandsText}
               onChange={(e) => setCommandsText(e.target.value)}
@@ -450,7 +450,7 @@ export function SudoersPage() {
             Şifre sorulmasın (NOPASSWD)
           </label>
 
-          {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+          {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
 
           <Button type="submit" size="sm" disabled={busy || !previewReady}>
             {busy ? "…" : t("preview")}

@@ -66,6 +66,22 @@ def hw_findings(db: Session, *, now: Optional[datetime] = None) -> List[FindingD
             out.append(FindingDraft("hw.server.unreachable", "server", ref, s.name or s.provider_ref, RESULT_FAIL,
                                     evidence={"vendor": s.vendor}, stale=stale, data_age_sec=age))
 
+    # ── firmware: referans sunucudan düşük (kabul edilmemiş) ────────────────────────────────────────────────────
+    try:
+        from app.services.hw.firmware_compare import compare_all
+        for r in compare_all(db, [s for s in servers]).values():
+            if r["status"] != "outdated":
+                continue
+            s = r["_server"]
+            names = [c["name"] for c in r["components"] if c["state"] == "outdated"]
+            out.append(FindingDraft("hw.firmware.outdated", "server", f"hw:{s.instance_id}:{s.provider_ref}", s.name or s.provider_ref,
+                                    RESULT_FAIL, evidence={"outdated_components": len(names), "model": s.model, "vendor": s.vendor},
+                                    detail=f"{len(names)} bileşen referans sunucudan düşük sürümde: " + ", ".join(names[:5]),
+                                    stale=stale_by.get(s.instance_id, False), data_age_sec=age_by.get(s.instance_id)))
+    except Exception:  # noqa: BLE001 — firmware karşılaştırması diğer donanım bulgularını engellemez
+        import logging
+        logging.getLogger(__name__).exception("hw firmware karşılaştırması başarısız")
+
     # ── tekrar eden alarm ───────────────────────────────────────────────────────────────────────────────────────
     cutoff = now - timedelta(hours=RECUR_WINDOW_H)
     cnt: Dict[tuple, int] = defaultdict(int)

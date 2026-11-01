@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -419,6 +420,9 @@ def cluster_overview_api(
     cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster bulunamadı")
+    from app.services.openshift import fake_cluster
+    if fake_cluster.is_fake(cluster):        # sahte test cluster'ı: canlı API yok, DB'den üret
+        return fake_cluster.fake_overview(db, cluster)
     from app.services.openshift import cluster_ops
     client = cluster_ops.client_from_cluster(cluster)
     try:
@@ -833,7 +837,10 @@ def cluster_kubevirt_vms(cluster_id: int, db: Session = Depends(get_db)):
     cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster bulunamadı")
-    from app.services.openshift import cluster_ops
+    from app.services.openshift import cluster_ops, fake_cluster
+    if fake_cluster.is_fake(cluster):        # sahte test cluster'ı: VM'ler DB'den
+        vms = fake_cluster.fake_kubevirt_vms(db, cluster)
+        return {"vms": vms, "total": len(vms), "installed": True, "fake": True}
     kv = cluster_ops.kubevirt_client_from_cluster(cluster)
     try:
         ok, msg = kv.test_connection()
@@ -2196,6 +2203,13 @@ async def cluster_pod_exec(
             pass
 
 
+@router.get("/hierarchy")
+def get_ocp_hierarchy(cluster_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Cluster → node / namespace özeti. Pod ve VM sayıları envanterden (node.pod_count değil)."""
+    from app.services.ocp_hierarchy import hierarchy
+    return hierarchy(db, cluster_id)
+
+
 @router.get("/nodes")
 async def list_nodes(
     cluster_id: Optional[int] = None,
@@ -2300,7 +2314,7 @@ async def openshift_ops_summary(db: Session = Depends(get_db)):
     from app.api.ops_center import _active_events, ACTIVE_WINDOW_HOURS
     from app.services.event_grouping import unique_events
 
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    since = utc_now() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     events = unique_events(_active_events(db, since, platform="openshift"))
     critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
     warning = sum(1 for e in events if e.severity == "warning")
@@ -2324,7 +2338,7 @@ async def openshift_command_center(db: Session = Depends(get_db)):
     from app.api.ops_center import _active_events, ACTIVE_WINDOW_HOURS
     from app.services.event_grouping import unique_events
 
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    since = utc_now() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     events = unique_events(_active_events(db, since, platform="openshift"))
 
     clusters = db.query(OpenShiftCluster).all()

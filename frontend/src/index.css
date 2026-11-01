@@ -1,6 +1,25 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@config '../tailwind.config.js';
+@plugin '@tailwindcss/typography';
+
+/* Tailwind v4: v3 varsayılanlarını koru (kenarlık rengi, buton imleci, placeholder rengi). */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+}
 
 /* Radix Select/Dropdown in Dialog: modal sets body { pointer-events: none }.
    Portaled poppers are body children — must re-enable clicks + sit above dialog (z-90). */
@@ -356,6 +375,40 @@ html[data-theme="light"] .text-amber-400,
 html[data-theme="light"] .text-orange-400 {
   color: #c2410c !important;
 }
+/* Rapor görünümleri: opaklıklı/sarı pastel metinler beyaz yüzeyde okunmuyordu (kontrast < 2:1) */
+html[data-theme="light"] .text-amber-400\/60,
+html[data-theme="light"] .text-amber-400\/70,
+html[data-theme="light"] .text-amber-400\/80,
+html[data-theme="light"] .text-amber-400\/90 {
+  color: #c2410c !important;
+}
+html[data-theme="light"] .text-yellow-400,
+html[data-theme="light"] .text-yellow-500 {
+  color: #a16207 !important;
+}
+html[data-theme="light"] .text-amber-200\/90 {
+  color: #92400e !important;
+}
+html[data-theme="light"] .text-violet-300\/80,
+html[data-theme="light"] .text-violet-400\/80 {
+  color: #6d28d9 !important;
+}
+html[data-theme="light"] .text-blue-400\/70,
+html[data-theme="light"] .text-blue-400\/80 {
+  color: #1e40af !important;
+}
+html[data-theme="light"] .text-red-400\/70,
+html[data-theme="light"] .text-red-400\/80 {
+  color: #dc2626 !important;
+}
+html[data-theme="light"] .bg-slate-800\/20 {
+  background-color: var(--bg-elevated) !important;
+}
+html[data-theme="light"] .hover\:bg-slate-700\/20:hover,
+html[data-theme="light"] .hover\:bg-slate-800\/30:hover,
+html[data-theme="light"] .hover\:bg-slate-800\/50:hover {
+  background-color: var(--bg-hover) !important;
+}
 html[data-theme="light"] .text-emerald-200,
 html[data-theme="light"] .text-emerald-300,
 html[data-theme="light"] .text-green-200,
@@ -698,9 +751,17 @@ html[data-theme="light"] .nl-history-item .nl-history-meta {
 }
 
 /* ── Base Reset ──────────────────────────────────────────────────────────── */
+/* Tailwind v4: yardımcı sınıflar `@layer utilities` içinde; KATMANSIZ kurallar katmanlı olanı her zaman
+   yener. Düşük özgüllüklü genel sıfırlama (`*`, `body` …) katmansız bırakılırsa p-*, mt-*, mx-auto gibi
+   TÜM yardımcıları ezer. Bu yüzden `@layer base` içinde tutulur (v3'teki sıralama davranışı). */
+@layer base {
 * { margin: 0; padding: 0; box-sizing: border-box; }
+}
 
 html { scroll-behavior: smooth; }
+/* Adım 18: genel ölçek — Tailwind rem tabanlı olduğundan tüm bileşenler (login dahil) %90 boyutlanır.
+   Geri almak için satırı sil ya da 100% yap. px ile sabitlenmiş parçalar (örn. text-[11px], --chat-fs) etkilenmez. */
+html { font-size: 90%; }
 
 body {
   font-family: 'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -890,9 +951,11 @@ html[data-theme="light"] aside.app-sidebar nav a.bg-gradient-to-r {
 }
 
 /* ── Code / Terminal ─────────────────────────────────────────────────────── */
+@layer base {
 code {
   font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', source-code-pro, Menlo, Monaco, Consolas, monospace;
   font-size: 0.85em;
+}
 }
 
 /* ── AI markdown (prose-invert) — light theme contrast ─────────────────────
@@ -1196,3 +1259,34 @@ html[data-theme="light"] .automic-md .am-a { color: #1d4ed8; }
 .am-conf-high { color: #22c55e; }
 .am-conf-medium { color: #f59e0b; }
 .am-conf-low { color: #ef4444; }
+
+
+/* ── Adım 16: sohbet yazı boyutu ──────────────────────────────────────────────
+   Yalnız NL sohbet metni (`.chat-msg-body`, kullanıcı/asistan balonu, giriş kutusu).
+   Boyut: <html data-chat-size="s|m|l|xl"> (lib/chatFontSize.ts). Varsayılan 12 px (Adım 18; önceden 13).
+   `html` öneki: Tailwind `text-sm` / `prose-sm` yardımcı sınıflarını (0,1,0) yener. */
+html { --chat-fs: 12px; }
+html[data-chat-size="s"] { --chat-fs: 11px; }
+html[data-chat-size="m"] { --chat-fs: 12px; }
+html[data-chat-size="l"] { --chat-fs: 13px; }
+html[data-chat-size="xl"] { --chat-fs: 15px; }
+
+html .chat-user-text,
+html .chat-assistant-text,
+html .chat-msg-body {
+  font-size: var(--chat-fs);
+  line-height: 1.55;
+}
+/* Başlıklar gövdenin ≤ 1,25 katı (prose-sm: h1 ≈ 2,1× h2 ≈ 1,4×) */
+html .chat-msg-body h1 { font-size: 1.25em; line-height: 1.3; margin: 0.9em 0 0.45em; }
+html .chat-msg-body h2 { font-size: 1.15em; line-height: 1.3; margin: 0.9em 0 0.4em; }
+html .chat-msg-body h3,
+html .chat-msg-body h4 { font-size: 1.05em; line-height: 1.35; margin: 0.8em 0 0.35em; }
+/* Tablo / kod gövdeye oranlı */
+html .chat-msg-body table { font-size: 0.95em; }
+html .chat-msg-body .chat-md-th,
+html .chat-msg-body .chat-md-td { padding: 0.4rem 0.65rem; }
+html .chat-msg-body .chat-md-inline-code,
+html .chat-msg-body code { font-size: 0.88em; }
+html .chat-msg-body .chat-md-pre,
+html .chat-msg-body pre { font-size: 0.9em; }

@@ -163,7 +163,7 @@ export function JobsPage() {
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold">{t("jobs_title")}</h2>
-            <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("jobs_subtitle")}</p>
+            <p className="mt-1 text-sm text-(--color-muted-foreground)">{t("jobs_subtitle")}</p>
           </div>
           {toolbar}
         </div>
@@ -171,7 +171,7 @@ export function JobsPage() {
 
       <div className="mb-4 flex flex-wrap gap-3">
         <div className="relative min-w-[220px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted-foreground)" />
           <Input
             className="pl-9"
             placeholder="Talep ID veya başlık…"
@@ -216,11 +216,11 @@ export function JobsPage() {
         </Select>
       </div>
 
-      {error ? <p className="mb-3 text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="mb-3 text-sm text-(--color-destructive)">{error}</p> : null}
 
-      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/80">
+      <div className="overflow-hidden rounded-xl border border-(--color-border) bg-(--color-card)/80">
         <table className="w-full text-sm">
-          <thead className="border-b border-[var(--color-border)] text-[var(--color-muted-foreground)]">
+          <thead className="border-b border-(--color-border) text-(--color-muted-foreground)">
             <tr>
               <th className="px-3 py-3 text-left">
                 <SortHeader label="ID" active={sortKey === "id"} dir={sortDir} onClick={() => toggle("id")} />
@@ -286,22 +286,22 @@ export function JobsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-[var(--color-muted-foreground)]">
+                <td colSpan={8} className="px-3 py-8 text-center text-(--color-muted-foreground)">
                   {t("loading")}
                 </td>
               </tr>
             ) : sorted.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-[var(--color-muted-foreground)]">
+                <td colSpan={8} className="px-3 py-8 text-center text-(--color-muted-foreground)">
                   {t("no_records")}
                 </td>
               </tr>
             ) : (
               sorted.map((j) => (
-                <tr key={j.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-accent)]/40">
+                <tr key={j.id} className="border-t border-(--color-border) hover:bg-(--color-accent)/40">
                   <td className="px-3 py-2.5">
                     <Link
-                      className="font-mono text-[var(--color-primary)] hover:underline"
+                      className="font-mono text-(--color-primary) hover:underline"
                       to={`/level1/jobs/${j.id}`}
                     >
                       #{j.id}
@@ -314,7 +314,7 @@ export function JobsPage() {
                     </div>
                     {j.summary_tr && j.summary_tr !== j.title ? (
                       <div
-                        className="mt-0.5 truncate text-[11px] text-[var(--color-muted-foreground)]"
+                        className="mt-0.5 truncate text-[11px] text-(--color-muted-foreground)"
                         title={j.summary_tr}
                       >
                         {j.summary_tr}
@@ -322,17 +322,17 @@ export function JobsPage() {
                     ) : null}
                   </td>
                   <td
-                    className="max-w-[14rem] truncate px-3 py-2.5 font-mono text-xs text-[var(--color-muted-foreground)]"
+                    className="max-w-[14rem] truncate px-3 py-2.5 font-mono text-xs text-(--color-muted-foreground)"
                     title={j.servers_label}
                   >
                     {j.servers_label}
                   </td>
                   <td className="px-3 py-2.5">{statusBadge(j.status)}</td>
-                  <td className="px-3 py-2.5 text-xs text-[var(--color-muted-foreground)]">
+                  <td className="px-3 py-2.5 text-xs text-(--color-muted-foreground)">
                     {j.created_by_username}
                   </td>
                   <td className="px-3 py-2.5 font-mono text-xs">{j.progress_label}</td>
-                  <td className="px-3 py-2.5 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+                  <td className="px-3 py-2.5 font-mono text-[11px] text-(--color-muted-foreground)">
                     {formatTs(j.event_at)}
                   </td>
                 </tr>

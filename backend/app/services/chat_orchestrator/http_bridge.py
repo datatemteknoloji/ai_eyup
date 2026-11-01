@@ -1,11 +1,14 @@
 """HTTP stream → ChatTurn kuyruğu + Redis SSE."""
 from __future__ import annotations
 
+import uuid
 from typing import Any, Callable, Optional
 
+from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.core.database import SessionLocal
+from app.services.chat_orchestrator import ai_gate
 from app.services.chat_orchestrator.service import (
     create_turn,
     register_pipeline,
@@ -21,6 +24,7 @@ def attach_and_stream(
     session_id: Optional[int],
     pipeline: Callable,
     user_id: Optional[int] = None,
+    loop: Any = None,
 ) -> StreamingResponse:
     register_pipeline(platform, pipeline)
     for extra in {
@@ -31,6 +35,12 @@ def attach_and_stream(
         "virt": ("hypervisor", "virt"),
     }.get(platform, ()):
         register_pipeline(extra, pipeline)
+    # Adım 13: kuyruk dolu / kullanıcı başına eşzamanlı tur sınırı → tur OLUŞTURULMADAN HTTP 429 (beklemeden)
+    turn_id = str(uuid.uuid4())
+    try:
+        ai_gate.admit(turn_id, user_id)
+    except ai_gate.AdmissionError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail, headers={"Retry-After": "30"})
     db = SessionLocal()
     try:
         turn = create_turn(
@@ -40,8 +50,13 @@ def attach_and_stream(
             payload=payload or {},
             session_id=session_id,
             user_id=user_id,
+            loop=loop,
+            turn_id=turn_id,
         )
         turn_id = turn.id
+    except Exception:
+        ai_gate.turn_finished(turn_id)
+        raise
     finally:
         db.close()
 
@@ -63,3 +78,16 @@ def attach_and_stream(
             "X-Turn-Id": turn_id,
         },
     )
+
+
+async def attach_and_stream_async(**kwargs: Any) -> StreamingResponse:
+    """`attach_and_stream`'in event döngüsünü bloklamayan sürümü (Adım 11).
+
+    `create_turn` → `plan_sources` yönlendirme ipucu LLM'ini (senkron, ≤8 sn) ve DB yazımlarını sohbete ayrılmış
+    iş parçacığı havuzunda çalıştırır; `run_turn` yine ana event döngüsünde başlar.
+    """
+    import asyncio
+
+    from app.core.chat_executor import run_chat_io
+
+    return await run_chat_io(attach_and_stream, loop=asyncio.get_running_loop(), **kwargs)

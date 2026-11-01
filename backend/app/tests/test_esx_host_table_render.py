@@ -24,7 +24,7 @@ def test_capacity_columns_render_actual_values():
     out = format_esx_host_table([CAPACITY_ROW], as_of="2026-09-05T17:00:00")
     assert "CPU %" in out and "28.5" in out
     assert "Mem %" in out and "95.5" in out
-    assert "as_of" in out
+    assert "Veri zamanı: 5 Eyl 2026 17:00" in out and "as_of" not in out
 
 
 def test_all_empty_columns_are_dropped():

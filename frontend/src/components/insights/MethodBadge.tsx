@@ -119,7 +119,7 @@ function Popover({ anchor, onClose, children }: { anchor: HTMLElement | null; on
   if (!pos) return null
   return createPortal(
     <div ref={ref} style={{ top: pos.top, left: pos.left, width: 340 }}
-      className="fixed z-[200] rounded-lg border border-white/[0.12] bg-cyber-card shadow-2xl p-3 text-left text-xs text-slate-300 space-y-1.5"
+      className="fixed z-200 rounded-lg border border-white/[0.12] bg-cyber-card shadow-2xl p-3 text-left text-xs text-slate-300 space-y-1.5"
       onClick={e => e.stopPropagation()}>
       {children}
     </div>,
@@ -146,7 +146,7 @@ export function MethodBadge({ id, at, computedAt, className = '' }: {
   const computed = computedAt ? new Date(computedAt).toLocaleString() : ''
   return (
     <span className={`inline-flex items-center gap-1 align-middle ${className}`} data-method-id={id}>
-      <span className={`text-[10px] leading-none px-1.5 py-[3px] rounded border font-medium whitespace-nowrap ${CLASS_STYLE[m.cls]}`}>
+      <span className={`text-[10px] leading-none px-1.5 py-[3px] rounded-sm border font-medium whitespace-nowrap ${CLASS_STYLE[m.cls]}`}>
         {classLabel}
       </span>
       <button type="button" ref={setAnchor} aria-label={t('method_info_btn')} title={t('method_info_btn')}

@@ -114,6 +114,7 @@ def _collect_windows_server_rows(
     hypervisor_id: Optional[int] = None,
     hypervisor_type: Optional[str] = None,
     unassigned_hypervisor: bool = False,
+    hypervisor_ids: Optional[str] = None,
 ) -> List[dict]:
     """Windows envanter satırlarını üretir (sayfalama öncesi)."""
     from app.services.platform_scope import is_windows_server
@@ -142,7 +143,13 @@ def _collect_windows_server_rows(
             )
         )
 
-    if unassigned_hypervisor:
+    from app.api.servers import parse_hypervisor_ids
+    hv_ids = parse_hypervisor_ids(hypervisor_ids)
+    if hv_ids and unassigned_hypervisor:
+        query = query.filter(or_(Server.hypervisor_id.in_(hv_ids), Server.hypervisor_id.is_(None)))
+    elif hv_ids:
+        query = query.filter(Server.hypervisor_id.in_(hv_ids))
+    elif unassigned_hypervisor:
         query = query.filter(Server.hypervisor_id.is_(None))
     elif hypervisor_id is not None:
         query = query.filter(Server.hypervisor_id == int(hypervisor_id))
@@ -213,6 +220,7 @@ def list_windows_servers(
     hypervisor_id: Optional[int] = None,
     hypervisor_type: Optional[str] = None,
     unassigned_hypervisor: bool = False,
+    hypervisor_ids: Optional[str] = None,
 ):
     """
     List Windows servers (paginated).
@@ -225,6 +233,7 @@ def list_windows_servers(
         hypervisor_id=hypervisor_id,
         hypervisor_type=hypervisor_type,
         unassigned_hypervisor=unassigned_hypervisor,
+        hypervisor_ids=hypervisor_ids,
     )
     total = len(result)
     start = (page - 1) * page_size
@@ -236,6 +245,21 @@ def list_windows_servers(
     }
 
 
+@router.get("/servers/hypervisor-facets")
+def windows_hypervisor_facets(
+    db: Session = Depends(get_db),
+    include_unclassified: bool = False,
+    q: Optional[str] = None,
+):
+    """Windows sayfası ortam filtresi facet'leri (RBAC: `windows` modülü — `/windows` öneki).
+
+    Aynı üretici `servers.hypervisor-facets` ile; credential alanı dönmez.
+    """
+    from app.api.servers import build_hypervisor_facets
+
+    return build_hypervisor_facets(db, "windows", q=q, include_unclassified=include_unclassified)
+
+
 @router.get("/servers/summary")
 def windows_servers_summary(
     db: Session = Depends(get_db),
@@ -243,6 +267,7 @@ def windows_servers_summary(
     hypervisor_id: Optional[int] = None,
     hypervisor_type: Optional[str] = None,
     unassigned_hypervisor: bool = False,
+    hypervisor_ids: Optional[str] = None,
 ):
     """Windows KPI sayıları."""
     items = _collect_windows_server_rows(
@@ -251,6 +276,7 @@ def windows_servers_summary(
         hypervisor_id=hypervisor_id,
         hypervisor_type=hypervisor_type,
         unassigned_hypervisor=unassigned_hypervisor,
+        hypervisor_ids=hypervisor_ids,
     )
     return {
         "total": len(items),

@@ -27,12 +27,12 @@ export function DialogContent({
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay
-        className="fixed inset-0 z-[80]"
+        className="fixed inset-0 z-80"
         style={{ background: "var(--theme-overlay, rgba(2, 6, 16, 0.78))" }}
       />
       <DialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-[90] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border p-5 shadow-2xl",
+          "fixed left-1/2 top-1/2 z-90 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border p-5 shadow-2xl",
           className,
         )}
         style={{

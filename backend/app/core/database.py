@@ -26,7 +26,8 @@ engine = create_engine(
     max_overflow=max(5, min(80, int(os.getenv("DB_MAX_OVERFLOW", "30")))),
     pool_timeout=30,
     pool_recycle=1800,
-    echo=False
+    echo=False,
+    connect_args={"application_name": "ainew-api"},   # pg_stat_activity'de kaynağı ayırt etmek için
 )
 
 # Thread engine — background thread'ler için (NullPool: her thread bağımsız bağlantı açar)
@@ -34,7 +35,8 @@ engine = create_engine(
 _thread_engine = create_engine(
     settings.DATABASE_URL,
     poolclass=NullPool,
-    echo=False
+    echo=False,
+    connect_args={"application_name": "ainew-thread"},
 )
 
 # FastAPI endpoint session factory (pool kullanır)
@@ -45,6 +47,27 @@ ThreadSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_threa
 
 # Base class for models
 Base = declarative_base()
+
+def release_txn(db, keep_loaded: bool = False) -> bool:
+    """Uzun dış bekleme (LLM akışı, canlı API/SSH) ÖNCESİ açık okuma işlemini kapatır.
+
+    Okuma sorgusu bir işlem başlatır; commit/rollback gelmezse bağlantı dakikalarca «idle in transaction»
+    kalır ve TimescaleDB retention/DDL işleri (AccessExclusive) arkasında tüm okumalar kuyruğa girer.
+    Bekleyen değişiklik varsa commit eder (sohbet hatları zaten aynı yerlerde commit ediyor). Hata sessizdir."""
+    try:
+        if keep_loaded and db is not None:
+            # İstek oturumu: yüklü nesneler (kullanıcı vb.) commit sonrası expire olup oturumu yeniden açmasın
+            db.expire_on_commit = False
+        if db is not None and db.in_transaction():
+            db.commit()
+            return True
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    return False
+
 
 def get_db() -> Generator[Session, None, None]:
     """FastAPI dependency — pooled session."""

@@ -1,6 +1,6 @@
 """Süreç/konteyner genelinde LLM eşzamanlılık semaforu + öncelik (Adım 6c).
 
-Ollama `Parallel:1` ile uyumlu: aynı anda en fazla N (varsayılan 1) LLM çağrısı çalışır, gerisi kuyrukta bekler.
+Ollama `OLLAMA_NUM_PARALLEL` ile uyumlu olmalı (`llm_max_concurrent` ≤ Ollama paralelliği): aynı anda en fazla N LLM çağrısı çalışır, gerisi kuyrukta bekler.
 
 Öncelik sınıfları:
   chat        — kullanıcı sohbeti (aktif `chat_request_metrics` ölçümü olan istek) ve açıkça `priority("chat")`
@@ -9,7 +9,7 @@ Ollama `Parallel:1` ile uyumlu: aynı anda en fazla N (varsayılan 1) LLM çağr
 Kural: bir sohbet çağrısı kuyrukta bekliyorsa arka plan çağrıları YENİ LLM çağrısı BAŞLATMAZ (çalışan çağrı kesilmez).
 Arka plan çağrısı açlıktan korunmak için en fazla `llm_sched_bg_max_wait_sec` bekler, sonra devam eder (loglanır).
 
-Çok worker/konteyner: Redis lease tabanlı sayaç (ZSET: üye=jeton, skor=bitiş zamanı; çökmüş sahipler TTL ile düşer).
+Çok worker/konteyner: Redis lease tabanlı sayaç (ZSET: üye=jeton, skor=bitiş zamanı; lease 90 sn, sahip süreç 20 sn'de bir yeniler — çökmüş/yeniden başlatılmış sahip ≤ 90 sn'de düşer).
 Redis yoksa süreç içi (threading) yedek kullanılır. Aynı bağlamdaki iç içe çağrı yeniden-girişli sayılır (kilitlenme yok).
 `llm_max_concurrent=0` → kapalı.
 """
@@ -32,7 +32,12 @@ BACKGROUND = "background"
 
 _ACTIVE_KEY = "ainew:llm:sem:active"
 _WAIT_KEY = "ainew:llm:sem:wait_chat"
-_LEASE_TTL_SEC = 900          # çökmüş sahibin kilidi bırakması (en uzun çağrıdan büyük)
+# Adım 14: lease KISA (çökmüş/yeniden başlatılmış sahibin slotu ≤ 90 sn'de düşer) + canlı sahip süreç arka plan
+# iş parçacığıyla yeniler (`_renew_held`). Eskiden 900 sn sabitti: LLM çağrısı sürerken restart → `llm_max_concurrent=1`
+# iken ölü sahip slotu 15 dk tutuyor, sohbet dakikalarca yavaşlıyordu.
+_LEASE_TTL_SEC = 90
+_LEASE_RENEW_EVERY_SEC = 20
+_LOCAL_LEASE_TTL_SEC = 900    # süreç içi yedek: sahip süreçle birlikte ölür, yenileme gerekmez
 _WAIT_REG_TTL_SEC = 20        # kuyrukta bekleyen sohbet kaydı (poll ile tazelenir)
 
 _prio_override: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("llm_prio", default=None)
@@ -108,6 +113,37 @@ def set_priority(level: Optional[str]) -> None:
     _prio_override.set(level if level in (CHAT, BACKGROUND) else None)
 
 
+@contextlib.contextmanager
+def chat_priority() -> Iterator[None]:
+    """Etkileşimli sohbet LLM çağrısı: açık bir sınıf atanmamışsa bu çağrıyı CHAT yapar, bitince geri alır.
+
+    - Genel varsayılanı DEĞİŞTİRMEZ (arka plan işleri / Automic `background` olarak kalır).
+    - Açık atama (`priority()` / `set_priority()`, ör. Automic `background`) korunur.
+    - Havuz thread'lerinde (araç döngüsü `run_in_executor`) ContextVar taşınmadığı için çağrının
+      koştuğu thread'de, çağrı çevresinde kullanılır; kalıcı atama yapmadığından thread'e sızmaz.
+    """
+    if _prio_override.get():
+        yield
+        return
+    tok = _prio_override.set(CHAT)
+    try:
+        yield
+    finally:
+        try:
+            _prio_override.reset(tok)
+        except Exception:
+            _prio_override.set(None)
+
+
+def mark_chat() -> None:
+    """Sohbet akışı async üretecinin girişinde: bu görev bağlamını (yoksa) CHAT yapar.
+
+    Bağlam istek/görev başınadır; havuz thread'lerine geçmez (oradaki çağrılar `chat_priority()` kullanır).
+    """
+    if _prio_override.get() is None:
+        _prio_override.set(CHAT)
+
+
 def current_priority() -> str:
     ov = _prio_override.get()
     if ov:
@@ -139,7 +175,7 @@ class _LocalBackend:
             elif self._wait_chat:
                 return False
             if len(self._active) < cap:
-                self._active[token] = now + _LEASE_TTL_SEC
+                self._active[token] = now + _LOCAL_LEASE_TTL_SEC
                 self._wait_chat.pop(token, None)
                 return True
             return False
@@ -166,19 +202,72 @@ def _redis():
         return None
 
 
+# Bu süreçte tutulan (Redis) lease jetonları → arka plan iş parçacığı canlıyken yeniler.
+_held_tokens: set = set()
+_held_lock = threading.Lock()
+_hb_thread: Optional[threading.Thread] = None
+
+
+def _renew_held() -> int:
+    """Bu sürecin tuttuğu lease'leri uzat (yalnız MEVCUT üyeler: `XX` — bırakılmış jeton diriltilmez). Döner: uzatılan sayı."""
+    with _held_lock:
+        tokens = list(_held_tokens)
+    if not tokens:
+        return 0
+    r = _redis()
+    if r is None:
+        return 0
+    try:
+        exp = time.time() + _LEASE_TTL_SEC
+        pipe = r.pipeline()
+        for t in tokens:
+            pipe.zadd(_ACTIVE_KEY, {t: exp}, xx=True)
+        pipe.execute()
+        return len(tokens)
+    except Exception as exc:
+        logger.debug("llm_scheduler renew: %s", exc)
+        return 0
+
+
+def _hb_loop() -> None:
+    while True:
+        time.sleep(_LEASE_RENEW_EVERY_SEC)
+        try:
+            _renew_held()
+        except Exception:
+            pass
+
+
+def _track(token: str) -> None:
+    global _hb_thread
+    with _held_lock:
+        _held_tokens.add(token)
+        if _hb_thread is None or not _hb_thread.is_alive():
+            _hb_thread = threading.Thread(target=_hb_loop, name="llm_sched_hb", daemon=True)
+            _hb_thread.start()
+
+
+def _untrack(token: str) -> None:
+    with _held_lock:
+        _held_tokens.discard(token)
+
+
 def _try_acquire(token: str, prio: str, cap: int) -> bool:
     now = time.time()
     r = _redis()
     if r is not None:
         try:
-            ok = r.eval(_ACQUIRE_LUA, 2, _ACTIVE_KEY, _WAIT_KEY, now, _LEASE_TTL_SEC, cap, token, prio, _WAIT_REG_TTL_SEC)
-            return bool(int(ok or 0))
+            ok = bool(int(r.eval(_ACQUIRE_LUA, 2, _ACTIVE_KEY, _WAIT_KEY, now, _LEASE_TTL_SEC, cap, token, prio, _WAIT_REG_TTL_SEC) or 0))
+            if ok:
+                _track(token)
+            return ok
         except Exception as exc:
             logger.debug("llm_scheduler redis: %s → yerel yedek", exc)
     return _local.try_acquire(token, prio, cap, now)
 
 
 def _release(token: str) -> None:
+    _untrack(token)
     _local.release(token)
     r = _redis()
     if r is not None:
@@ -269,6 +358,39 @@ def slot(kind: str = "") -> Iterator[Lease]:
         _held.set(None)
         if not bypass:
             _release(token)
+
+
+@contextlib.contextmanager
+def try_slot(kind: str = "") -> Iterator[Optional[Lease]]:
+    """BekleMEYEN slot denemesi (isteğe bağlı çağrılar için): alınamazsa `None` döner, çağıran atlar.
+
+    - Slot dolu (başka bir sohbet/arka plan çağrısı çalışıyor) → `None`.
+    - Aynı bağlamda zaten bir slot tutuluyorsa (yeniden-girişli) → `None`: ana çağrı çalışırken
+      yan çağrı ona ek yük bindirmez (`slot()` böyle bir çağrıyı bekletmeden geçirirdi).
+    - Zamanlayıcı kapalıysa (`llm_max_concurrent=0`) → bypass lease (atlama yok).
+    Mevcut `slot()`/`aslot()` davranışı değişmez.
+    """
+    cap = max_concurrent()
+    if cap <= 0:
+        yield Lease("", current_priority(), 0.0, bypassed=True, reason="disabled")
+        return
+    if _held.get():
+        yield None
+        return
+    prio = current_priority()
+    token = f"{uuid.uuid4().hex[:12]}"
+    if not _try_acquire(token, prio, cap):
+        _release(token)  # sohbet önceliğinde bekleme kaydı kalmasın
+        yield None
+        return
+    lease = Lease(token, prio, 0.0)
+    _note_wait(lease)
+    _held.set(token)
+    try:
+        yield lease
+    finally:
+        _held.set(None)
+        _release(token)
 
 
 @contextlib.asynccontextmanager

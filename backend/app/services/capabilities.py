@@ -53,7 +53,8 @@ def capabilities_payload() -> Dict[str, Any]:
     return {"ok": True, "capabilities": caps, "has_backup": "backup" in caps,
             "demo_active": demo, "demo_banner": BANNER_TR if demo else None,
             "has_hw": "hw" in caps, "hw_demo_active": hw_demo,
-            "hw_demo_banner": HW_BANNER_TR if hw_demo else None}
+            "hw_demo_banner": HW_BANNER_TR if hw_demo else None,
+            "has_automic": "automic" in caps, "has_centrify": "centrify" in caps}
 
 
 def _demo_gates() -> Dict[str, Any]:
@@ -114,4 +115,49 @@ def _collect() -> Set[str]:
     except Exception as e:  # noqa: BLE001
         # Tablo henüz yok / ilk boot — boş küme (entegrasyonsuz davranış).
         logger.debug("capabilities collect skipped: %s", e)
+    out |= _menu_integrations()
     return out
+
+
+def _menu_integrations() -> Set[str]:
+    """UC4 / Centrify menüsü yalnız tanımlı bağlantı varken açılır.
+
+    Kayıt yoksa veya modül veritabanına ulaşılamazsa menü gizlenir.
+    Entegrasyon kurulum sayfaları (Entegrasyonlar) bu bayrağa bakmaz.
+    """
+    found: Set[str] = set()
+    if _automic_system_defined():
+        found.add("automic")
+    if _centrify_configured():
+        found.add("centrify")
+    return found
+
+
+def _automic_system_defined() -> bool:
+    try:
+        from sqlalchemy import text
+        from app.services.automic.database import get_engine
+        with get_engine().connect() as conn:
+            return conn.execute(text("SELECT 1 FROM automic_systems LIMIT 1")).first() is not None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("automic menü kapalı: %s", exc)
+        return False
+
+
+def _centrify_configured() -> bool:
+    try:
+        from sqlalchemy import text
+        from app.services.centrify.database import get_centrify_thread_session
+        db = get_centrify_thread_session()
+        if db is None:
+            return False
+        try:
+            row = db.execute(text(
+                "SELECT 1 FROM centrify_integration_config WHERE enabled IS TRUE LIMIT 1"
+            )).first()
+            return row is not None
+        finally:
+            db.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("centrify menü kapalı: %s", exc)
+        return False

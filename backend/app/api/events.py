@@ -6,6 +6,7 @@ import re as _re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Optional, List
 from pydantic import BaseModel
 from sqlalchemy import desc, func, or_, and_
@@ -117,7 +118,7 @@ def _event_to_dict(
 def compute_event_stats(db: Session, platform: Optional[str], show_routine: bool) -> dict:
     """Event sayaçları. Dashboard önbelleği bunu arka planda çağırır."""
     from datetime import timedelta
-    since = datetime.utcnow() - timedelta(hours=24)
+    since = utc_now() - timedelta(hours=24)
 
     q = db.query(SystemEvent)
     q = apply_platform_filter(q, platform, db)
@@ -314,7 +315,7 @@ async def bulk_action(data: BulkActionRequest, db: Session = Depends(get_db)):
     if not events:
         raise HTTPException(status_code=404, detail="Event bulunamadı")
 
-    now = datetime.utcnow()
+    now = utc_now()
     count = 0
     for event in events:
         if data.action == "acknowledge" and not event.is_acknowledged:
@@ -379,7 +380,7 @@ async def mark_event_known(
     if not event:
         raise HTTPException(status_code=404, detail="Event bulunamadı")
     event.is_known = True
-    event.known_at = datetime.utcnow()
+    event.known_at = utc_now()
     db.commit()
     _touch_stats()
 
@@ -416,7 +417,7 @@ async def acknowledge_event(event_id: int, db: Session = Depends(get_db)):
     if not event:
         raise HTTPException(status_code=404, detail="Event bulunamadı")
     event.is_acknowledged = True
-    event.acknowledged_at = datetime.utcnow()
+    event.acknowledged_at = utc_now()
     db.commit()
     _touch_stats()
     return {"success": True, "message": "Event onaylandı"}
@@ -455,7 +456,7 @@ async def resolve_event(event_id: int, db: Session = Depends(get_db)):
     if not event:
         raise HTTPException(status_code=404, detail="Event bulunamadı")
     event.resolved = True
-    event.resolved_at = datetime.utcnow()
+    event.resolved_at = utc_now()
     db.commit()
     _touch_stats()
     return {"success": True, "message": "Event çözüldü olarak işaretlendi"}
@@ -757,7 +758,7 @@ async def event_server_coverage(
             .all()
         )
 
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utc_now() - timedelta(hours=hours)
     counts: dict = {}
     if servers:
         counts = dict(

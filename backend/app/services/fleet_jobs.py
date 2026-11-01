@@ -128,6 +128,11 @@ def run_inventory_sync() -> Dict[str, Any]:
                 logger.warning("uCMDB periodic sync skipped/failed: %s", ue)
             qa_cache.invalidate_all()
             try:
+                from app.services import virt_capacity_cache
+                virt_capacity_cache.invalidate_and_prewarm()
+            except Exception:
+                logger.debug("kapasite önbelleği düşürülemedi", exc_info=True)
+            try:
                 from app.services.chat_cache_service import invalidate_context
                 invalidate_context(db, platform="virt", all_for_platform=True)
                 invalidate_context(db, platform="unified", all_for_platform=True)
@@ -171,7 +176,13 @@ def run_virt_insights(hypervisor_id: Optional[int] = None, platform: Optional[st
             if not ok:
                 return {"skipped": True}
             logger.info("Celery fleet: virt insights")
-            return run_cycle(db, hypervisor_id=hypervisor_id, platform=platform, file_scan=file_scan)
+            result = run_cycle(db, hypervisor_id=hypervisor_id, platform=platform, file_scan=file_scan)
+            try:
+                from app.services import virt_capacity_cache
+                virt_capacity_cache.invalidate_and_prewarm()
+            except Exception:
+                logger.debug("kapasite önbelleği düşürülemedi", exc_info=True)
+            return result
     except Exception as exc:
         logger.exception("virt_insights hata: %s", exc)
         return {"error": str(exc)}
@@ -221,6 +232,25 @@ def run_hw_sync() -> Dict[str, Any]:
         db.close()
 
 
+def run_hw_host_logs() -> Dict[str, Any]:
+    """Faz 3a: host kaynaklı donanım logları (ESXi SEL/vmkernel + Linux/Windows). `hw_host_logs_enabled` KAPALIyken
+    hiçbir şey yapmaz. iLO/iDRAC'e bağlanmaz; vCenter oturumu hypervisor başına 1 kez açılır."""
+    from app.services.fleet_mutex import fleet_lock
+
+    db = _db()
+    try:
+        with fleet_lock("hw_host_logs", ttl_sec=3600) as ok:
+            if not ok:
+                return {"skipped": True}
+            from app.services.hw.host_logs import run_host_log_sync
+            return run_host_log_sync(db)
+    except Exception as exc:
+        logger.exception("hw_host_logs hata: %s", exc)
+        return {"error": str(exc)}
+    finally:
+        db.close()
+
+
 def run_esx_metric_sync() -> Dict[str, Any]:
     from app.services.fleet_mutex import fleet_lock
     from app.services.esx_metric_sync import sync_esx_metrics
@@ -252,6 +282,16 @@ def run_esx_metric_sync() -> Dict[str, Any]:
             except Exception as mon_exc:
                 logger.warning("OpenShift monitoring metric sync atlandı: %s", mon_exc)
                 result["openshift_monitoring"] = {"error": str(mon_exc)}
+            try:
+                from app.services.fake_refresh import refresh_all
+                result["fake_refresh"] = refresh_all(db)          # sahte test envanteri (fake_seed) metrik tazeleme
+            except Exception as fk_exc:
+                logger.debug("sahte envanter tazeleme atlandı: %s", fk_exc)
+            try:
+                from app.services import virt_capacity_cache
+                virt_capacity_cache.invalidate_and_prewarm()     # host metrikleri değişti → kapasite yanıtı
+            except Exception:
+                logger.debug("kapasite önbelleği düşürülemedi", exc_info=True)
             return result
     except Exception as exc:
         logger.exception("Celery ESX metric sync hata")
@@ -470,6 +510,12 @@ def run_rag_maintenance() -> Dict[str, Any]:
                 except Exception as exc:
                     logger.warning("RAG bakım (%s) hata: %s", prefix, exc)
                     out[f"{prefix}error"] = str(exc)
+            try:
+                from app.services.rag_maintenance import run_incidents_retention_job
+                out["retention"] = run_incidents_retention_job()  # varsayılan KAPALI → {"skipped": "disabled"}
+            except Exception as exc:
+                logger.warning("RAG retention kancası hata: %s", exc)
+                out["retention_error"] = str(exc)
             logger.info("Celery fleet: RAG bakımı — %s", out)
             return out
     except Exception as exc:

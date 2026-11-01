@@ -3,7 +3,7 @@
  * Explorer (pod/deploy/…) buraya gömülmez; aksiyonlar satır içi.
  */
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Boxes, MonitorPlay, RefreshCw, Search } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
@@ -16,7 +16,10 @@ type OcpCluster = { id: number; name: string; status?: string; version?: string 
 
 export default function OpenShiftVmsPage() {
   const t = useT()
+  const [searchParams] = useSearchParams()
   const [clusterId, setClusterId] = useState<number | null>(() => {
+    const fromUrl = Number(searchParams.get('cluster'))
+    if (fromUrl) return fromUrl
     try {
       const v = localStorage.getItem(LS_CLUSTER)
       return v ? Number(v) : null
@@ -38,7 +41,17 @@ export default function OpenShiftVmsPage() {
     refetchInterval: 60_000,
   })
 
+  const pickCluster = (id: number) => {
+    setClusterId(id)
+    try { localStorage.setItem(LS_CLUSTER, String(id)) } catch { /* ignore */ }
+  }
+
   useEffect(() => {
+    const fromUrl = Number(searchParams.get('cluster'))
+    if (fromUrl && clusters.some((c) => c.id === fromUrl) && fromUrl !== clusterId) {
+      pickCluster(fromUrl)
+      return
+    }
     if (!clusters.length) {
       setClusterId(null)
       return
@@ -48,12 +61,7 @@ export default function OpenShiftVmsPage() {
       setClusterId(next)
       try { localStorage.setItem(LS_CLUSTER, String(next)) } catch { /* ignore */ }
     }
-  }, [clusters, clusterId])
-
-  const pickCluster = (id: number) => {
-    setClusterId(id)
-    try { localStorage.setItem(LS_CLUSTER, String(id)) } catch { /* ignore */ }
-  }
+  }, [clusters, clusterId, searchParams])
 
   const current = clusters.find((c) => c.id === clusterId)
 

@@ -22,6 +22,8 @@ SOAP_MUTATE_DENY = frozenset({
     "MakeDirectory", "DeleteFile", "MoveDatastoreFile_Task",
     "ExtendDatastore_Task", "CreateClusterEx", "AddHost_Task",
     "SetCustomValue", "ReconfigureComputeResource_Task",
+    # Faz 3a — sağlık/SEL yüzeyinde YAZAN metotlar (yalnız FetchSystemEventLog okunur)
+    "ClearSystemEventLog", "ResetSystemHealthInfo", "RefreshHealthStatusSystem",
 })
 
 # İzinli read yüzeyleri (bilgi / dokümantasyon)
@@ -38,6 +40,8 @@ SOAP_READ_ALLOW = frozenset({
     # Event / alarm okuma
     "CreateCollectorForEvents", "DestroyCollector", "SetCollectorPageSize",
     "ReadPreviousEvents", "QueryEvents", "GetAlarmState", "QueryDescriptions",
+    # Faz 3a — host donanım logları (salt-okunur): IPMI SEL ve ESXi log dosyası sayfalama
+    "FetchSystemEventLog", "BrowseDiagnosticLog",
 })
 
 

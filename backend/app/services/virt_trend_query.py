@@ -13,7 +13,7 @@ tarihsel interval (5 dk / 30 dk / 2 sa / 1 gün) YOKTUR. Bu motor
 üzerinden çalıştığı için o ortamlarda da trend sorularını yanıtlar.
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -288,6 +288,7 @@ def run_metric_trend(
     min_value: Optional[float] = None,
     max_value: Optional[float] = None,
     value_basis: Optional[str] = None,
+    exclude_hypervisor_ids: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
     """Zaman serisinden varlık başına trend + kapasite tükenme tahmini üretir.
 
@@ -333,6 +334,10 @@ def run_metric_trend(
     if hv_id is not None:
         where.append("hypervisor_id = :hv_id")
         params["hv_id"] = hv_id
+    if exclude_hypervisor_ids:
+        # Sohbet Top-N: sahte (ZZ-FAKE) hypervisor satırları aday olmasın (Adım 8G, G5).
+        where.append("(hypervisor_id IS NULL OR hypervisor_id <> ALL(:excl_hv))")
+        params["excl_hv"] = [int(i) for i in exclude_hypervisor_ids]
     if name_filter:
         where.append(f"{spec['key']} ILIKE :name_filter")
         params["name_filter"] = f"%{name_filter.strip()}%"

@@ -94,7 +94,7 @@ export function JobDetailPage() {
 
   if (!job) {
     return (
-      <div className="px-6 py-6 text-sm text-[var(--color-muted-foreground)]">
+      <div className="px-6 py-6 text-sm text-(--color-muted-foreground)">
         {error || t("loading")}
       </div>
     );
@@ -118,10 +118,10 @@ export function JobDetailPage() {
           #{job.id} · {job.title}
         </h2>
         {job.summary_tr && job.summary_tr !== job.title ? (
-          <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{job.summary_tr}</p>
+          <p className="mt-1 text-sm text-(--color-muted-foreground)">{job.summary_tr}</p>
         ) : null}
-        <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
-          {t("talep_id")}: <span className="font-mono text-[var(--color-foreground)]">{job.talep_id}</span>
+        <p className="mt-1 text-sm text-(--color-muted-foreground)">
+          {t("talep_id")}: <span className="font-mono text-(--color-foreground)">{job.talep_id}</span>
           {job.hostnames?.length ? (
             <>
               {" · "}
@@ -133,7 +133,7 @@ export function JobDetailPage() {
         </p>
       </div>
 
-      {error ? <p className="mb-3 text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="mb-3 text-sm text-(--color-destructive)">{error}</p> : null}
 
       {applyNotice ? (
         <div
@@ -180,7 +180,7 @@ export function JobDetailPage() {
       </div>
 
       {job.preview ? (
-        <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4">
+        <div className="mb-4 rounded-xl border border-(--color-border) bg-(--color-card) p-4">
           <h3 className="text-sm font-medium">{t("preview_summary")}</h3>
           <p className="mt-2 text-sm">{job.preview.summary_tr}</p>
           {job.preview.risk_notes ? (
@@ -188,26 +188,26 @@ export function JobDetailPage() {
           ) : null}
           <button
             type="button"
-            className="mt-3 text-xs text-[var(--color-primary)] hover:underline"
+            className="mt-3 text-xs text-(--color-primary) hover:underline"
             onClick={() => setShowTech((v) => !v)}
           >
             {showTech ? t("hide_technical") : t("technical_detail")}
           </button>
           {showTech ? (
-            <pre className="mt-2 overflow-x-auto rounded-md bg-[var(--theme-inset)] p-3 font-mono text-xs">
+            <pre className="mt-2 overflow-x-auto rounded-md bg-(--theme-inset) p-3 font-mono text-xs">
               {job.preview.technical_detail || "(boş)"}
             </pre>
           ) : null}
         </div>
       ) : (
-        <p className="mb-4 text-sm text-[var(--color-muted-foreground)]">
+        <p className="mb-4 text-sm text-(--color-muted-foreground)">
           {t("apply_after_preview")}
         </p>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/80">
+      <div className="overflow-hidden rounded-xl border border-(--color-border) bg-(--color-card)/80">
         <table className="w-full text-sm">
-          <thead className="border-b border-[var(--color-border)] text-[var(--color-muted-foreground)]">
+          <thead className="border-b border-(--color-border) text-(--color-muted-foreground)">
             <tr>
               <th className="px-3 py-3 text-left font-medium">{t("server")}</th>
               <th className="px-3 py-3 text-left font-medium">{t("status")}</th>
@@ -217,10 +217,10 @@ export function JobDetailPage() {
           </thead>
           <tbody>
             {(job.runs || []).map((r) => (
-              <tr key={r.id} className="border-t border-[var(--color-border)]">
+              <tr key={r.id} className="border-t border-(--color-border)">
                 <td className="px-3 py-2.5 font-mono text-xs">
                   {r.hostname}
-                  <div className="text-[var(--color-muted-foreground)]">{r.ip}</div>
+                  <div className="text-(--color-muted-foreground)">{r.ip}</div>
                 </td>
                 <td className="px-3 py-2.5">
                   <Badge
@@ -234,7 +234,7 @@ export function JobDetailPage() {
                 <td className="px-3 py-2.5 text-xs">
                   {r.summary_tr}
                   {r.after_state?.artifact_filename ? (
-                    <div className="mt-1 font-mono text-[var(--color-muted-foreground)]">
+                    <div className="mt-1 font-mono text-(--color-muted-foreground)">
                       {String(r.after_state.artifact_filename)} ·{" "}
                       {String(r.after_state.artifact_size_bytes ?? "?")} bayt
                     </div>
@@ -257,7 +257,7 @@ export function JobDetailPage() {
                           : null;
                     if (!items?.length) return null;
                     return (
-                      <ol className="mt-2 list-decimal space-y-2 pl-4 text-[var(--color-muted-foreground)]">
+                      <ol className="mt-2 list-decimal space-y-2 pl-4 text-(--color-muted-foreground)">
                         {items.map((c, i) => (
                           <li key={i} className="whitespace-pre-wrap">
                             {c}
@@ -267,7 +267,7 @@ export function JobDetailPage() {
                     );
                   })()}
                   {r.error_message ? (
-                    <div className="mt-1 text-[var(--color-destructive)]">{r.error_message}</div>
+                    <div className="mt-1 text-(--color-destructive)">{r.error_message}</div>
                   ) : null}
                 </td>
                 <td className="px-3 py-2.5 text-right">

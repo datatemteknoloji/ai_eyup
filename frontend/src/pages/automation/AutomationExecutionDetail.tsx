@@ -98,7 +98,7 @@ export default function AutomationExecutionDetail() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-lg font-semibold text-white break-all"><ObjectLink systemId={sid} name={e.object_name} /></h1>
             <StatusBadge cls={e.status_class} code={e.status_code} />
-            {e.object_type && <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-[11px] text-slate-300">{e.object_type}</span>}
+            {e.object_type && <span className="rounded-sm bg-slate-700/60 px-1.5 py-0.5 text-[11px] text-slate-300">{e.object_type}</span>}
           </div>
           <p className="mt-1 text-xs text-slate-500">
             {d.system} · client {e.client} · RunID <span className="font-mono">{e.run_id}</span>
@@ -182,11 +182,11 @@ export default function AutomationExecutionDetail() {
                   <div className="ml-auto flex items-center gap-2 text-[11px] text-slate-500">
                     <span>kaynak: {report.data.data_source}{report.data.truncated ? ` · kırpıldı (${report.data.total_lines} satır)` : ''}</span>
                     {report.data.data_source !== 'source' && (
-                      <button type="button" onClick={() => setFromSource(true)} className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:text-white">
+                      <button type="button" onClick={() => setFromSource(true)} className="rounded-sm border border-slate-700 px-2 py-0.5 text-slate-300 hover:text-white">
                         Kaynaktan oku
                       </button>
                     )}
-                    <button type="button" onClick={download} className="rounded border border-slate-700 p-1 text-slate-300 hover:text-white" title="İndir">
+                    <button type="button" onClick={download} className="rounded-sm border border-slate-700 p-1 text-slate-300 hover:text-white" title="İndir">
                       <Download size={12} />
                     </button>
                   </div>

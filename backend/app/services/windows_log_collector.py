@@ -8,6 +8,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -126,7 +127,7 @@ def save_windows_logs_to_db(
         key = (raw or {}).get("norm_key") or hashlib.md5((title or "").encode()).hexdigest()[:16]
         existing_map[key] = eid
 
-    now = datetime.utcnow()
+    now = utc_now()
     saved = 0
     updated_ids: set = set()
 
@@ -170,7 +171,7 @@ def save_windows_logs_to_db(
     db.commit()
 
     if saved > 0:
-        since_batch = datetime.utcnow() - timedelta(seconds=5)
+        since_batch = utc_now() - timedelta(seconds=5)
         new_events = db.query(SystemEvent).filter(
             SystemEvent.server_id == server.id,
             SystemEvent.source == "windows_collector",

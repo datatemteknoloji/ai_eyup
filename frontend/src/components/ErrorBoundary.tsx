@@ -82,7 +82,7 @@ class ErrorBoundary extends Component<Props, State> {
               : 'Arayüzde bir sorun meydana geldi. Lütfen sayfayı yenilemeyi deneyin veya sistem yöneticisiyle iletişime geçin.'}
           </p>
           {this.state.error && (
-            <pre className="mb-6 max-w-xl w-full overflow-auto rounded border border-red-200 bg-red-50 px-3 py-2 text-left text-xs text-red-700 font-mono">
+            <pre className="mb-6 max-w-xl w-full overflow-auto rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-left text-xs text-red-700 font-mono">
               {this.state.error.message || String(this.state.error)}
             </pre>
           )}
@@ -90,14 +90,14 @@ class ErrorBoundary extends Component<Props, State> {
             <button
               type="button"
               onClick={() => this.setState({ hasError: false, error: undefined, errorInfo: undefined })}
-              className="rounded border border-gray-300 bg-white px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50"
+              className="rounded-sm border border-gray-300 bg-white px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50"
             >
               Tekrar dene
             </button>
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="rounded bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
+              className="rounded-sm bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
             >
               Sayfayı Yenile
             </button>
@@ -105,7 +105,7 @@ class ErrorBoundary extends Component<Props, State> {
 
           {import.meta.env.DEV && this.state.errorInfo && (
             <div className="mt-8 max-w-4xl text-left">
-              <pre className="overflow-auto rounded bg-gray-100 p-4 text-xs text-gray-800 border border-gray-300 max-h-64">
+              <pre className="overflow-auto rounded-sm bg-gray-100 p-4 text-xs text-gray-800 border border-gray-300 max-h-64">
                 {this.state.errorInfo.componentStack}
               </pre>
             </div>

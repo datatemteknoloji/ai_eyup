@@ -341,7 +341,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
         {clusterId && overview && (
           <div className="flex gap-4 items-start">
             <nav
-              className={`hidden md:flex flex-col flex-shrink-0 sticky top-2 self-start rounded-xl border border-white/[0.06] bg-cyber-card/50 overflow-hidden transition-[width] duration-300 ${
+              className={`hidden md:flex flex-col shrink-0 sticky top-2 self-start rounded-xl border border-white/[0.06] bg-cyber-card/50 overflow-hidden transition-[width] duration-300 ${
                 navCollapsed ? 'w-12' : 'w-52'
               }`}
             >
@@ -377,7 +377,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                               : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
                           }`}
                         >
-                          <Icon size={14} className="flex-shrink-0" />
+                          <Icon size={14} className="shrink-0" />
                           {!navCollapsed && <span className="truncate">{it.label}</span>}
                         </button>
                       )
@@ -408,14 +408,14 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
             <div className="flex-1 min-w-0 space-y-4">
               {NEEDS_PROJECT.includes(active) && !project && (
                 <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-                  <Info size={14} className="text-amber-400 flex-shrink-0" />
+                  <Info size={14} className="text-amber-400 shrink-0" />
                   <p className="text-[11px] text-amber-100/80">{t('ocp_need_project')}</p>
                 </div>
               )}
 
               {SECTION_HELP_KEYS[active] && (
                 <div className="flex items-start gap-2 rounded-lg border border-sky-500/20 bg-sky-500/10 px-3 py-2">
-                  <Info size={14} className="text-sky-400 mt-px flex-shrink-0" />
+                  <Info size={14} className="text-sky-400 mt-px shrink-0" />
                   <p className="text-[11px] text-sky-100/80 leading-relaxed">{t(SECTION_HELP_KEYS[active]!)}</p>
                 </div>
               )}
@@ -489,7 +489,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                       key={`${w.project}/${w.name}`}
                       className="flex items-center gap-2 text-xs border-b border-white/[0.04] py-2"
                     >
-                      <AlertTriangle size={12} className="text-amber-400 flex-shrink-0" />
+                      <AlertTriangle size={12} className="text-amber-400 shrink-0" />
                       <span className="text-slate-200 truncate">{w.name}</span>
                       <span className="text-slate-500">{w.project}</span>
                       <span className="text-red-300 ml-auto">{w.status}</span>
@@ -537,7 +537,7 @@ export default function OpenShiftExplorer({ initialSection = 'genel' }: { initia
                   {t('nav_events')} <ChevronRight size={12} />
                 </Link>
                 <Link to="/openshift/chat" className="inline-flex items-center gap-1 text-rose-300/80 hover:underline">
-                  {t('nav_assistant')} <ChevronRight size={12} />
+                  {t('nav_nl_assistant')} <ChevronRight size={12} />
                 </Link>
               </div>
             </div>

@@ -140,7 +140,7 @@ export default function OcpPodsPanel({
                 : 'bg-red-950/20 border-red-500/30 hover:border-red-400/50'
             }`}
           >
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${p.healthy ? 'bg-emerald-400' : 'bg-red-400'}`} />
+            <span className={`w-2 h-2 rounded-full shrink-0 ${p.healthy ? 'bg-emerald-400' : 'bg-red-400'}`} />
             <div className="min-w-0 flex-1">
               <p className="text-sm text-slate-100 font-mono truncate">{p.name}</p>
               <p className="text-[11px] text-slate-500">{p.phase} · {p.age || '—'}</p>

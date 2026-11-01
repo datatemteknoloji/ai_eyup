@@ -98,6 +98,18 @@ def test_ad(
     }
 
 
+@router.post("/test-sso")
+def test_sso(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """SSO yapılandırmasını doğrula: alanlar, discovery, issuer eşleşmesi, JWKS (oturum açmaz)."""
+    from app.services import sso_oidc
+
+    cfg = get_or_create_identity(db)
+    return sso_oidc.check_configuration(cfg)
+
+
 @router.post("/sync-ad")
 def sync_ad(
     request: Request,

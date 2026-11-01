@@ -148,17 +148,17 @@ export function LoginPage() {
   return (
     <div className="flex min-h-full items-center justify-center px-4">
       <div className="w-full max-w-md">
-        <p className="font-mono text-xs uppercase tracking-[0.22em] text-[var(--color-primary)]">{t("portal")}</p>
+        <p className="font-mono text-xs uppercase tracking-[0.22em] text-(--color-primary)">{t("portal")}</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">{appName}</h1>
-        <p className="mt-2 text-sm text-[var(--color-muted-foreground)]">{t("login_subtitle")}</p>
+        <p className="mt-2 text-sm text-(--color-muted-foreground)">{t("login_subtitle")}</p>
 
         {stage === "credentials" ? (
           <form
             onSubmit={onSubmit}
-            className="mt-8 space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/90 p-6 shadow-xl backdrop-blur"
+            className="mt-8 space-y-4 rounded-xl border border-(--color-border) bg-(--color-card)/90 p-6 shadow-xl backdrop-blur-sm"
           >
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("username")}</label>
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("username")}</label>
               <Input
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -167,7 +167,7 @@ export function LoginPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("password")}</label>
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("password")}</label>
               <Input
                 type="password"
                 value={password}
@@ -176,7 +176,7 @@ export function LoginPage() {
                 required
               />
             </div>
-            {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+            {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
             <Button type="submit" className="w-full" disabled={loading || ssoHandling}>
               {loading ? t("login_submitting") : t("login_submit")}
             </Button>
@@ -199,12 +199,12 @@ export function LoginPage() {
         {stage === "mfa_verify" ? (
           <form
             onSubmit={onSubmitMfaVerify}
-            className="mt-8 space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/90 p-6 shadow-xl backdrop-blur"
+            className="mt-8 space-y-4 rounded-xl border border-(--color-border) bg-(--color-card)/90 p-6 shadow-xl backdrop-blur-sm"
           >
             <h2 className="text-sm font-medium">{t("login_mfa_title")}</h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">{t("login_mfa_verify_help")}</p>
+            <p className="text-sm text-(--color-muted-foreground)">{t("login_mfa_verify_help")}</p>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("login_mfa_code")}
               </label>
               <Input
@@ -218,7 +218,7 @@ export function LoginPage() {
                 maxLength={12}
               />
             </div>
-            {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+            {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? t("login_submitting") : t("login_mfa_submit")}
             </Button>
@@ -232,24 +232,24 @@ export function LoginPage() {
         {stage === "mfa_enroll" ? (
           <form
             onSubmit={onSubmitMfaEnroll}
-            className="mt-8 space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/90 p-6 shadow-xl backdrop-blur"
+            className="mt-8 space-y-4 rounded-xl border border-(--color-border) bg-(--color-card)/90 p-6 shadow-xl backdrop-blur-sm"
           >
             <h2 className="text-sm font-medium">{t("login_mfa_enroll_title")}</h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">{t("login_mfa_enroll_help")}</p>
-            <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--theme-inset)] p-3">
+            <p className="text-sm text-(--color-muted-foreground)">{t("login_mfa_enroll_help")}</p>
+            <div className="space-y-2 rounded-lg border border-(--color-border) bg-(--theme-inset) p-3">
               <div>
-                <p className="text-xs text-[var(--color-muted-foreground)]">{t("login_mfa_secret")}</p>
+                <p className="text-xs text-(--color-muted-foreground)">{t("login_mfa_secret")}</p>
                 <p className="break-all font-mono text-xs">{enrollSecret}</p>
               </div>
               <div>
-                <p className="text-xs text-[var(--color-muted-foreground)]">{t("login_mfa_otpauth_url")}</p>
-                <p className="break-all font-mono text-[10px] text-[var(--color-muted-foreground)]">
+                <p className="text-xs text-(--color-muted-foreground)">{t("login_mfa_otpauth_url")}</p>
+                <p className="break-all font-mono text-[10px] text-(--color-muted-foreground)">
                   {enrollOtpauthUrl}
                 </p>
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("login_mfa_code")}
               </label>
               <Input
@@ -263,7 +263,7 @@ export function LoginPage() {
                 maxLength={12}
               />
             </div>
-            {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+            {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? t("login_submitting") : t("login_mfa_enroll_submit")}
             </Button>

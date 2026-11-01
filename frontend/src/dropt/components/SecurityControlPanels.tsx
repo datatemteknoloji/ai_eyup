@@ -25,7 +25,7 @@ import type { TranslationKey } from "@dropt/i18n/messages";
 import { getToken } from "@dropt/session";
 
 const panelClass =
-  "space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm";
+  "space-y-4 rounded-2xl border border-(--color-border) bg-(--color-card) p-6 shadow-xs";
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -80,7 +80,7 @@ export function SecurityPolicyPanel() {
   if (!policy) {
     return (
       <div className={panelClass}>
-        <p className="text-sm text-[var(--color-muted-foreground)]">{t("loading")}</p>
+        <p className="text-sm text-(--color-muted-foreground)">{t("loading")}</p>
       </div>
     );
   }
@@ -89,11 +89,11 @@ export function SecurityPolicyPanel() {
     <form onSubmit={onSave} className={panelClass}>
       <div>
         <h3 className="text-sm font-medium">{t("security_policy_sessions_title")}</h3>
-        <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">{t("security_policy_sessions_help")}</p>
+        <p className="mt-1 text-xs text-(--color-muted-foreground)">{t("security_policy_sessions_help")}</p>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">
             {t("security_idle_minutes")}
           </label>
           <Input
@@ -107,7 +107,7 @@ export function SecurityPolicyPanel() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">
             {t("security_absolute_minutes")}
           </label>
           <Input
@@ -124,7 +124,7 @@ export function SecurityPolicyPanel() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">
             {t("security_max_concurrent")}
           </label>
           <Input
@@ -142,9 +142,9 @@ export function SecurityPolicyPanel() {
         </div>
       </div>
 
-      <div className="border-t border-[var(--color-border)] pt-4">
+      <div className="border-t border-(--color-border) pt-4">
         <h3 className="text-sm font-medium">{t("security_lockout_title")}</h3>
-        <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">{t("security_lockout_help")}</p>
+        <p className="mt-1 text-xs text-(--color-muted-foreground)">{t("security_lockout_help")}</p>
         <label className="mt-3 flex items-center gap-2 text-sm">
           <Checkbox
             checked={policy.lockout_enabled}
@@ -154,7 +154,7 @@ export function SecurityPolicyPanel() {
         </label>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <div>
-            <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+            <label className="mb-1 block text-xs text-(--color-muted-foreground)">
               {t("security_lockout_max_attempts")}
             </label>
             <Input
@@ -169,7 +169,7 @@ export function SecurityPolicyPanel() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+            <label className="mb-1 block text-xs text-(--color-muted-foreground)">
               {t("security_lockout_window_minutes")}
             </label>
             <Input
@@ -187,7 +187,7 @@ export function SecurityPolicyPanel() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+            <label className="mb-1 block text-xs text-(--color-muted-foreground)">
               {t("security_lockout_duration_minutes")}
             </label>
             <Input
@@ -207,7 +207,7 @@ export function SecurityPolicyPanel() {
         </div>
       </div>
 
-      {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
       {info ? <p className="text-sm text-emerald-300">{info}</p> : null}
       <Button type="submit" disabled={busy}>
         {t("save")}
@@ -272,7 +272,7 @@ export function SecuritySessionsPanel() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-medium">{t("security_sessions_title")}</h3>
-          <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">{t("security_sessions_help")}</p>
+          <p className="mt-1 text-xs text-(--color-muted-foreground)">{t("security_sessions_help")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void load()}>
@@ -291,12 +291,12 @@ export function SecuritySessionsPanel() {
         </div>
       </div>
 
-      {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
       {info ? <p className="text-sm text-emerald-300">{info}</p> : null}
 
-      <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
+      <div className="overflow-x-auto rounded-xl border border-(--color-border)">
         <table className="w-full min-w-[920px] text-sm">
-          <thead className="border-b border-[var(--color-border)] bg-[var(--color-muted)]/20 text-[var(--color-muted-foreground)]">
+          <thead className="border-b border-(--color-border) bg-(--color-muted)/20 text-(--color-muted-foreground)">
             <tr>
               <th className="px-4 py-3 text-left font-medium">{t("username")}</th>
               <th className="px-4 py-3 text-left font-medium">{t("security_col_source")}</th>
@@ -305,14 +305,14 @@ export function SecuritySessionsPanel() {
               <th className="px-4 py-3 text-left font-medium">{t("security_col_created")}</th>
               <th className="px-4 py-3 text-left font-medium">{t("security_col_last_seen")}</th>
               <th className="px-4 py-3 text-left font-medium">{t("security_col_expires")}</th>
-              <th className="sticky right-0 bg-[var(--color-card)] px-4 py-3 text-right font-medium">
+              <th className="sticky right-0 bg-(--color-card) px-4 py-3 text-right font-medium">
                 {t("security_col_actions")}
               </th>
             </tr>
           </thead>
           <tbody>
             {sessions.map((row) => (
-              <tr key={row.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-muted)]/10">
+              <tr key={row.id} className="border-t border-(--color-border) hover:bg-(--color-muted)/10">
                 <td className="px-4 py-3 align-middle">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs">{row.username}</span>
@@ -323,13 +323,13 @@ export function SecuritySessionsPanel() {
                   <Badge variant="muted">{row.auth_source}</Badge>
                 </td>
                 <td className="px-4 py-3 font-mono text-xs align-middle">{row.client_ip || "—"}</td>
-                <td className="max-w-[12rem] px-4 py-3 text-xs align-middle text-[var(--color-muted-foreground)]" title={row.user_agent}>
+                <td className="max-w-[12rem] px-4 py-3 text-xs align-middle text-(--color-muted-foreground)" title={row.user_agent}>
                   {shortUa(row.user_agent)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-xs align-middle">{fmtDate(row.created_at)}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-xs align-middle">{fmtDate(row.last_seen_at)}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-xs align-middle">{fmtDate(row.absolute_expires_at)}</td>
-                <td className="sticky right-0 bg-[var(--color-card)] px-4 py-3 text-right align-middle">
+                <td className="sticky right-0 bg-(--color-card) px-4 py-3 text-right align-middle">
                   <Button
                     size="sm"
                     variant="destructive"
@@ -343,7 +343,7 @@ export function SecuritySessionsPanel() {
             ))}
             {sessions.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-[var(--color-muted-foreground)]">
+                <td colSpan={8} className="px-4 py-8 text-center text-(--color-muted-foreground)">
                   {t("no_records")}
                 </td>
               </tr>
@@ -432,8 +432,8 @@ export function SecurityMfaPanel() {
     <div className="space-y-5">
       <div className={panelClass}>
         <h3 className="text-sm font-medium">{t("security_mfa_title")}</h3>
-        <p className="text-xs text-[var(--color-muted-foreground)]">{t("security_mfa_help")}</p>
-        <p className="text-xs text-[var(--color-muted-foreground)]">{t("security_mfa_scope_help")}</p>
+        <p className="text-xs text-(--color-muted-foreground)">{t("security_mfa_help")}</p>
+        <p className="text-xs text-(--color-muted-foreground)">{t("security_mfa_scope_help")}</p>
         <label className="flex items-center gap-2 text-sm">
           <Checkbox
             checked={Boolean(policy?.mfa_enabled)}
@@ -451,7 +451,7 @@ export function SecurityMfaPanel() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-medium">{t("security_mfa_users_title")}</h3>
-            <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">{t("security_mfa_users_help")}</p>
+            <p className="mt-1 text-xs text-(--color-muted-foreground)">{t("security_mfa_users_help")}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input
@@ -466,19 +466,19 @@ export function SecurityMfaPanel() {
           </div>
         </div>
 
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
         {info ? <p className="text-sm text-emerald-300">{info}</p> : null}
 
-        <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
+        <div className="overflow-x-auto rounded-xl border border-(--color-border)">
           <table className="w-full min-w-[760px] text-sm">
-            <thead className="border-b border-[var(--color-border)] bg-[var(--color-muted)]/20 text-[var(--color-muted-foreground)]">
+            <thead className="border-b border-(--color-border) bg-(--color-muted)/20 text-(--color-muted-foreground)">
               <tr>
                 <th className="px-4 py-3 text-left font-medium">{t("username")}</th>
                 <th className="px-4 py-3 text-left font-medium">{t("security_col_source")}</th>
                 <th className="px-4 py-3 text-left font-medium">{t("security_col_mfa_status")}</th>
                 <th className="px-4 py-3 text-left font-medium">{t("security_col_enrolled")}</th>
                 <th className="px-4 py-3 text-left font-medium">{t("security_col_last_verified")}</th>
-                <th className="sticky right-0 bg-[var(--color-card)] px-4 py-3 text-right font-medium">
+                <th className="sticky right-0 bg-(--color-card) px-4 py-3 text-right font-medium">
                   {t("security_col_actions")}
                 </th>
               </tr>
@@ -487,7 +487,7 @@ export function SecurityMfaPanel() {
               {filtered.map((row) => {
                 const canReset = row.status === "enabled" || row.status === "pending";
                 return (
-                  <tr key={row.user_id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-muted)]/10">
+                  <tr key={row.user_id} className="border-t border-(--color-border) hover:bg-(--color-muted)/10">
                     <td className="px-4 py-3 font-mono text-xs align-middle">{row.username}</td>
                     <td className="px-4 py-3 align-middle">
                       <Badge variant="muted">{row.auth_source}</Badge>
@@ -497,7 +497,7 @@ export function SecurityMfaPanel() {
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs align-middle">{fmtDate(row.enrolled_at)}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs align-middle">{fmtDate(row.last_verified_at)}</td>
-                    <td className="sticky right-0 bg-[var(--color-card)] px-4 py-3 text-right align-middle">
+                    <td className="sticky right-0 bg-(--color-card) px-4 py-3 text-right align-middle">
                       <Button
                         size="sm"
                         variant="destructive"
@@ -513,7 +513,7 @@ export function SecurityMfaPanel() {
               })}
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-[var(--color-muted-foreground)]">
+                  <td colSpan={6} className="px-4 py-8 text-center text-(--color-muted-foreground)">
                     {t("no_records")}
                   </td>
                 </tr>
@@ -608,7 +608,7 @@ export function SecurityTlsPanel() {
     <div className="space-y-5">
       <div className={panelClass}>
         <h3 className="text-sm font-medium">{t("security_tls_title")}</h3>
-        <p className="text-xs text-[var(--color-muted-foreground)]">{t("security_tls_help")}</p>
+        <p className="text-xs text-(--color-muted-foreground)">{t("security_tls_help")}</p>
         <label className="flex items-center gap-2 text-sm">
           <Checkbox
             checked={Boolean(status?.https_enabled)}
@@ -620,34 +620,34 @@ export function SecurityTlsPanel() {
         {status ? (
           <dl className="grid gap-2 text-xs sm:grid-cols-2">
             <div>
-              <dt className="text-[var(--color-muted-foreground)]">{t("security_tls_source")}</dt>
+              <dt className="text-(--color-muted-foreground)">{t("security_tls_source")}</dt>
               <dd className="font-mono">{status.source}</dd>
             </div>
             <div>
-              <dt className="text-[var(--color-muted-foreground)]">{t("security_tls_ports")}</dt>
+              <dt className="text-(--color-muted-foreground)">{t("security_tls_ports")}</dt>
               <dd className="font-mono">
                 HTTP :{status.http_port} · HTTPS :{status.https_port}
               </dd>
             </div>
             <div className="sm:col-span-2">
-              <dt className="text-[var(--color-muted-foreground)]">{t("security_tls_subject")}</dt>
+              <dt className="text-(--color-muted-foreground)">{t("security_tls_subject")}</dt>
               <dd className="break-all font-mono">{status.subject || "—"}</dd>
             </div>
             <div className="sm:col-span-2">
-              <dt className="text-[var(--color-muted-foreground)]">{t("security_tls_fingerprint")}</dt>
+              <dt className="text-(--color-muted-foreground)">{t("security_tls_fingerprint")}</dt>
               <dd className="break-all font-mono text-[10px]">{status.fingerprint_sha256 || "—"}</dd>
             </div>
             <div>
-              <dt className="text-[var(--color-muted-foreground)]">{t("security_tls_expires")}</dt>
+              <dt className="text-(--color-muted-foreground)">{t("security_tls_expires")}</dt>
               <dd className="font-mono">{status.not_after || "—"}</dd>
             </div>
             <div>
-              <dt className="text-[var(--color-muted-foreground)]">{t("security_tls_dir")}</dt>
+              <dt className="text-(--color-muted-foreground)">{t("security_tls_dir")}</dt>
               <dd className="font-mono">{status.certs_dir}</dd>
             </div>
           </dl>
         ) : (
-          <p className="text-sm text-[var(--color-muted-foreground)]">{t("loading")}</p>
+          <p className="text-sm text-(--color-muted-foreground)">{t("loading")}</p>
         )}
         <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void load()}>
@@ -661,13 +661,13 @@ export function SecurityTlsPanel() {
 
       <form onSubmit={onUpload} className={panelClass}>
         <h3 className="text-sm font-medium">{t("security_tls_upload_title")}</h3>
-        <p className="text-xs text-[var(--color-muted-foreground)]">{t("security_tls_upload_help")}</p>
+        <p className="text-xs text-(--color-muted-foreground)">{t("security_tls_upload_help")}</p>
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">
             {t("security_tls_cert_pem")}
           </label>
           <textarea
-            className="h-28 w-full rounded-md border border-[var(--color-border)] bg-[var(--theme-inset)] p-2 font-mono text-xs"
+            className="h-28 w-full rounded-md border border-(--color-border) bg-(--theme-inset) p-2 font-mono text-xs"
             value={certPem}
             onChange={(e) => setCertPem(e.target.value)}
             required
@@ -675,11 +675,11 @@ export function SecurityTlsPanel() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">
             {t("security_tls_key_pem")}
           </label>
           <textarea
-            className="h-28 w-full rounded-md border border-[var(--color-border)] bg-[var(--theme-inset)] p-2 font-mono text-xs"
+            className="h-28 w-full rounded-md border border-(--color-border) bg-(--theme-inset) p-2 font-mono text-xs"
             value={keyPem}
             onChange={(e) => setKeyPem(e.target.value)}
             required
@@ -687,11 +687,11 @@ export function SecurityTlsPanel() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">
             {t("security_tls_chain_pem")}
           </label>
           <textarea
-            className="h-20 w-full rounded-md border border-[var(--color-border)] bg-[var(--theme-inset)] p-2 font-mono text-xs"
+            className="h-20 w-full rounded-md border border-(--color-border) bg-(--theme-inset) p-2 font-mono text-xs"
             value={chainPem}
             onChange={(e) => setChainPem(e.target.value)}
             placeholder={t("security_tls_chain_optional")}
@@ -702,7 +702,7 @@ export function SecurityTlsPanel() {
         </Button>
       </form>
 
-      {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
       {info ? <p className="text-sm text-emerald-300">{info}</p> : null}
     </div>
   );

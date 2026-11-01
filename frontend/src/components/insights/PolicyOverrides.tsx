@@ -96,13 +96,13 @@ export default function PolicyOverrides({ clusters }: { clusters: any[] }) {
       <div className="flex flex-wrap gap-3 text-xs text-slate-400">
         <label className="flex flex-col gap-1">{t('vi_ov_instance')}
           <select data-testid="ov-instance" value={hv} onChange={e => { setHv(Number(e.target.value)); setScope('') }}
-            className="rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white">
+            className="rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white">
             {instances.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1">{t('vi_ov_scope')}
           <select data-testid="ov-scope" value={scope} onChange={e => setScope(e.target.value)}
-            className="rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white">
+            className="rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white">
             <option value="">{t('vi_ov_scope_instance')}</option>
             {clusterNames.map((n: string) => <option key={n} value={n}>{n}</option>)}
           </select>
@@ -118,7 +118,7 @@ export default function PolicyOverrides({ clusters }: { clusters: any[] }) {
               <div className="flex items-center gap-2">
                 <input type="number" min={s.min} max={s.max} step="1" value={vals[k] ?? ''} disabled={!isAdmin}
                   onChange={ev => setVals(v => ({ ...v, [k]: ev.target.value }))}
-                  className="w-28 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono disabled:opacity-60" />
+                  className="w-28 rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono disabled:opacity-60" />
                 <span data-testid={`ov-src-${k}`} className={own ? 'text-amber-300' : 'text-slate-500'}>{srcLabel(e.src)}</span>
                 {own && isAdmin && (
                   <button type="button" data-testid={`ov-del-${k}`} onClick={() => remove(k)} className="text-blue-400 hover:underline">{t('vi_ov_remove')}</button>

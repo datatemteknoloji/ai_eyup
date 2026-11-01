@@ -25,8 +25,9 @@ Everything about **OpenShift Container Platform** and **oVirt / OLVM** (includin
 
 | Menu | Path | Actions |
 |------|------|---------|
+| Dashboard | `/openshift/dashboard` | Cluster / node / pod / VM summary. “Cluster infrastructure” expands nodes and namespaces under the selected cluster card; the pod list is sortable and searchable (`GET /openshift/hierarchy`) |
 | Command centre | `/openshift/ops` | Critical summary |
-| Inventory | `/openshift` | Cluster / node / project |
+| Inventory | `/openshift` | Cluster, node, project, workload |
 | Virtual Machines | `/openshift/vms` | KubeVirt / OCP VMs |
 | Monitoring | `/openshift/monitoring` | API: Node/Pod/VM + `metrics.k8s.io` → Timescale. Prometheus: DCGM + kubevirt (Settings binding). Hub `/monitoring` |
 | Events / incidents | `/openshift/events`, `/incidents` | Cluster ops |
@@ -74,3 +75,9 @@ KubeVirt VMs appear in two places:
 OpenShift cluster sync (`/integrations/openshift` → Sync) auto-creates/updates a managed `openshift_virt` hypervisor and writes KubeVirt VMs into `servers`. A separate manual hypervisor entry is **not required**. Linux guests show under **Linux → Linux Servers**. VM name vs OS hostname mismatch uses the same filter as VMware (guest agent or SSH OS refresh).
 
 ainew is not installed as an OpenShift Operator; it **manages** OpenShift. OCP chat does not replace Linux SSH. If the OLVM engine is unreachable, virt pages stay empty. Monitoring **API mode** uses `metrics.k8s.io`; **Prometheus mode** reads DCGM/kubevirt from the OpenShift-bound registry source. Other sources appear on the hub by label; Unified chat requires the full label.
+
+## Ready Reports (`/openshift/reports`)
+
+Same card grid as Virtualization/Linux; 14 reports: Executive Summary, Capacity, Capacity Forecast, Capacity Plan (N+1), Risk, Riskiest Assets, Project (Namespace) Usage, Storage (PVC), Workload Health, Virtual Machines (KubeVirt), Compliance and Update, Operations, **MTV Migration**, **MTV Migration Readiness**. Data comes only from the ainew DB (no live call to the cluster); numbers are deterministic (no LLM). When data is missing the section shows "Not measurable". A forecast needs at least a 14-day series and gives a range. Team reports also show the synthetic (ZZ-FAKE) cluster.
+
+**MTV history:** MTV keeps only the current Plan/Migration CRs on the cluster. At every 10-minute OpenShift sync ainew writes a snapshot of them to the `mtv_plan_snapshots` table (one row per plan; a removed plan stays as "Removed", rows are never deleted; if the cluster/MTV is unreachable no plan is closed). History starts at ainew's first snapshot; migrations before that are not visible.

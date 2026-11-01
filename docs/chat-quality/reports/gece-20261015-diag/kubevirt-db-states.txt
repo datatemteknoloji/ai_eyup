@@ -1,0 +1,3 @@
+ZZ-FAKE-OpenShift|Running|443
+ZZ-FAKE-OpenShift|Stopped|57
+oVirt (OpenShift Virt)|Running|5

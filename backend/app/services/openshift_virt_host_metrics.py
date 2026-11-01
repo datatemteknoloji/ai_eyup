@@ -17,6 +17,7 @@ from app.models.hypervisor_inventory import HypervisorHostInventory
 from app.models.hypervisor_metric import HypervisorHostMetric
 from app.models.openshift import OpenShiftCluster, OpenShiftNode
 from app.models.server import Server
+from app.services.chat_quality import power_state as _ps_canon
 from app.services.openshift_virt_inventory import META_CLUSTER_ID
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,36 @@ def _resolve_cluster(db: Session, hv: Hypervisor) -> Optional[OpenShiftCluster]:
     return None
 
 
+def _write_fake_host_vm_counts(db: Session, hv: Hypervisor, now: datetime) -> None:
+    """Sahte OpenShift Virt envanteri için node başı VM sayısı (yalnız en son metrik satırı güncellenir)."""
+    from sqlalchemy import func as sa_func
+
+    sub = (
+        db.query(HypervisorHostMetric.host_name, sa_func.max(HypervisorHostMetric.timestamp).label("last_ts"))
+        .filter(HypervisorHostMetric.hypervisor_id == hv.id)
+        .group_by(HypervisorHostMetric.host_name)
+        .subquery()
+    )
+    latest = (
+        db.query(HypervisorHostMetric)
+        .join(sub, (HypervisorHostMetric.host_name == sub.c.host_name) & (HypervisorHostMetric.timestamp == sub.c.last_ts))
+        .filter(HypervisorHostMetric.hypervisor_id == hv.id)
+        .all()
+    )
+    counts: dict = {}
+    for v in db.query(Server).filter(Server.hypervisor_id == hv.id).all():
+        key = (v.vm_host_name or "").strip().lower()
+        if not key:
+            continue
+        tot, on = counts.get(key, (0, 0))
+        counts[key] = (tot + 1, on + (1 if ((v.status or "").upper() == "ONLINE" or _ps_canon.is_on(v.vm_power_state)) else 0))
+    for row in latest:
+        tot, on = counts.get((row.host_name or "").strip().lower(), (0, 0))
+        if row.vms_total != tot or row.vms_running != on:
+            row.vms_total, row.vms_running = tot, on
+    db.commit()
+
+
 def sync_openshift_virt_host_metrics(db: Session) -> Dict[str, Any]:
     """Tüm openshift_virt hypervisor'lar için node metriklerini yaz."""
     hvs = (
@@ -107,6 +138,12 @@ def sync_openshift_virt_host_metrics(db: Session) -> Dict[str, Any]:
     disk_cache: Dict[int, Tuple[Optional[float], Optional[float], Optional[float]]] = {}
 
     for hv in hvs:
+        if (hv.meta_data or {}).get("fake_seed"):
+            # Sahte envanter (scripts/fake_virt_seed.py): gerçek cluster yok ama node başı VM sayısı
+            # envanterden (vm_host_name) yazılır — yoksa eski «cluster toplamı × node» şişmesi durur.
+            _write_fake_host_vm_counts(db, hv, now)
+            total_hosts += 1
+            continue
         cluster = _resolve_cluster(db, hv)
         if not cluster:
             errors.append(f"{hv.name}: bağlı OpenShift cluster bulunamadı")
@@ -122,12 +159,19 @@ def sync_openshift_virt_host_metrics(db: Session) -> Dict[str, Any]:
         ds_used, ds_total, ds_pct = disk_cache[cluster.id]
 
         vms = db.query(Server).filter(Server.hypervisor_id == hv.id).all()
-        vm_total = len(vms)
-        vm_running = sum(
-            1
-            for v in vms
-            if (v.status or "").upper() == "ONLINE" or "on" in (v.vm_power_state or "").lower()
-        )
+
+        def _vm_on(v) -> bool:
+            return (v.status or "").upper() == "ONLINE" or _ps_canon.is_on(v.vm_power_state)
+
+        # VM sayıları NODE BAŞINA: envanterden (vm_host_name/ref). Eskiden hypervisor toplamı
+        # her node'a yazılıyordu ve dashboard hostları toplayınca N kat şişiriyordu (500 VM × 15 node = 7500).
+        by_node: dict = {}
+        for v in vms:
+            key = (v.vm_host_name or "").strip().lower() or (v.vm_host_ref or "").rsplit("/", 1)[-1].strip().lower()
+            if not key:
+                continue
+            tot, on = by_node.get(key, (0, 0))
+            by_node[key] = (tot + 1, on + (1 if _vm_on(v) else 0))
 
         for node in nodes:
             cpu_pct = _clamp_pct(node.cpu_usage_pct)
@@ -138,6 +182,7 @@ def sync_openshift_virt_host_metrics(db: Session) -> Dict[str, Any]:
                 if mem_total_mb is not None and mem_pct is not None
                 else None
             )
+            node_tot, node_on = by_node.get((node.name or "").strip().lower(), (0, 0))
             conn = "connected" if (node.status or "").lower() == "ready" else "notResponding"
             meta = node.meta_data if isinstance(getattr(node, "meta_data", None), dict) else {}
             ip = (meta.get("ip_address") or meta.get("internal_ip") or "").strip() or None
@@ -155,8 +200,8 @@ def sync_openshift_virt_host_metrics(db: Session) -> Dict[str, Any]:
                     ds_used_gb=ds_used,
                     ds_total_gb=ds_total,
                     ds_usage_pct=ds_pct,
-                    vms_running=vm_running,
-                    vms_total=vm_total,
+                    vms_running=node_on,
+                    vms_total=node_tot,
                     connection_state=conn,
                     power_state="poweredOn" if conn == "connected" else "unknown",
                     maintenance_mode=0,

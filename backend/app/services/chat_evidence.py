@@ -72,49 +72,79 @@ def answer_invents_ips(answer: str, evidence: str) -> bool:
     return bool(invented)
 
 
-def answer_ignores_evidence(answer: str, evidence: str, max_len: int = 900) -> bool:
-    """Cevap kanıtı yok sayıyor veya kanıtta olmayan IP uyduruyor mu?
+_HOSTISH_RE = re.compile(r"\b(?:host|cluster|esx\w*|ha|failover|hiyerar\w*)\b", re.IGNORECASE)
+_LONG_ANSWER = 700        # bu uzunluğun üstünde + yeterli kanıt çapası = kapsamlı cevap (içindeki «veri yok» satırı ret değildir)
+_MIN_ANCHOR_HITS = 3
 
-    - Kısa/orta cevapta kanıttaki sayısal çapa yoksa → ignore
-    - Kanıtta olmayan IP varsa (uzun cevap dahil) → ignore
-    - Kanıtta ≥2 host/cluster adı varken cevap hiçini kullanmıyorsa → ignore
+
+def _evidence_anchor_hits(answer: str, evidence: str) -> int:
+    """Cevapta geçen, kanıtta bulunan (≥3 karakterlik) sayısal çapa sayısı."""
+    anchors = {a.rstrip(".,") for a in _ANCHOR_RE.findall(evidence or "")}
+    anchors = {a for a in anchors if len(a) >= 3}
+    return sum(1 for a in anchors if a in (answer or ""))
+
+
+def ignore_reason(answer: str, evidence: str, max_len: int = 900) -> str:
+    """Cevap kanıtı yok sayıyor veya kanıtta olmayan IP uyduruyor mu? Tetikleyen koşulun adını döner ('' = sorun yok).
+
+    - ``invented_ip``: kanıtta olmayan IP (uzun cevap dahil)
+    - ``no_names``: kanıtta ≥2 host/cluster adı varken cevap hiçbirini kullanmıyor (tam sözcük denetimi)
+    - ``no_anchor``: kısa/orta cevapta kanıttaki sayısal çapa yok
     """
     if not answer or not evidence:
-        return False
+        return ""
 
     if answer_invents_ips(answer, evidence):
-        return True
+        return "invented_ip"
 
     ev_names = _name_tokens(evidence)
     ans_names = _name_tokens(answer)
     if len(ev_names) >= 2 and not (ev_names & ans_names):
         # Host/cluster envanteri varken hiç ad kullanmamak (ör. "tek host" uydurması)
-        lower = answer.lower()
-        if any(k in lower for k in ("host", "cluster", "esx", "ha", "failover", "hiyerar")):
-            return True
+        # Kanıttaki ≥3 sayısal çapayı kullanan cevap kanıtı zaten okumuştur (özet cevap bazı adları atabilir; Adım 15)
+        if _HOSTISH_RE.search(answer) and _evidence_anchor_hits(answer, evidence) < _MIN_ANCHOR_HITS:
+            return "no_names"
 
     if len(answer) > max_len:
-        return False
+        return ""
 
     anchors = {a for a in _ANCHOR_RE.findall(evidence) if len(a) >= 2}
     if len(anchors) < 3:
-        return False
-    return not any(a in answer for a in anchors)
+        return ""
+    return "" if any(a in answer for a in anchors) else "no_anchor"
+
+
+def answer_ignores_evidence(answer: str, evidence: str, max_len: int = 900) -> bool:
+    return bool(ignore_reason(answer, evidence, max_len=max_len))
+
+
+def refusal_reason(answer: str, evidence: str) -> str:
+    """'Veri yok' kalıbı GERÇEK bir ret mi? Kapsamlı (uzun + kanıt çapalı) cevabın içindeki tek «X verisi bulunamadı»
+    satırı ret sayılmaz (Adım 15: 3078 kr'lik zengin cevap bu yüzden çöpe atılıyordu)."""
+    from app.services.chat_coverage import looks_like_no_data_answer
+    if not looks_like_no_data_answer(answer):
+        return ""
+    if len((answer or "").strip()) > _LONG_ANSWER and _evidence_anchor_hits(answer, evidence) >= _MIN_ANCHOR_HITS:
+        return ""
+    return "no_data"
+
+
+def evidence_retry_reason(answer: str, evidence: str) -> str:
+    """Yeniden üretim/fallback gerektiren koşulun adı ('' = cevap korunur)."""
+    if not has_meaningful_evidence(evidence):
+        return ""
+    return refusal_reason(answer, evidence) or ignore_reason(answer, evidence)
 
 
 def needs_evidence_retry(answer: str, evidence: str) -> bool:
-    if not has_meaningful_evidence(evidence):
-        return False
-    from app.services.chat_coverage import looks_like_no_data_answer
-    return looks_like_no_data_answer(answer) or answer_ignores_evidence(answer, evidence)
+    return bool(evidence_retry_reason(answer, evidence))
 
 
 def retry_answer_is_usable(retry_answer: str, evidence: str) -> bool:
-    from app.services.chat_coverage import looks_like_no_data_answer
     text = (retry_answer or "").strip()
     if not text:
         return False
-    if looks_like_no_data_answer(text):
+    if refusal_reason(text, evidence):
         return False
     if answer_ignores_evidence(text, evidence):
         return False
@@ -122,16 +152,9 @@ def retry_answer_is_usable(retry_answer: str, evidence: str) -> bool:
 
 
 def render_raw_evidence_fallback(evidence: str, max_chars: int = 4000) -> str:
-    block = (evidence or "").strip()
-    if not block:
-        return "Araç çıktısı bu turda boş döndü."
-    return (
-        "Model bu turda araç çıktısını özetleyemedi; toplanan canlı veriyi "
-        "olduğu gibi veriyorum:\n\n```\n"
-        + block[:max_chars]
-        + ("\n… (kısaltıldı)" if len(block) > max_chars else "")
-        + "\n```"
-    )
+    """Model kanıtı yorumlayamadı: okunur özet (Adım 8d) — ham JSON/araç adı basılmaz."""
+    from app.services.chat_quality.evidence_summary import render
+    return render(evidence)
 
 
 def maybe_fix_no_data_answer(
@@ -148,12 +171,12 @@ def maybe_fix_no_data_answer(
     Döner: (yeni_cevap, reason) — reason: '' | 'retry' | 'fallback'
     generate_sync verilmezse llm_gateway.generate_sync kullanılır.
     """
-    if not needs_evidence_retry(answer, evidence):
+    _why = evidence_retry_reason(answer, evidence)
+    if not _why:
         return answer, ""
     logger.warning(
-        "[ChatEvidence] kanıt varken kötü cevap — yeniden deneniyor (q_len=%s ev_len=%s)",
-        len(prompt or ""),
-        len(evidence or ""),
+        "[ChatEvidence] kanıt varken kötü cevap (%s) — yeniden deneniyor (q_len=%s ev_len=%s ans_len=%s)",
+        _why, len(prompt or ""), len(evidence or ""), len(answer or ""),
     )
     fn = generate_sync
     if fn is None:

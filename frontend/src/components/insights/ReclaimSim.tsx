@@ -174,7 +174,7 @@ export default function ReclaimSim({ clusters }: { clusters: Cluster[] }) {
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs text-slate-400">{t('vi_rc_cluster')}
           <select data-testid="rc-cluster" value={key} onChange={e => setKey(e.target.value)}
-            className="rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white">
+            className="rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white">
             <option value="">{t('vi_rc_all')}</option>
             {clusters.map(c => <option key={`${c.hypervisor_id}:${c.cluster}`} value={`${c.hypervisor_id}:${c.cluster}`}>{c.cluster} · {c.hypervisor}</option>)}
           </select>
@@ -183,7 +183,7 @@ export default function ReclaimSim({ clusters }: { clusters: Cluster[] }) {
           <label key={k} className="flex flex-col gap-1 text-xs text-slate-400" data-testid={`rc-th-${k}`}>
             <span className="inline-flex items-center">{spec(k)}<TermHint k={k} /></span>
             <input type="number" value={vals[k] ?? ''} onChange={e => setVals(v => ({ ...v, [k]: e.target.value }))}
-              className="w-28 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
+              className="w-28 rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
           </label>
         ))}
         <GhostButton accent={NEON.blue} onClick={run}>{t('vi_rc_run')}</GhostButton>

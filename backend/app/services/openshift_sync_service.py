@@ -144,6 +144,87 @@ def _upsert_workload(db: Session, cluster: OpenShiftCluster, project: str, kind:
     return created
 
 
+PRUNE_MAX_FRACTION = 0.5     # bayat/mevcut oranı bunu aşarsa (ve BAYAT > PRUNE_MIN_ABS) otomatik silme YOK
+PRUNE_MIN_ABS = 20           # küçük kümelerde oran koruması devreye girmez
+
+
+def prune_stale_pods(
+    db: Session,
+    cluster: OpenShiftCluster,
+    seen_keys: set,
+    *,
+    list_complete: bool,
+    had_errors: bool,
+    sync_started_at: datetime | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Bu senkronda görülmeyen pod satırlarını (YALNIZ bu cluster, kind='pod') temizler.
+
+    Güvenlik koşulları (hepsi birden): ayar açık · sahte cluster değil · bağlantı/listeleme hatası yok ·
+    pod listesi TAM (sayfalama bitti, HTTP hatası yok) · liste boş değil · bayat oranı eşik altında.
+    Koşul sağlanmazsa HİÇBİR ŞEY silinmez; `reason` nedeni yazar. `seen_keys`: {(namespace, name)}.
+    """
+    from app.services import runtime_settings as _rts
+    from app.services.openshift.fake_cluster import is_fake
+
+    out = {"deleted": 0, "stale": 0, "dry_run": dry_run, "skipped": True, "reason": ""}
+    if is_fake(cluster):
+        out["reason"] = "fake_cluster"
+        return out
+    try:
+        if not _rts.get_bool("openshift_sync_prune_enabled"):
+            out["reason"] = "disabled"
+            return out
+    except Exception:  # noqa: BLE001 — ayar okunamıyorsa güvenli taraf: silme
+        out["reason"] = "setting_unreadable"
+        return out
+    if had_errors:
+        out["reason"] = "sync_errors"
+        return out
+    if not list_complete:
+        out["reason"] = "list_incomplete"
+        return out
+    if not seen_keys:
+        out["reason"] = "empty_list"
+        return out
+
+    q = db.query(OpenShiftWorkload).filter(
+        OpenShiftWorkload.cluster_id == cluster.id, OpenShiftWorkload.kind == "pod"
+    )
+    rows = q.all()
+    stale = [
+        r for r in rows
+        if (r.project, r.name) not in seen_keys
+        and (sync_started_at is None or r.created_at is None or r.created_at < sync_started_at)
+    ]
+    out["stale"] = len(stale)
+    out["existing"] = len(rows)
+    if not stale:
+        out.update(skipped=False, reason="nothing_stale")
+        return out
+    if len(stale) > PRUNE_MIN_ABS and len(stale) > PRUNE_MAX_FRACTION * max(len(rows), 1):
+        out["reason"] = "too_large"      # beklenmedik toplu silme → otomatik yok (elle onay/yedekli temizlik)
+        logger.warning(
+            "OpenShift prune atlandı (cluster=%s): bayat %d / mevcut %d eşik üstü — elle temizlik gerekir",
+            cluster.name, len(stale), len(rows),
+        )
+        return out
+    out["skipped"] = False
+    out["reason"] = "ok"
+    if dry_run:
+        return out
+    ids = [r.id for r in stale]
+    deleted = (
+        db.query(OpenShiftWorkload)
+        .filter(OpenShiftWorkload.cluster_id == cluster.id, OpenShiftWorkload.kind == "pod",
+                OpenShiftWorkload.id.in_(ids))
+        .delete(synchronize_session=False)
+    )
+    out["deleted"] = int(deleted or 0)
+    logger.info("OpenShift prune (cluster=%s): %d bayat pod satırı silindi", cluster.name, out["deleted"])
+    return out
+
+
 def _enrich_nodes_with_requests(nodes: list, pods: list) -> list:
     """Pod request toplamlarından node kapasite yüzdelerini hesapla."""
     by_node: dict = {}
@@ -176,8 +257,15 @@ def _enrich_nodes_with_requests(nodes: list, pods: list) -> list:
 def sync_openshift_cluster(db: Session, cluster: OpenShiftCluster, *, track_progress: bool = False) -> dict:
     """Tek bir OpenShift cluster'ından node/proje/workload envanterini senkronize eder."""
     from app.services.openshift.cluster_ops import client_from_cluster
+    from app.services.openshift.fake_cluster import is_fake
+
+    if is_fake(cluster):      # sahte test cluster'ı (scripts/fake_virt_seed.py): gerçek API yok
+        return {"nodes": 0, "projects": 0, "pods": 0, "deployments": 0, "routes": 0, "services": 0,
+                "errors": [], "skipped": True, "reason": "fake_seed"}
 
     cluster_id = cluster.id
+    _sync_started = datetime.now(timezone.utc)
+    pods_complete = False
 
     def _prog(**kw):
         if track_progress and cluster_id:
@@ -206,6 +294,7 @@ def sync_openshift_cluster(db: Session, cluster: OpenShiftCluster, *, track_prog
             projects = client.list_projects()
             _prog(phase="listing", percent=35, message=f"Pod listesi alınıyor... ({len(projects)} proje)")
             pods = client.list_pods()
+            pods_complete = bool(getattr(client, "pods_complete", False)) and not (getattr(client, "last_error", "") or "")
             _prog(phase="listing", percent=50, message=f"Deployment listesi alınıyor... ({len(pods)} pod)")
             deployments = client.list_deployments()
             _prog(phase="listing", percent=65, message=f"Service/Route alınıyor... ({len(deployments)} deployment)")
@@ -242,6 +331,14 @@ def sync_openshift_cluster(db: Session, cluster: OpenShiftCluster, *, track_prog
     project_new = sum(1 for p in projects if _upsert_project(db, cluster, p, pod_counts, deploy_counts, route_counts))
     _prog(phase="saving", percent=90, message=f"Pod'lar kaydediliyor... ({len(projects)} proje)")
     pod_new = sum(1 for p in pods if _upsert_workload(db, cluster, p["namespace"], "pod", p))
+    prune_res: dict = {"deleted": 0, "skipped": True, "reason": "not_run"}
+    try:
+        prune_res = prune_stale_pods(
+            db, cluster, {(p["namespace"], p["name"]) for p in pods},
+            list_complete=pods_complete, had_errors=bool(errors), sync_started_at=_sync_started,
+        )
+    except Exception as exc:  # noqa: BLE001 — prune hatası senkronu bozmaz
+        logger.warning("OpenShift pod prune hatası (cluster=%s): %s", cluster.name, exc)
     _prog(phase="saving", percent=94, message=f"Deployment/service/route... ({len(pods)} pod)")
     deploy_new = sum(1 for d in deployments if _upsert_workload(db, cluster, d["namespace"], "deployment", d))
     svc_new = sum(1 for s in services if _upsert_workload(db, cluster, s["namespace"], "service", s))
@@ -274,7 +371,8 @@ def sync_openshift_cluster(db: Session, cluster: OpenShiftCluster, *, track_prog
     result = {
         "nodes": len(nodes), "nodes_new": node_new,
         "projects": len(projects), "projects_new": project_new,
-        "pods": len(pods), "pods_new": pod_new,
+        "pods": len(pods), "pods_new": pod_new, "pods_pruned": int(prune_res.get("deleted") or 0),
+        "pods_prune_reason": prune_res.get("reason"),
         "deployments": len(deployments), "deployments_new": deploy_new,
         "services": len(services), "services_new": svc_new,
         "routes": len(routes), "routes_new": route_new,

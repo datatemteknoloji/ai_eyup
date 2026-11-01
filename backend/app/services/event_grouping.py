@@ -40,6 +40,27 @@ def normalize_title(title: str) -> str:
     return t.strip() or (title or "").strip()
 
 
+# Pod adındaki rastgele ekler: `<ad>-<replicaset hash 8-10>-<5 karakter>` (Deployment) veya `<ad>-<5 karakter>`
+# (DaemonSet / CatalogSource / Job). Bunlar her pod yeniden yaratıldığında değişir → aynı kök neden için
+# her seferinde yeni incident açılıyordu.
+_POD_RS_SUFFIX = re.compile(r"-(?=[a-z0-9]*\d)[a-z0-9]{8,10}-[a-z0-9]{5}$")
+_POD_RAND_SUFFIX = re.compile(r"-[a-z0-9]{5}$")
+
+
+def normalize_k8s_object(ref: str) -> str:
+    """`Pod/redhat-operators-r6scg` → `Pod/redhat-operators-*` (yalnız Pod; StatefulSet `-0` korunur)."""
+    ref = (ref or "").strip()
+    kind, sep, name = ref.partition("/")
+    if not sep or kind.lower() != "pod" or not name:
+        return ref
+    new = _POD_RS_SUFFIX.sub("", name, count=1)
+    if new == name:
+        new = _POD_RAND_SUFFIX.sub("", name, count=1)
+    if new == name or not new:
+        return ref
+    return f"{kind}/{new}-*"
+
+
 def group_key_for_title(title: str) -> str:
     """Sayı / IP / UUID ayıklanmış grup anahtarı."""
     t = normalize_title(title)
@@ -70,10 +91,14 @@ def event_problem_key(event: Any) -> str:
         host = raw.get("host_name") or ""
         return f"{server}|{et}|{metric}|{host}"
 
+    if et.startswith("hw_"):
+        # Donanım olayları: aynı donanım kaydı + aynı alarm tipi = tek sorun (başlıktaki sayılar sunucuları birleştirmesin)
+        return f"hw|{raw.get('hw_server_key') or server}|{et}|{raw.get('fingerprint') or ''}"
+
     if et == "openshift_event" or source == "openshift_collector":
         return (
             f"ocp|{raw.get('cluster_id') or 0}|{raw.get('namespace') or ''}|"
-            f"{raw.get('reason') or ''}|{raw.get('source_object') or group_key_for_title(title)[:80]}"
+            f"{raw.get('reason') or ''}|{normalize_k8s_object(raw.get('source_object') or '') or group_key_for_title(title)[:80]}"
         )
 
     if et.startswith("vcenter") or source.startswith("vcenter"):

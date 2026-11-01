@@ -14,7 +14,7 @@ function Num({ label, value, onChange }: { label: string; value: string; onChang
     <label className="flex flex-col gap-1 text-xs text-slate-400">
       {label}
       <input type="number" min="0" step="1" value={value} onChange={e => onChange(e.target.value)}
-        className="w-28 rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
+        className="w-28 rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono" />
     </label>
   )
 }
@@ -46,7 +46,7 @@ function OcpWhatIf({ cluster }: { cluster: any }) {
           <div className="text-xs text-slate-400 mb-1.5">{t('oi_whatif_drain')}</div>
           <div className="flex flex-wrap gap-2">
             {(cluster.workers || []).map((w: any) => (
-              <label key={w.name} className={`flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-mono cursor-pointer ${drain.includes(w.name) ? 'border-blue-500/60 text-blue-200 bg-blue-500/10' : 'border-white/[0.08] text-slate-300'}`}>
+              <label key={w.name} className={`flex items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-mono cursor-pointer ${drain.includes(w.name) ? 'border-blue-500/60 text-blue-200 bg-blue-500/10' : 'border-white/[0.08] text-slate-300'}`}>
                 <input type="checkbox" checked={drain.includes(w.name)} onChange={() => toggle(w.name)} />{w.name}
               </label>
             ))}

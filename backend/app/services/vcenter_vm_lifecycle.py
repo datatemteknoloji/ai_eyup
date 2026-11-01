@@ -14,6 +14,7 @@ fonksiyonları "deterministic handler" olarak kullanır.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import re
 from collections import defaultdict
@@ -109,13 +110,54 @@ def _vm_name_from_event(ev: Dict[str, Any], server_by_ref: Dict[str, str]) -> st
     return vm_ref or title or "Bilinmeyen VM"
 
 
+def _event_ts(ev: Dict[str, Any]):
+    """Olay zamanı → tz'li datetime (naif = UTC); ayrıştırılamazsa None."""
+    from datetime import datetime as _dt, timezone as _tz
+    raw = ev.get("timestamp")
+    if not raw:
+        return None
+    try:
+        t = _dt.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=_tz.utc)
+
+
+def filter_window(events: List[Dict[str, Any]], window: Any) -> List[Dict[str, Any]]:
+    """[start, end) dışındaki olayları at (Adım 5c). `window`: chat_quality.time_window.Window."""
+    if window is None:
+        return events
+    out = []
+    for ev in events:
+        t = _event_ts(ev)
+        if t is not None and window.start <= t.astimezone(window.start.tzinfo) < window.end:
+            out.append(ev)
+    return out
+
+
+_TRUNCATED: "contextvars.ContextVar[Optional[List[Dict[str, Any]]]]" = contextvars.ContextVar(
+    "vcenter_events_truncated", default=None,
+)
+
+
+def pop_truncation() -> List[Dict[str, Any]]:
+    """Bu bağlamda `fetch_events` çağrılarında `max_events` sınırına takılan hypervisor'lar (okur ve temizler)."""
+    out = _TRUNCATED.get() or []
+    _TRUNCATED.set(None)
+    return out
+
+
 def fetch_events(
     db: Session,
     event_type_ids: List[str],
     days: int = 7,
     max_events: int = 3000,
+    window: Any = None,
 ) -> Dict[str, Any]:
-    """Tüm VMware hypervisor'lardan verilen tip listesini canlı sorgular."""
+    """Tüm VMware hypervisor'lardan verilen tip listesini canlı sorgular.
+
+    `window` verilirse (Adım 5c) olaylar [start, end) ile süzülür; `days` en az pencere başına yetecek kadar olmalı.
+    """
     hvs = _vmware_hypervisors(db)
     if not hvs:
         return {"events": [], "errors": ["Tanımlı VMware hypervisor yok"], "hypervisors": 0}
@@ -128,6 +170,7 @@ def fetch_events(
 
     all_events: List[Dict[str, Any]] = []
     errors: List[str] = []
+    truncated: List[Dict[str, Any]] = []
     for hv in hvs:
         client = _build_client(hv)
         try:
@@ -137,18 +180,23 @@ def fetch_events(
             errors.append(f"{hv.name}: {exc}")
             continue
         errors.extend(f"{hv.name}: {e}" for e in result.get("errors", []))
+        if result.get("truncated"):
+            truncated.append({"hypervisor": hv.name, "max_events": result.get("max_events") or max_events})
         for ev in result.get("events", []):
             ev["hypervisor"] = hv.name
             ev["vm_name"] = _vm_name_from_event(ev, server_by_ref)
             all_events.append(ev)
 
     all_events.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
-    return {"events": all_events, "errors": errors, "hypervisors": len(hvs)}
+    all_events = filter_window(all_events, window)
+    if truncated:
+        _TRUNCATED.set((_TRUNCATED.get() or []) + truncated)
+    return {"events": all_events, "errors": errors, "hypervisors": len(hvs), "truncated": truncated}
 
 
-def restart_report(db: Session, days: int = 7) -> Dict[str, Any]:
+def restart_report(db: Session, days: int = 7, window: Any = None) -> Dict[str, Any]:
     """Son N günde restart/power-cycle geçiren VM'ler + sayaç."""
-    result = fetch_events(db, RESTART_TYPES, days=days)
+    result = fetch_events(db, RESTART_TYPES, days=days, window=window)
     events = result["events"]
 
     per_vm: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -185,12 +233,13 @@ def restart_report(db: Session, days: int = 7) -> Dict[str, Any]:
         "restarts": restarts,
         "raw_event_count": len(events),
         "errors": result["errors"],
+        "hypervisors": result.get("hypervisors", 0),
     }
 
 
-def power_toggle_last_24h(db: Session, days: float = 1) -> Dict[str, Any]:
+def power_toggle_last_24h(db: Session, days: float = 1, window: Any = None) -> Dict[str, Any]:
     """Verilen pencerede kapatılıp açılan (veya en az bir power-state değişikliği olan) VM'ler."""
-    result = fetch_events(db, RESTART_TYPES, days=days)
+    result = fetch_events(db, RESTART_TYPES, days=days, window=window)
     events = result["events"]
     per_vm: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for ev in events:
@@ -207,8 +256,8 @@ def power_toggle_last_24h(db: Session, days: float = 1) -> Dict[str, Any]:
     return {"toggled": toggled, "raw_event_count": len(events), "errors": result["errors"]}
 
 
-def power_state_changes(db: Session, days: int = 7) -> Dict[str, Any]:
-    result = fetch_events(db, RESTART_TYPES, days=days)
+def power_state_changes(db: Session, days: int = 7, window: Any = None) -> Dict[str, Any]:
+    result = fetch_events(db, RESTART_TYPES, days=days, window=window)
     events = result["events"]
     per_vm: Dict[str, int] = defaultdict(int)
     for ev in events:
@@ -217,9 +266,9 @@ def power_state_changes(db: Session, days: int = 7) -> Dict[str, Any]:
     return {"days": days, "changed": changed, "raw_event_count": len(events), "errors": result["errors"]}
 
 
-def last_reboot_times(db: Session, days: int = 90) -> Dict[str, Any]:
+def last_reboot_times(db: Session, days: int = 90, window: Any = None) -> Dict[str, Any]:
     """VM başına son PoweredOn/Reset zamanı (en fazla `days` gün geriye bakar)."""
-    result = fetch_events(db, list(RESTART_ON_TYPES) + ["VmResettingEvent"], days=days)
+    result = fetch_events(db, list(RESTART_ON_TYPES) + ["VmResettingEvent"], days=days, window=window)
     events = result["events"]
     last_seen: Dict[str, str] = {}
     for ev in events:
@@ -230,8 +279,8 @@ def last_reboot_times(db: Session, days: int = 90) -> Dict[str, Any]:
     return {"days": days, "last_reboot": last_seen, "raw_event_count": len(events), "errors": result["errors"]}
 
 
-def creation_events(db: Session, days: int = 30) -> Dict[str, Any]:
-    result = fetch_events(db, CREATE_TYPES, days=days)
+def creation_events(db: Session, days: int = 30, window: Any = None) -> Dict[str, Any]:
+    result = fetch_events(db, CREATE_TYPES, days=days, window=window)
     events = result["events"]
     seen = {}
     for ev in events:
@@ -242,8 +291,8 @@ def creation_events(db: Session, days: int = 30) -> Dict[str, Any]:
     return {"days": days, "created": created, "errors": result["errors"]}
 
 
-def removal_events(db: Session, days: int = 30) -> Dict[str, Any]:
-    result = fetch_events(db, REMOVE_TYPES, days=days)
+def removal_events(db: Session, days: int = 30, window: Any = None) -> Dict[str, Any]:
+    result = fetch_events(db, REMOVE_TYPES, days=days, window=window)
     events = result["events"]
     seen = {}
     for ev in events:
@@ -254,14 +303,14 @@ def removal_events(db: Session, days: int = 30) -> Dict[str, Any]:
     return {"days": days, "removed": removed, "errors": result["errors"]}
 
 
-def migration_events(db: Session, days: int = 30) -> Dict[str, Any]:
-    result = fetch_events(db, MIGRATE_TYPES, days=days)
+def migration_events(db: Session, days: int = 30, window: Any = None) -> Dict[str, Any]:
+    result = fetch_events(db, MIGRATE_TYPES, days=days, window=window)
     events = result["events"]
     failed = [e for e in events if "fail" in (e.get("event_type_id") or "").lower()]
     ok = [e for e in events if e not in failed]
     return {"days": days, "migrations": ok, "failed": failed, "errors": result["errors"]}
 
 
-def host_lifecycle_events(db: Session, days: int = 30) -> Dict[str, Any]:
-    result = fetch_events(db, HOST_LIFECYCLE_TYPES + MAINTENANCE_TYPES + HA_TYPES, days=days)
+def host_lifecycle_events(db: Session, days: int = 30, window: Any = None) -> Dict[str, Any]:
+    result = fetch_events(db, HOST_LIFECYCLE_TYPES + MAINTENANCE_TYPES + HA_TYPES, days=days, window=window)
     return {"days": days, "events": result["events"], "errors": result["errors"]}

@@ -18,7 +18,7 @@ function ClusterCapacity({ cap }: { cap: any }) {
     const color = pct == null ? '#475569' : p > 85 ? '#ef4444' : p > 70 ? '#f59e0b' : '#38bdf8'
     return (
       <div className="flex items-center gap-3">
-        <div className="relative w-[86px] h-[86px] flex-shrink-0">
+        <div className="relative w-[86px] h-[86px] shrink-0">
           <svg viewBox="0 0 88 88" className="w-full h-full -rotate-90">
             <circle cx="44" cy="44" r={r} fill="none" stroke="#1e293b" strokeWidth="8" />
             <circle
@@ -104,7 +104,7 @@ export default function OcpOverviewPanel({
           </p>
         ) : (
           <p className="text-xs text-amber-200/90 flex items-start gap-1.5">
-            <AlertTriangle size={14} className="mt-px flex-shrink-0" />
+            <AlertTriangle size={14} className="mt-px shrink-0" />
             <span>
               {t('ocp_mtv_missing', { list: missing.length ? missing.join(', ') : t('ocp_unknown_missing') })}
             </span>
@@ -163,10 +163,10 @@ export default function OcpOverviewPanel({
                   title={tip}
                 >
                   <div className="flex items-center gap-2 text-xs">
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${n.ready ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${n.ready ? 'bg-emerald-400' : 'bg-red-400'}`} />
                     <span className="text-slate-100 font-medium truncate" title={tip}>{n.name}</span>
                     <span
-                      className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-slate-400 flex-shrink-0 cursor-default"
+                      className="text-[10px] px-1.5 py-0.5 rounded-sm bg-white/[0.06] text-slate-400 shrink-0 cursor-default"
                       title={tip}
                     >
                       {(n.roles || []).join('/') || t('ocp_worker')}
@@ -185,11 +185,11 @@ export default function OcpOverviewPanel({
                       )}
                     </div>
                     {(n.pressure || []).length > 0 && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-amber-500/15 text-amber-300">
                         {n.pressure.join(', ')}
                       </span>
                     )}
-                    <span className="text-slate-500 ml-auto flex-shrink-0">{n.cpu} CPU · {n.memory_gb} GB</span>
+                    <span className="text-slate-500 ml-auto shrink-0">{n.cpu} CPU · {n.memory_gb} GB</span>
                   </div>
                   {(cpuPct != null || memPct != null) && (
                     <div className="grid grid-cols-2 gap-3 mt-2">

@@ -25,6 +25,17 @@ export type ToolCallProgress = { tool: string; label: string; done: boolean }
 
 export type ClarifyOption = { id: string; label: string; prompt: string }
 
+/** Adım 10: ilk token öncesi sunucu ilerleme olayı (`type: progress`). */
+export type ChatProgress = { step: string; text: string; elapsedS: number }
+
+/** «Düşünme süreci» metninin tutulacak son bölümü (bellek/DOM şişmesin). */
+export const THINKING_MAX_CHARS = 8000
+
+export function appendThinking(prev: string, add: string): string {
+  const next = (prev || '') + (add || '')
+  return next.length > THINKING_MAX_CHARS ? next.slice(next.length - THINKING_MAX_CHARS) : next
+}
+
 export type ChatSuggestion = { type?: string; label: string }
 
 /** Sağlayıcının bildirdiği token tüketimi (yalnız admin göstergesi). */
@@ -47,6 +58,10 @@ export type ChatStreamSnapshot = {
   clarifyOptions: ClarifyOption[] | null
   suggestions: ChatSuggestion[] | null
   queueMessage: string | null
+  /** Son ilerleme olayı; ilk token gelince temizlenir */
+  progress: ChatProgress | null
+  /** Adım 14: modelin akıl yürütmesi (`type: thinking`; yalnız yetkili kullanıcıya gelir). Cevap DEĞİL. */
+  thinkingText: string
   lastUsage: ChatUsage | null
   lastEvidence: { level: string; reason?: string; sources?: { tool: string; class: string | null; at?: string }[]; general?: boolean } | null
   /** Son akış kullanıcı isteğiyle durduruldu mu? */
@@ -73,6 +88,8 @@ const emptySnap = (channel: string): ChatStreamSnapshot => ({
   clarifyOptions: null,
   suggestions: null,
   queueMessage: null,
+  progress: null,
+  thinkingText: '',
   lastUsage: null,
   lastEvidence: null,
   cancelled: false,
@@ -178,6 +195,8 @@ function finishIdle(channel: string, extra?: Partial<ChatStreamSnapshot>) {
     pendingUserMessage: null,
     streamingText: '',
     toolCalls: [],
+    progress: null,
+    thinkingText: '',
     clarifyOptions: prevClarify,
     ...extra,
   })
@@ -228,6 +247,8 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
     thinkingPhase: initialPhase,
     isLoading: true,
     toolCalls: [],
+    progress: null,
+    thinkingText: '',
     clarifyOptions: null,
     lastUsage: null,
     lastEvidence: null,
@@ -249,7 +270,9 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
     })
 
     if (!res.ok || !res.body) {
-      throw new Error(`HTTP ${res.status}`)
+      // Adım 13: kuyruk dolu / kullanıcı limiti (429) → sunucunun Türkçe açıklamasını göster
+      const friendly = res.status === 429 || res.status === 503 ? await readFriendlyDetail(res) : null
+      throw new ChatAdmissionError(friendly, `HTTP ${res.status}`)
     }
 
     const reader = res.body.getReader()
@@ -299,12 +322,30 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
 
           if (chunk.replace_answer) {
             accumulated = ''
-            patch(channel, { streamingText: '', thinkingPhase: 'streaming' })
+            patch(channel, { streamingText: '', thinkingPhase: 'streaming', progress: null })
           }
 
           if (chunk.token) {
             accumulated += chunk.token
-            patch(channel, { streamingText: accumulated, thinkingPhase: 'streaming' })
+            patch(channel, { streamingText: accumulated, thinkingPhase: 'streaming', progress: null })
+          }
+
+          if (chunk.type === 'thinking' && chunk.text) {
+            const cur = getChatStream(channel).thinkingText || ''
+            patch(channel, { thinkingText: appendThinking(cur, String(chunk.text)) })
+          }
+
+          if (chunk.type === 'progress' && chunk.text) {
+            // İlk token gelmediyse göster (token sonrası gelen gecikmiş olay yok sayılır)
+            if (!accumulated) {
+              patch(channel, {
+                progress: {
+                  step: String(chunk.step || ''),
+                  text: String(chunk.text),
+                  elapsedS: Number(chunk.elapsed_s) || 0,
+                },
+              })
+            }
           }
 
           if (chunk.type === 'tool_call') {
@@ -425,8 +466,32 @@ export async function startChatStream(opts: StartChatStreamOpts): Promise<void> 
     }
     finishIdle(channel, {
       sessionId: activeSessionId,
-      streamingText: '**Bağlantı hatası.** Tekrar deneyin.',
+      streamingText:
+        err instanceof ChatAdmissionError && err.friendly
+          ? `**${err.friendly}**`
+          : '**Bağlantı hatası.** Tekrar deneyin.',
     })
+  }
+}
+
+/** HTTP 429/503 gövdesinden `detail` metnini oku (JSON değilse/boşsa null). */
+export async function readFriendlyDetail(res: { json: () => Promise<any> }): Promise<string | null> {
+  try {
+    const j = await res.json()
+    const d = j?.detail
+    return typeof d === 'string' && d.trim() ? d.trim() : null
+  } catch {
+    return null
+  }
+}
+
+/** Kabul reddi (kuyruk dolu / kullanıcı başına eşzamanlı tur sınırı): kullanıcıya gösterilecek net mesaj. */
+export class ChatAdmissionError extends Error {
+  friendly: string | null
+  constructor(friendly: string | null, fallback: string) {
+    super(friendly || fallback)
+    this.name = 'ChatAdmissionError'
+    this.friendly = friendly
   }
 }
 

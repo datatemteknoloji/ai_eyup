@@ -8,18 +8,26 @@ import {
 import { lazyWithRetry } from '../lib/lazyWithRetry'
 const SshTerminalModal = lazyWithRetry(() => import('../components/SshTerminal'))
 import BulkJobOverlay, { persistBulkJobId, restoreActiveBulkJobId, beginBulkJobModal } from '../components/BulkJobOverlay'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import { API_BASE_URL } from '../config/api'
-import { fetchServersPage } from '../api/servers'
+import { fetchServersPage, type ListServersParams } from '../api/servers'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { isPoweredOn } from '../utils/powerState'
 import { OsIcon } from '../components/OsIcon'
 import { shortenOsLabel, fullOsLabel, serverTypeLabel } from '../lib/osLabel'
 import { useAuth } from '../auth/AuthContext'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
+import { useHypervisorSelection } from '../hooks/useHypervisorSelection'
+import { useSingleRowFit } from '../hooks/useSingleRowFit'
+import { HypervisorFilter } from '../components/HypervisorFilter'
+import { AnchoredPanel } from '../components/AnchoredPanel'
 import { useT, useLocale } from '../i18n/LocaleProvider'
 import type { TranslationKey } from '../i18n/messages'
 import HwServerCard from '../components/hardware/HwServerCard'
+import HwHostLogsCard from '../components/hardware/HwHostLogsCard'
+import HwBadge from '../components/hardware/HwBadge'
+import ServerEditPanel from '../components/ServerEditPanel'
 
 // ─── Shared Confirm Modal ──────────────────────────────────────────────────────
 const ConfirmModal = ({ message, onConfirm, onCancel }: {
@@ -27,10 +35,10 @@ const ConfirmModal = ({ message, onConfirm, onCancel }: {
 }) => {
   const t = useT()
   return (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
     <div className="bg-cyber-card border border-slate-600 rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
       <div className="flex items-start gap-3 mb-5">
-        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <div className="w-9 h-9 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center shrink-0 mt-0.5">
           <AlertTriangle size={16} strokeWidth={2} className="text-yellow-400" />
         </div>
         <div>
@@ -172,17 +180,17 @@ const AiReadyUpdateButton: React.FC<{
       >
         {loading ? (
           <>
-            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin shrink-0" />
             <span>{t('starting')}</span>
           </>
         ) : result ? (
           <>
-            <CheckCircle2 size={15} className="text-green-400 flex-shrink-0" />
+            <CheckCircle2 size={15} className="text-green-400 shrink-0" />
             <span className="truncate text-xs">{result}</span>
           </>
         ) : (
           <>
-            <Wifi size={15} className="flex-shrink-0 text-slate-400" />
+            <Wifi size={15} className="shrink-0 text-slate-400" />
             <span>{t('ai_ready_update')}</span>
           </>
         )}
@@ -259,17 +267,17 @@ const OsRefreshButton: React.FC<{
       >
         {loading ? (
           <>
-            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin flex-shrink-0" />
+            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin shrink-0" />
             <span>{t('starting')}</span>
           </>
         ) : result ? (
           <>
-            <CheckCircle2 size={15} className="text-green-400 flex-shrink-0" />
+            <CheckCircle2 size={15} className="text-green-400 shrink-0" />
             <span className="truncate text-xs">{result}</span>
           </>
         ) : (
           <>
-            <RefreshCw size={15} className="flex-shrink-0 text-slate-400" />
+            <RefreshCw size={15} className="shrink-0 text-slate-400" />
             <span>{t('os_refresh')}</span>
           </>
         )}
@@ -365,13 +373,13 @@ const ActionsDropdown: React.FC<{
             className={menuItemCls}
           >
             {checkLoading ? (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin flex-shrink-0" />
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
             ) : checkResult?.startsWith('Hata') ? (
-              <AlertCircle size={15} className="text-red-400 flex-shrink-0" />
+              <AlertCircle size={15} className="text-red-400 shrink-0" />
             ) : checkResult ? (
-              <CheckCircle2 size={15} className="text-green-400 flex-shrink-0" />
+              <CheckCircle2 size={15} className="text-green-400 shrink-0" />
             ) : (
-              <Activity size={15} className="text-slate-400 flex-shrink-0" />
+              <Activity size={15} className="text-slate-400 shrink-0" />
             )}
             <span className="truncate">{checkResult ?? (checkLoading ? t('starting') : t('check_health'))}</span>
           </button>
@@ -473,9 +481,17 @@ function TierBadge({ tier }: { tier: string }) {
   )
 }
 
-export function ServerDetailDrawer({ server, onClose }: { server: Server; onClose: () => void }) {
+export function ServerDetailDrawer({ server: serverProp, onClose, startEditing = false }: { server: Server; onClose: () => void; startEditing?: boolean }) {
   const t = useT()
   const { locale } = useLocale()
+  const queryClient = useQueryClient()
+  const authUser = useAuth()?.user
+  // «Düzenle» sonrası liste yenilenene kadar çekmece yeni değerleri gösterir
+  const [override, setOverride] = useState<Partial<Server>>({})
+  const server = React.useMemo(() => ({ ...serverProp, ...override }) as Server, [serverProp, override])
+  const [editing, setEditing] = useState(startEditing)
+  const isAdminUser = Boolean(authUser?.is_admin || authUser?.role === 'admin')
+  const canEdit = isAdminUser || authUser?.role === 'operator'
   const dateLoc = locale === 'en' ? 'en-GB' : 'tr-TR'
   const [tab, setTab] = useState<'info' | 'events' | 'perf'>('info')
   const [analyzeText, setAnalyzeText] = useState('')
@@ -641,11 +657,11 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="flex-1 bg-black/50 backdrop-blur-xs" onClick={onClose} />
       <div className="w-full max-w-xl bg-cyber-deep border-l border-white/[0.06] flex flex-col shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06] bg-cyber-card/50">
-          <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${server.status === 'ONLINE' ? 'bg-gradient-to-br from-green-500 to-green-600' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
+          <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${server.status === 'ONLINE' ? 'bg-linear-to-br from-green-500 to-green-600' : 'bg-linear-to-br from-slate-600 to-slate-700'}`}>
             <span className="text-xs font-bold text-blue-400">SRV</span>
           </div>
           <div className="flex-1 min-w-0">
@@ -656,7 +672,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
               <p className="text-slate-400 text-xs font-mono">{server.ip_address}</p>
               {vcenterLabel && (
                 <span
-                  className="inline-flex items-center gap-1 text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
+                  className="inline-flex items-center gap-1 text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded-sm"
                   title={vcenterEndpoint ? `vCenter: ${vcenterLabel} (${vcenterEndpoint})` : `vCenter: ${vcenterLabel}`}
                 >
                   <Cloud size={11} strokeWidth={2} /> {vcenterLabel}
@@ -664,7 +680,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
               )}
               {esxiHost && (
                 <span
-                  className="inline-flex items-center gap-1 text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
+                  className="inline-flex items-center gap-1 text-xs text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded-sm"
                   title={`${t('label_virt_host')}: ${esxiHost}`}
                 >
                   {t('label_virt_host')} {esxiHost}
@@ -686,13 +702,23 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 )
                 if (!w) alert(t('popup_blocked'))
               }}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs bg-green-700/40 hover:bg-green-700 text-green-300 rounded-lg transition-colors font-mono flex-shrink-0"
+              className="flex items-center gap-1 px-2.5 py-1 text-xs bg-green-700/40 hover:bg-green-700 text-green-300 rounded-lg transition-colors font-mono shrink-0"
               title="SSH Terminal"
             >
               <span>⌨</span> SSH
             </button>
           )}
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none flex-shrink-0">&times;</button>
+          {canEdit && (
+            <button
+              type="button"
+              data-testid="server-edit-btn"
+              onClick={() => { setTab('info'); setEditing(v => !v) }}
+              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors shrink-0 ${editing ? 'bg-blue-600/30 border-blue-500/50 text-blue-200' : 'border-white/10 text-slate-300 hover:bg-white/[0.06]'}`}
+            >
+              {t('edit')}
+            </button>
+          )}
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none shrink-0">&times;</button>
         </div>
 
         {/* Tabs */}
@@ -708,8 +734,21 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
 
+          {/* ── EDIT (Genel + SSH + BMC) ── */}
+          {tab === 'info' && editing && (
+            <ServerEditPanel
+              server={server}
+              isAdmin={isAdminUser}
+              onClose={() => setEditing(false)}
+              onSaved={(patch) => {
+                setOverride(prev => ({ ...prev, ...(patch as Partial<Server>) }))
+                queryClient.invalidateQueries({ queryKey: ['servers'] })
+              }}
+            />
+          )}
+
           {/* ── INFO TAB ── */}
-          {tab === 'info' && (
+          {tab === 'info' && !editing && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 {[
@@ -762,7 +801,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       <div className="flex items-center justify-between mt-0.5">
                         <TierBadge tier={(server as any).tier || 'unknown'} />
                         <select
-                          className="text-xs bg-gray-700 border border-gray-600 text-gray-200 rounded px-1.5 py-0.5"
+                          className="text-xs bg-gray-700 border border-gray-600 text-gray-200 rounded-sm px-1.5 py-0.5"
                           defaultValue={(server as any).tier || 'unknown'}
                           onChange={async (e) => {
                             await fetch(`${API_BASE_URL}/baseline/servers/${server.id}/tier`, {
@@ -787,6 +826,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 
               {/* Donanım (Dell OME / HPE OneView) — entegrasyon/eşleşme/yetki yoksa render edilmez */}
               {(server.server_type || '').toUpperCase() !== 'VIRTUAL' && <HwServerCard kind="server" id={server.id} />}
+              {/* Host donanım günlükleri (MCE/ECC/PSU/ısı) — kayıt yoksa render edilmez */}
+              {(server.server_type || '').toUpperCase() !== 'VIRTUAL' && <HwHostLogsCard kind="server" id={server.id} />}
 
               {/* Son Güncelleme Bilgisi */}
               {updateHistory && (updateHistory.history.length > 0 || updateHistory.pending_reboot) && (
@@ -801,7 +842,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   </div>
                   {updateHistory.history.slice(0, 3).map((h: any, i: number) => (
                     <div key={i} className="flex items-center gap-3 text-xs">
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${
                         h.status === 'completed' ? 'bg-green-400' :
                         h.status === 'failed'    ? 'bg-red-400' : 'bg-slate-400'
                       }`} />
@@ -809,13 +850,13 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         <span className="text-slate-200 font-medium">{h.plan_name}</span>
                         <span className="text-slate-500 ml-2">{h.update_type}</span>
                       </div>
-                      <span className="text-slate-400 flex-shrink-0">
+                      <span className="text-slate-400 shrink-0">
                         {t('packages_n', { n: h.packages_updated })}
                       </span>
                       {h.reboot_required && !h.rebooted && (
-                        <span className="text-yellow-400 flex-shrink-0 font-bold">!</span>
+                        <span className="text-yellow-400 shrink-0 font-bold">!</span>
                       )}
-                      <span className="text-slate-500 flex-shrink-0">
+                      <span className="text-slate-500 shrink-0">
                         {h.completed_at ? new Date(h.completed_at).toLocaleDateString(dateLoc) : '—'}
                       </span>
                     </div>
@@ -841,7 +882,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                     <button
                       onClick={handleSearchVm}
                       disabled={vmSearching || vmDetailsFetching}
-                      className="flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-600/50 bg-white/[0.04] text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-sm border border-slate-600/50 bg-white/[0.04] text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
                       title={t('refresh_vm_title')}
                     >
                       {(vmSearching || vmDetailsFetching)
@@ -881,7 +922,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         { label: t('hw_version'),      val: vmDetails.vm_hardware_version },
                       ].map(({ label, val }) => val ? (
                         <div key={label} className="flex gap-1.5">
-                          <span className="text-slate-500 flex-shrink-0 w-24">{label}</span>
+                          <span className="text-slate-500 shrink-0 w-24">{label}</span>
                           <span className="text-slate-200 truncate font-mono text-[11px]">{val}</span>
                         </div>
                       ) : null)}
@@ -889,7 +930,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       {/* Güç durumu */}
                       {vmDetails.vm_power_state && (
                         <div className="flex gap-1.5 col-span-2">
-                          <span className="text-slate-500 w-24 flex-shrink-0">{t('power_state')}</span>
+                          <span className="text-slate-500 w-24 shrink-0">{t('power_state')}</span>
                           <span className={`font-medium ${
                             isPoweredOn(vmDetails.vm_power_state) ? 'text-green-400' : 'text-red-400'
                           }`}>
@@ -910,8 +951,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">{t('network_adapters')}</p>
                       <div className="space-y-1">
                         {vmDetails!.vm_network_info!.map((nic, i) => (
-                          <div key={i} className="flex items-start gap-2 text-xs bg-white/[0.02] rounded px-2 py-1.5">
-                            <span className="text-slate-400 flex-shrink-0">●</span>
+                          <div key={i} className="flex items-start gap-2 text-xs bg-white/[0.02] rounded-sm px-2 py-1.5">
+                            <span className="text-slate-400 shrink-0">●</span>
                             <div className="min-w-0">
                               <span className="text-slate-300">{nic.name || `NIC ${i + 1}`}</span>
                               {nic.mac && <span className="text-slate-500 ml-2 font-mono text-[10px]">{nic.mac}</span>}
@@ -939,7 +980,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         <Camera size={14} strokeWidth={1.8} /> VM Snapshot
                       </h3>
                       {vmSnapshots?.platform && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.07] text-slate-400 uppercase">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-white/[0.07] text-slate-400 uppercase">
                           {vmSnapshots.platform}
                         </span>
                       )}
@@ -950,7 +991,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                         <select
                           value={snapRetention}
                           onChange={e => setSnapRetention(e.target.value)}
-                          className="text-xs bg-white/[0.07] border border-slate-600 text-slate-300 rounded px-1.5 py-0.5"
+                          className="text-xs bg-white/[0.07] border border-slate-600 text-slate-300 rounded-sm px-1.5 py-0.5"
                         >
                           <option value="1d">{t('retention_1d')}</option>
                           <option value="1w">{t('retention_1w')}</option>
@@ -986,7 +1027,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                               setTimeout(() => setSnapCreating(false), 3000)
                             }
                           }}
-                          className="flex items-center gap-1 px-3 py-1 text-xs rounded border transition-colors disabled:opacity-50 bg-cyan-700/40 text-cyan-300 border-cyan-500/30 hover:bg-cyan-700/50"
+                          className="flex items-center gap-1 px-3 py-1 text-xs rounded-sm border transition-colors disabled:opacity-50 bg-cyan-700/40 text-cyan-300 border-cyan-500/30 hover:bg-cyan-700/50"
                         >
                           {snapCreating
                             ? <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> {t('starting')}</>
@@ -1000,7 +1041,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                   {/* VM ID yok uyarısı */}
                   {vmSnapshots?.vm_id_missing && !snapCreating && (
                     <div className="flex items-start gap-2 text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/20 rounded-lg px-3 py-2">
-                      <AlertTriangle size={12} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
+                      <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-0.5" />
                       <span>{t('vm_id_unknown_hint')}</span>
                     </div>
                   )}
@@ -1022,8 +1063,8 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                             : 'bg-white/[0.07]/30'
                           }`}>
                             {s.status === 'pending'
-                              ? <span className="w-3 h-3 border border-yellow-400/60 border-t-yellow-400 rounded-full animate-spin flex-shrink-0" />
-                              : <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                              ? <span className="w-3 h-3 border border-yellow-400/60 border-t-yellow-400 rounded-full animate-spin shrink-0" />
+                              : <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                                   s.status === 'active' ? 'bg-cyan-400'
                                   : s.status === 'failed' ? 'bg-red-400'
                                   : 'bg-slate-400'
@@ -1046,7 +1087,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                                   if (r.ok) refetchSnapshots()
                                   else { const e = await r.json().catch(() => ({})); alert(e.detail || t('delete_failed')) }
                                 }}
-                                className="text-red-400 hover:text-red-300 px-2 py-0.5 rounded hover:bg-red-500/10 flex-shrink-0"
+                                className="text-red-400 hover:text-red-300 px-2 py-0.5 rounded-sm hover:bg-red-500/10 shrink-0"
                                 title={t('snapshot_delete_title')}
                               >
                                 {t('delete')}
@@ -1065,7 +1106,7 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                       <div className="space-y-1.5 max-h-40 overflow-y-auto">
                         {vmSnapshots!.external.map((s, i) => (
                           <div key={s.id || i} className="flex items-center gap-2 text-xs bg-white/[0.02] rounded-lg px-3 py-2 border border-white/[0.04]">
-                            <Tag size={12} strokeWidth={2} className="text-slate-400 flex-shrink-0" />
+                            <Tag size={12} strokeWidth={2} className="text-slate-400 shrink-0" />
                             <div className="flex-1 min-w-0">
                               <div className="text-slate-300 truncate">{s.name}</div>
                               {s.description && <div className="text-slate-500 text-[10px] truncate">{s.description}</div>}
@@ -1089,14 +1130,14 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium text-white">{t('ai_analysis')}</h3>
                   <button onClick={startAnalyze} disabled={isAnalyzing}
-                    className="px-3 py-1 text-xs bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded hover:bg-blue-600/40 disabled:opacity-50">
+                    className="px-3 py-1 text-xs bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-sm hover:bg-blue-600/40 disabled:opacity-50">
                     {isAnalyzing ? t('analyzing') : analyzeText ? t('analyze_again') : t('analyze')}
                   </button>
                 </div>
                 {analyzeText ? (
                   <div className="chat-response-content prose prose-invert prose-sm max-w-none text-slate-200 text-xs">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{analyzeText}</ReactMarkdown>
-                    {isAnalyzing && <span className="inline-block w-1.5 h-3 bg-blue-400 animate-pulse ml-0.5 rounded-sm" />}
+                    {isAnalyzing && <span className="inline-block w-1.5 h-3 bg-blue-400 animate-pulse ml-0.5 rounded-xs" />}
                   </div>
                 ) : isAnalyzing ? (
                   <div className="flex items-center gap-2 text-slate-400 text-xs">
@@ -1207,11 +1248,11 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
                 eventsData.groups.map((grp, i) => (
                   <div key={i} className="bg-cyber-card/50 rounded-lg border border-white/[0.06]/50 p-3">
                     <div className="flex items-start gap-2">
-                      <span className={`mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold border flex-shrink-0 ${SCOLOR[grp.severity] || SCOLOR.info}`}>
+                      <span className={`mt-0.5 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold border shrink-0 ${SCOLOR[grp.severity] || SCOLOR.info}`}>
                         {grp.severity}
                       </span>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs text-slate-200 break-words leading-snug">{grp.title}</p>
+                        <p className="text-xs text-slate-200 wrap-break-word leading-snug">{grp.title}</p>
                         <div className="flex gap-3 mt-1">
                           <span className="text-[10px] text-slate-500">{grp.event_type}</span>
                           <span className="text-[10px] text-slate-500">{grp.count}×</span>
@@ -1237,19 +1278,66 @@ export function ServerDetailDrawer({ server, onClose }: { server: Server; onClos
 }
 
 
-const LINUX_HV_TYPES: { id: 'vmware' | 'kvm' | 'openshift_virt'; label: TranslationKey }[] = [
-  { id: 'vmware', label: 'filter_all_vcenter' },
-  { id: 'kvm', label: 'filter_all_olvm' },
-  { id: 'openshift_virt', label: 'filter_hv_openshift' },
-]
+const SELECT_CLS =
+  'shrink-0 whitespace-nowrap bg-cyber-card border border-white/[0.06] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500'
+
+type TFn = (key: TranslationKey, vars?: Record<string, string | number>) => string
+const STATUS_OPTIONS = (t: TFn) => (
+  <>
+    <option value="all">{t('filter_all_status')}</option>
+    <option value="ONLINE">{t('status_online')}</option>
+    <option value="OFFLINE">{t('status_offline')}</option>
+    <option value="WARNING">{t('status_warning')}</option>
+    <option value="CRITICAL">{t('status_critical')}</option>
+  </>
+)
+const AI_OPTIONS = (t: TFn) => (
+  <>
+    <option value="all">{t('filter_all')}</option>
+    <option value="true">{t('ai_ready')}</option>
+    <option value="false">{t('ai_ready_not')}</option>
+  </>
+)
+const TYPE_OPTIONS = (t: TFn) => (
+  <>
+    <option value="all">{t('filter_all_types')}</option>
+    <option value="VIRTUAL">Virtual</option>
+    <option value="PHYSICAL">Physical</option>
+  </>
+)
+const NE_OPTIONS = (t: TFn) => (
+  <>
+    <option value="all">{t('node_exporter_all')}</option>
+    <option value="running">{t('node_exporter_running')}</option>
+    <option value="installed">{t('node_exporter_installed')}</option>
+    <option value="not_installed">{t('node_exporter_missing')}</option>
+  </>
+)
+
+/** GET /servers/ sort_by beyaz listesi (backend ile aynı). */
+type ServerSortKey = 'name' | 'server_type' | 'status' | 'os_type' | 'cpu_cores' | 'ai_ready'
+
+/**
+ * OS sekmeleri. Bu sayfa zaten Linux modülünün TAMAMI olduğundan eski "Tümü" / "Linux" ikilisi anlamsızdı
+ * (Linux sekmesi neredeyse Tümü ile aynıydı). Artık backend'in `os` filtresiyle gerçek bir bölünme:
+ * all = linux + other (Windows bu modülde yok).
+ */
+const OS_TABS = ['all', 'linux', 'other'] as const
+type OsTab = (typeof OS_TABS)[number]
+
+/** Çevrimdışılar gizliyken sonuç bu sayıdan azsa "N çevrimdışı gizli" bağlantısı gösterilir. */
+const OFFLINE_HINT_MAX_RESULTS = 10
 
 const Servers: React.FC = () => {
   const t = useT()
+  const { locale } = useLocale()
   const { user, hasModule } = useAuth()
   const canSeeNameMismatch = Boolean(user?.is_admin || user?.role === 'admin' || hasModule('linux'))
   const [selectedServer, setSelectedServer] = useState<Server | null>(null)
+  const [drawerStartEdit, setDrawerStartEdit] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [searchTerm, setSearchTerm] = useState('')
+  const debouncedSearch = useDebouncedValue(searchTerm.trim(), 300)
   const [confirmState, setConfirmState] = useState<{ msg: string; resolve: (v: boolean) => void } | null>(null)
   const showConfirm = (msg: string): Promise<boolean> => new Promise(resolve => setConfirmState({ msg, resolve }))
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -1259,15 +1347,18 @@ const Servers: React.FC = () => {
   const [osFilter, setOsFilter] = useState<string>('all') // all, linux, windows, other
   const [nodeExporterFilter, setNodeExporterFilter] = useState<string>('all') // all, installed, running, not_installed
   const [nameMismatchFilter, setNameMismatchFilter] = useState(false)
-  const [hvTypes, setHvTypes] = useState<string[]>([])
-  const [hvTypeOpen, setHvTypeOpen] = useState(false)
-  const hvTypeRef = useRef<HTMLDivElement>(null)
+  // Ortam (hypervisor) filtresi — seçim localStorage'da; liste/sekme/gizli-çevrimdışı/summary aynı parametreleri paylaşır
+  const hv = useHypervisorSelection('linux')
+  const hvKey = `${hv.ids.join(',')}|${hv.unassigned ? 1 : 0}`
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const filtersBtnRef = useRef<HTMLButtonElement>(null)
   const [page, setPage] = useState(1)
   const pageSize = 50
   const [bulkJobId, setBulkJobId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; server: Server } | null>(null)
 
-  const [sortKey, setSortKey] = useState<string>('hostname')
+  // Sıralama sunucu tarafında (GET /servers/?sort_by=&sort_dir=). null = varsayılan (hostname/ad ↑).
+  const [sortKey, setSortKey] = useState<ServerSortKey | null>(null)
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [sshTarget, setSshTarget] = useState<{id: number; name: string; ip: string} | null>(null)
   const rowClickTimer = useRef<number | null>(null)
@@ -1413,48 +1504,64 @@ const Servers: React.FC = () => {
   }
 
   // Filtre değişince ilk sayfaya dön
+  // Arama 300 ms debounce edilir; debounce'lu değer değişince de ilk sayfaya dön.
   React.useEffect(() => {
     setPage(1)
-  }, [searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter, hvTypes])
+  }, [debouncedSearch, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter, hvKey, sortKey, sortDirection])
 
-  React.useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (hvTypeRef.current && !hvTypeRef.current.contains(e.target as Node)) {
-        setHvTypeOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [])
+  const hvParams = hv.params
 
-  const hvParams = React.useMemo(() => {
-    if (!hvTypes.length) return {}
-    return { hypervisor_types: hvTypes.join(',') }
-  }, [hvTypes])
+  // OS sekmesi hariç tüm liste filtreleri — sekme sayıları ve "gizli çevrimdışı" sorgusu aynı filtreleri kullanır.
+  const baseFilters = {
+    platform: 'linux',
+    q: debouncedSearch || undefined,
+    status: statusFilter !== 'all' ? statusFilter : undefined,
+    hide_offline: !showOffline,
+    ai_ready: aiReadyFilter === 'all' ? null : aiReadyFilter === 'true',
+    server_type: typeFilter !== 'all' ? typeFilter : undefined,
+    node_exporter: nodeExporterFilter !== 'all' ? nodeExporterFilter : undefined,
+    name_mismatch: canSeeNameMismatch && nameMismatchFilter ? true : null,
+    ...hvParams,
+  } satisfies ListServersParams
 
   const { data: serversPage, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['servers', 'linux', page, pageSize, searchTerm, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter, hvTypes],
+    queryKey: ['servers', 'linux', page, pageSize, debouncedSearch, statusFilter, showOffline, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter, hvKey, sortKey, sortDirection],
     queryFn: () =>
       fetchServersPage<Server>({
-        platform: 'linux',
+        ...baseFilters,
         page,
         page_size: pageSize,
-        q: searchTerm || undefined,
-        status: statusFilter !== 'all' ? statusFilter : undefined,
-        hide_offline: !showOffline,
-        ai_ready: aiReadyFilter === 'all' ? null : aiReadyFilter === 'true',
-        server_type: typeFilter !== 'all' ? typeFilter : undefined,
         os: osFilter !== 'all' ? osFilter : undefined,
-        node_exporter: nodeExporterFilter !== 'all' ? nodeExporterFilter : undefined,
-        name_mismatch: canSeeNameMismatch && nameMismatchFilter ? true : null,
-        ...hvParams,
+        sort_by: sortKey ?? undefined,
+        sort_dir: sortKey ? sortDirection : undefined,
       }),
     refetchInterval: 60_000,
     placeholderData: (prev) => prev,
   })
 
+  // Sekme sayıları: sunucudaki total (page_size=1 hafif sorgu), OS filtresi sekmenin kendisi.
+  const tabCountQueries = useQueries({
+    queries: OS_TABS.map((tab) => ({
+      queryKey: ['servers', 'linux', 'tab-count', tab, debouncedSearch, statusFilter, showOffline, aiReadyFilter, typeFilter, nodeExporterFilter, nameMismatchFilter, hvKey],
+      queryFn: () =>
+        fetchServersPage<Server>({
+          ...baseFilters,
+          page: 1,
+          page_size: 1,
+          os: tab === 'all' ? undefined : tab,
+        }),
+      refetchInterval: 60_000,
+      placeholderData: (prev: Awaited<ReturnType<typeof fetchServersPage<Server>>> | undefined) => prev,
+    })),
+  })
+  const tabCounts: Record<OsTab, number | undefined> = {
+    all: tabCountQueries[0].data?.total,
+    linux: tabCountQueries[1].data?.total,
+    other: tabCountQueries[2].data?.total,
+  }
+
   const { data: linuxSummary } = useQuery({
-    queryKey: ['servers', 'summary', 'linux', hvTypes],
+    queryKey: ['servers', 'summary', 'linux', hvKey],
     queryFn: async () => {
       const { fetchServersSummary } = await import('../api/servers')
       return fetchServersSummary('linux', hvParams)
@@ -1462,6 +1569,43 @@ const Servers: React.FC = () => {
     enabled: canSeeNameMismatch,
     refetchInterval: 120_000,
   })
+
+  // Çevrimdışılar gizliyken bu aramada kaç çevrimdışı kayıt dışarıda kaldı? (hide_offline=false + status=OFFLINE)
+  // Kullanıcı başka bir durum seçtiyse (ONLINE/WARNING/CRITICAL) gizli çevrimdışı kayıt anlamsız: sorgu/ipucu yok.
+  const offlineHintApplies = !showOffline && (statusFilter === 'all' || statusFilter === 'OFFLINE')
+  const { data: hiddenOfflinePage } = useQuery({
+    queryKey: ['servers', 'linux', 'hidden-offline', debouncedSearch, aiReadyFilter, typeFilter, osFilter, nodeExporterFilter, nameMismatchFilter, hvKey],
+    queryFn: () =>
+      fetchServersPage<Server>({
+        ...baseFilters,
+        status: 'OFFLINE',
+        hide_offline: false,
+        os: osFilter !== 'all' ? osFilter : undefined,
+        page: 1,
+        page_size: 1,
+      }),
+    enabled: offlineHintApplies,
+    refetchInterval: 60_000,
+    placeholderData: (prev) => prev,
+  })
+
+  // Ortam filtresi sayıları: hypervisor filtreleri HARİÇ tüm liste filtreleri (OS sekmesi dahil)
+  const facetFilters = {
+    q: debouncedSearch || undefined,
+    status: statusFilter !== 'all' ? statusFilter : undefined,
+    hide_offline: !showOffline,
+    ai_ready: aiReadyFilter === 'all' ? null : aiReadyFilter === 'true',
+    server_type: typeFilter !== 'all' ? typeFilter : undefined,
+    node_exporter: nodeExporterFilter !== 'all' ? nodeExporterFilter : undefined,
+    name_mismatch: canSeeNameMismatch && nameMismatchFilter ? true : null,
+    os: osFilter !== 'all' ? osFilter : undefined,
+  }
+
+  // Filtre çubuğu her genişlikte tek satır: sığmazsa ikincil filtreler "Filtreler" panelinde toplanır
+  const { ref: filterBarRef, compact: filterBarCompact } = useSingleRowFit(
+    `${canSeeNameMismatch}|${showOffline}|${locale}|${linuxSummary?.name_mismatch ?? ''}`,
+  )
+  const secondaryActive = [aiReadyFilter, typeFilter, nodeExporterFilter, statusFilter].filter((v) => v !== 'all').length
 
   const { data: globalCreds } = useQuery({
     queryKey: ['settings', 'credentials'],
@@ -1475,6 +1619,8 @@ const Servers: React.FC = () => {
 
   const servers = serversPage?.items ?? []
   const totalServers = serversPage?.total ?? 0
+  const hiddenOfflineCount = offlineHintApplies ? (hiddenOfflinePage?.total ?? 0) : 0
+  const showOfflineHint = hiddenOfflineCount > 0 && totalServers < OFFLINE_HINT_MAX_RESULTS
   const totalPages = Math.max(1, Math.ceil(totalServers / pageSize))
   const globalSshReady = (globalCreds || []).some(c => c.has_password || c.has_private_key)
   const selectedHaveSecret = selectedIdList.some(id => servers.find(s => s.id === id)?.has_ssh_secret)
@@ -1499,108 +1645,16 @@ const Servers: React.FC = () => {
     }
   })
 
-  const toggleSort = (key: string) => {
-    if (sortKey === key) {
-      setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'))
+  const toggleSort = (key: ServerSortKey) => {
+    const current = sortKey ?? 'name'
+    if (current === key) {
+      setSortKey(key)
+      setSortDirection(prev => (sortKey === null ? 'desc' : prev === 'asc' ? 'desc' : 'asc'))
     } else {
       setSortKey(key)
       setSortDirection('asc')
     }
   }
-
-  const getStatusOrder = (status: string) => {
-    const order: Record<string, number> = {
-      ONLINE: 1,
-      WARNING: 2,
-      CRITICAL: 3,
-      OFFLINE: 4
-    }
-    return order[status] ?? 5
-  }
-
-  const getNodeExporterOrder = (server: Server) => {
-    const status = server.node_exporter
-    if (status?.running) return 2
-    if (status?.installed) return 1
-    return 0
-  }
-
-  const parseIp = (ip: string) => ip.split('.').map(part => Number(part) || 0)
-
-  // Filtreler sunucu tarafında; burada yalnızca mevcut sayfayı sırala. NE = DB cache.
-  // Çevrimdışıları Göster açıkken OFFLINE kayıtlar listenin üstüne çıkar.
-  const sortedServers = [...servers].sort((a, b) => {
-    if (showOffline) {
-      const aOff = a.status === 'OFFLINE' ? 0 : 1
-      const bOff = b.status === 'OFFLINE' ? 0 : 1
-      if (aOff !== bOff) return aOff - bOff
-    }
-
-    let aValue: number | string = ''
-    let bValue: number | string = ''
-
-    switch (sortKey) {
-      case 'ip': {
-        const aParts = parseIp(a.ip_address || '0.0.0.0')
-        const bParts = parseIp(b.ip_address || '0.0.0.0')
-        for (let i = 0; i < 4; i += 1) {
-          if (aParts[i] !== bParts[i]) return sortDirection === 'asc' ? aParts[i] - bParts[i] : bParts[i] - aParts[i]
-        }
-        return 0
-      }
-      case 'status':
-        aValue = getStatusOrder(a.status)
-        bValue = getStatusOrder(b.status)
-        break
-      case 'type':
-        aValue = a.server_type || ''
-        bValue = b.server_type || ''
-        break
-      case 'os': {
-        const osOf = (s: Server) =>
-          shortenOsLabel({
-            os_type: s.os_type,
-            os_version: s.os_version,
-            os_release_id: s.os_release_id,
-            os_version_id: s.os_version_id,
-            os_pretty: s.os_version || s.vm_guest_os_full,
-            vm_guest_os_full: s.vm_guest_os_full,
-          }).toLowerCase()
-        aValue = osOf(a)
-        bValue = osOf(b)
-        break
-      }
-      case 'cpu':
-        aValue = a.cpu_cores || 0
-        bValue = b.cpu_cores || 0
-        break
-      case 'memory':
-        aValue = a.memory_gb || 0
-        bValue = b.memory_gb || 0
-        break
-      case 'ai':
-        aValue = a.ai_ready ? 1 : 0
-        bValue = b.ai_ready ? 1 : 0
-        break
-      case 'node_exporter':
-        aValue = getNodeExporterOrder(a)
-        bValue = getNodeExporterOrder(b)
-        break
-      case 'hostname':
-      case 'name':
-      default:
-        aValue = displayHostname(a).toLowerCase()
-        bValue = displayHostname(b).toLowerCase()
-        break
-    }
-
-    if (typeof aValue === 'number' && typeof bValue === 'number') {
-      return sortDirection === 'asc' ? aValue - bValue : bValue - aValue
-    }
-    return sortDirection === 'asc'
-      ? String(aValue).localeCompare(String(bValue))
-      : String(bValue).localeCompare(String(aValue))
-  })
 
   const getStatusBadge = (status: string) => {
     const styles: Record<string, string> = {
@@ -1638,39 +1692,51 @@ const Servers: React.FC = () => {
     )
   }
 
-  // OS platform tabs — bu sayfa Linux modülüne ait; API zaten ?platform=linux ile
-  // Windows sunucuları hariç tutuyor, dolayısıyla burada Windows sekmesi/filtresi
-  // gösterilmez (bkz. Windows Sunucular sayfası: /windows).
-  const platformCounts = {
-    all: servers.length,
-    linux: servers.filter(s => !(s.os_type || '').toLowerCase().includes('windows')).length,
-  }
-
   return (
     <>
       {confirmState && <ConfirmModal message={confirmState.msg} onConfirm={() => { confirmState.resolve(true); setConfirmState(null) }} onCancel={() => { confirmState.resolve(false); setConfirmState(null) }} />}
     <div className="space-y-6">
-      {/* Platform tabs */}
+      {/* OS sekmeleri — sayılar sunucudaki total (diğer filtreler uygulanmış) */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-1 bg-slate-800/60 rounded-xl p-1 w-fit border border-slate-700/60">
         {([
-          { key: 'all', label: t('filter_all'), count: platformCounts.all },
-          { key: 'linux', label: 'Linux', count: platformCounts.linux },
-        ] as const).map(tab => (
-          <button key={tab.key}
-            onClick={() => setOsFilter(tab.key === 'all' ? 'all' : tab.key)}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              (tab.key === 'all' && osFilter === 'all') || (tab.key !== 'all' && osFilter === tab.key)
-                ? 'bg-blue-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-            }`}>
-            {tab.label}
-            <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${
-              (tab.key === 'all' && osFilter === 'all') || (tab.key !== 'all' && osFilter === tab.key)
-                ? 'bg-white/20 text-white'
-                : 'bg-slate-700 text-slate-400'
-            }`}>{tab.count}</span>
-          </button>
-        ))}
+          { key: 'all', label: t('filter_all') },
+          { key: 'linux', label: t('servers_tab_known_linux') },
+          { key: 'other', label: t('filter_os_other') },
+        ] as const).map(tab => {
+          const active = osFilter === tab.key
+          const count = tabCounts[tab.key]
+          return (
+            <button key={tab.key}
+              onClick={() => setOsFilter(tab.key)}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                active
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}>
+              {tab.label}
+              <span className={`text-[11px] px-1.5 py-0.5 rounded-full min-w-[1.5rem] text-center ${
+                active ? 'bg-white/20 text-white' : 'bg-slate-700 text-slate-400'
+              }`}>{count ?? '…'}</span>
+            </button>
+          )
+        })}
+      </div>
+        {/* Toplu işlemler sekmelerle gruplanır (filtre satırından çıkarıldı) */}
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <span className="whitespace-nowrap text-xs text-blue-400 bg-blue-500/10 border border-blue-500/25 px-2.5 py-1 rounded-lg">
+              {t('selected_n', { n: selectedIds.size })}
+            </span>
+          )}
+          <ActionsDropdown
+            refetch={() => { refetch() }}
+            selectedIds={selectedIdList}
+            bulkJobId={bulkJobId}
+            setBulkJobId={setBulkJobId}
+            sshOpsEnabled={sshOpsEnabled}
+          />
+        </div>
       </div>
 
       {/* Hata banner (eski veri varken hata alındıysa göster) */}
@@ -1688,158 +1754,140 @@ const Servers: React.FC = () => {
           {t('refreshing')}
         </div>
       )}
-      {/* Header */}
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Search */}
-            <div className="relative">
-              <input
-                type="text"
-                placeholder={t('search_host_vm_ip')}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-72 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 pl-10 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              <span className="absolute left-3 top-2.5 text-slate-500"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
-            </div>
-            {/* Show Offline Toggle */}
-            <label className="flex items-center space-x-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showOffline}
-                onChange={(e) => setShowOffline(e.target.checked)}
-                className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded focus:ring-blue-500"
-              />
-              <span className="text-sm text-slate-300">{t('filter_show_offline')}</span>
-            </label>
-            {canSeeNameMismatch && (
-              <label className="flex items-center space-x-2 cursor-pointer" title={t('filter_name_mismatch_hint')}>
-                <input
-                  type="checkbox"
-                  checked={nameMismatchFilter}
-                  onChange={(e) => setNameMismatchFilter(e.target.checked)}
-                  className="w-4 h-4 text-amber-500 bg-white/[0.07] border-slate-600 rounded focus:ring-amber-500"
-                />
-                <span className="text-sm text-slate-300">
-                  {t('filter_name_mismatch')}
-                  {typeof linuxSummary?.name_mismatch === 'number' ? (
-                    <span className="ml-1 text-amber-400/90">({linuxSummary.name_mismatch})</span>
-                  ) : null}
-                </span>
+      {/* Filtre çubuğu — flex-nowrap, her genişlikte tek satır (sığmazsa ikincil filtreler panelde) */}
+      <div
+        ref={filterBarRef}
+        data-testid="servers-filter-bar"
+        data-compact={filterBarCompact ? 'true' : 'false'}
+        className="flex flex-nowrap items-center gap-2 w-full min-w-0"
+      >
+        {/* Search */}
+        <div className="relative flex-1 min-w-[160px] max-w-[288px]">
+          <input
+            type="text"
+            placeholder={t('search_host_vm_ip')}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-cyber-card border border-white/[0.06] rounded-lg py-1.5 pl-9 pr-3 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <span className="absolute left-3 top-2.5 text-slate-500"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
+        </div>
+        {/* Show Offline Toggle */}
+        <label className="flex shrink-0 items-center gap-1.5 whitespace-nowrap cursor-pointer" title={t('filter_show_offline')}>
+          <input
+            type="checkbox"
+            checked={showOffline}
+            onChange={(e) => setShowOffline(e.target.checked)}
+            className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded-sm focus:ring-blue-500"
+          />
+          <span className="text-sm text-slate-300">{t('filter_show_offline_short')}</span>
+        </label>
+        {canSeeNameMismatch && (
+          <label className="flex shrink-0 items-center gap-1.5 whitespace-nowrap cursor-pointer" title={t('filter_name_mismatch_hint')}>
+            <input
+              type="checkbox"
+              checked={nameMismatchFilter}
+              onChange={(e) => setNameMismatchFilter(e.target.checked)}
+              className="w-4 h-4 text-amber-500 bg-white/[0.07] border-slate-600 rounded-sm focus:ring-amber-500"
+            />
+            <span className="text-sm text-slate-300">
+              {t('filter_name_mismatch')}
+              {typeof linuxSummary?.name_mismatch === 'number' ? (
+                <span className="ml-1 text-amber-400/90">({linuxSummary.name_mismatch})</span>
+              ) : null}
+            </span>
+          </label>
+        )}
+        {/* Ortam (hypervisor) filtresi */}
+        <HypervisorFilter
+          platform="linux"
+          selectedIds={hv.ids}
+          includeUnassigned={hv.unassigned}
+          onChange={hv.setSelection}
+          facetFilters={facetFilters}
+        />
+        {!filterBarCompact ? (
+          <>
+            {/* Status Filter — yalnızca "Çevrimdışı" açıkken; Durum etiketli kompakt */}
+            {showOffline && (
+              <label className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-slate-400">
+                {t('filter_status_label')}
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className={SELECT_CLS}
+                >
+                  {STATUS_OPTIONS(t)}
+                </select>
               </label>
             )}
-            {/* Status Filter */}
-            {showOffline && (
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">{t('filter_all_status')}</option>
-                <option value="ONLINE">{t('status_online')}</option>
-                <option value="OFFLINE">{t('status_offline')}</option>
-                <option value="WARNING">{t('status_warning')}</option>
-                <option value="CRITICAL">{t('status_critical')}</option>
-              </select>
-            )}
-            {/* AI Ready Filter */}
-            <select
-              value={aiReadyFilter}
-              onChange={(e) => setAiReadyFilter(e.target.value)}
-              className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">{t('filter_all')}</option>
-              <option value="true">{t('ai_ready')}</option>
-              <option value="false">{t('ai_ready_not')}</option>
+            <select value={aiReadyFilter} onChange={(e) => setAiReadyFilter(e.target.value)} className={SELECT_CLS} aria-label={t('ai_ready')}>
+              {AI_OPTIONS(t)}
             </select>
-            {/* Type Filter */}
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">{t('filter_all_types')}</option>
-              <option value="VIRTUAL">Virtual</option>
-              <option value="PHYSICAL">Physical</option>
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={SELECT_CLS} aria-label={t('col_type')}>
+              {TYPE_OPTIONS(t)}
             </select>
-            <div className="relative" ref={hvTypeRef}>
-              <button
-                type="button"
-                onClick={() => setHvTypeOpen((v) => !v)}
-                className="min-w-[160px] bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white text-left focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {!hvTypes.length
-                  ? t('filter_all_hypervisors')
-                  : hvTypes.length === 1
-                    ? t(LINUX_HV_TYPES.find((x) => x.id === hvTypes[0])?.label || 'filter_all_hypervisors')
-                    : t('filter_hv_n', { n: hvTypes.length })}
-              </button>
-              {hvTypeOpen && (
-                <div className="absolute z-40 top-full mt-1 w-56 overflow-auto bg-[#0d1422] border border-white/[0.1] rounded-xl shadow-xl">
-                  {LINUX_HV_TYPES.map((opt) => {
-                    const on = hvTypes.includes(opt.id)
-                    return (
-                      <label key={opt.id} className="flex items-center gap-2 px-3 py-2 text-xs text-slate-200 cursor-pointer hover:bg-white/[0.04]">
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          onChange={() => {
-                            setHvTypes((prev) =>
-                              on ? prev.filter((x) => x !== opt.id) : [...prev, opt.id],
-                            )
-                          }}
-                        />
-                        {t(opt.label)}
-                      </label>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-            {/* OS Filter */}
-            <select
-              value={osFilter}
-              onChange={(e) => setOsFilter(e.target.value)}
-              className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">{t('filter_all_os')}</option>
-              <option value="linux">Linux</option>
-              <option value="other">{t('filter_os_other')}</option>
+            <select value={nodeExporterFilter} onChange={(e) => setNodeExporterFilter(e.target.value)} className={SELECT_CLS} aria-label="Node Exporter">
+              {NE_OPTIONS(t)}
             </select>
-            {/* Node Exporter Filter */}
-            <select
-              value={nodeExporterFilter}
-              onChange={(e) => setNodeExporterFilter(e.target.value)}
-              className="bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          </>
+        ) : (
+          <>
+            <button
+              ref={filtersBtnRef}
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              aria-haspopup="dialog"
+              aria-expanded={filtersOpen}
+              data-testid="servers-filters-button"
+              className={`shrink-0 whitespace-nowrap rounded-lg border bg-cyber-card px-3 py-1.5 text-sm text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500 ${
+                secondaryActive ? 'border-blue-500/50' : 'border-white/[0.06]'
+              }`}
             >
-              <option value="all">{t('node_exporter_all')}</option>
-              <option value="running">{t('node_exporter_running')}</option>
-              <option value="installed">{t('node_exporter_installed')}</option>
-              <option value="not_installed">{t('node_exporter_missing')}</option>
-            </select>
-
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedIds.size > 0 && (
-              <span className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/25 px-2.5 py-1 rounded-lg">
-                {t('selected_n', { n: selectedIds.size })}
-              </span>
-            )}
-            <ActionsDropdown
-              refetch={() => { refetch() }}
-              selectedIds={selectedIdList}
-              bulkJobId={bulkJobId}
-              setBulkJobId={setBulkJobId}
-              sshOpsEnabled={sshOpsEnabled}
-            />
-          </div>
-        </div>
+              {secondaryActive ? t('filters_panel_active', { n: secondaryActive }) : t('filters_panel')}
+            </button>
+            <AnchoredPanel open={filtersOpen} anchorRef={filtersBtnRef} onClose={() => setFiltersOpen(false)} width={260} label={t('filters_panel')}>
+              <div className="space-y-3 p-3">
+                {([
+                  { id: 'f-status', label: t('filter_status_label'), value: statusFilter, set: setStatusFilter, opts: STATUS_OPTIONS(t) },
+                  { id: 'f-ai', label: t('ai_ready'), value: aiReadyFilter, set: setAiReadyFilter, opts: AI_OPTIONS(t) },
+                  { id: 'f-type', label: t('col_type'), value: typeFilter, set: setTypeFilter, opts: TYPE_OPTIONS(t) },
+                  { id: 'f-ne', label: 'Node Exporter', value: nodeExporterFilter, set: setNodeExporterFilter, opts: NE_OPTIONS(t) },
+                ] as const).map((f) => (
+                  <label key={f.id} className="block text-xs text-slate-400">
+                    {f.label}
+                    <select
+                      value={f.value}
+                      onChange={(e) => f.set(e.target.value)}
+                      className={`${SELECT_CLS} mt-1 w-full`}
+                    >
+                      {f.opts}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            </AnchoredPanel>
+          </>
+        )}
       </div>
 
       {!sshOpsEnabled && (
         <div className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2">
           {t('ssh_cred_hint')} {t('ssh_cred_tcp_ok')}
+        </div>
+      )}
+
+      {/* Çevrimdışılar gizliyken az/sıfır sonuç → gizli kayıt sayısı + göster bağlantısı */}
+      {showOfflineHint && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90" data-testid="offline-hidden-hint">
+          <span>{t('servers_offline_hidden', { n: hiddenOfflineCount })}</span>
+          <button
+            type="button"
+            onClick={() => setShowOffline(true)}
+            className="font-medium text-blue-400 underline hover:text-blue-300"
+          >
+            {t('servers_offline_show')}
+          </button>
         </div>
       )}
 
@@ -1859,7 +1907,7 @@ const Servers: React.FC = () => {
                     type="checkbox"
                     checked={pageAllSelected}
                     onChange={toggleSelectAllPage}
-                    className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded focus:ring-blue-500"
+                    className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded-sm focus:ring-blue-500"
                     title={t('select_page_all')}
                   />
                   <div
@@ -1870,26 +1918,26 @@ const Servers: React.FC = () => {
                   </div>
                 </th>
                 {([
-                  { key: 'name',   label: t('col_server'),     sortable: true,  sortKey: 'hostname' },
-                  { key: 'tip',    label: t('col_type'),       sortable: true,  sortKey: 'type'   },
+                  { key: 'name',   label: t('col_server'),     sortable: true,  sortKey: 'name' },
+                  { key: 'tip',    label: t('col_type'),       sortable: true,  sortKey: 'server_type' },
                   { key: 'status', label: t('col_status'),     sortable: true,  sortKey: 'status' },
-                  { key: 'os',     label: 'OS',          sortable: true,  sortKey: 'os'     },
-                  { key: 'cpu',    label: `CPU / ${t('memory')}`,   sortable: true,  sortKey: 'cpu'    },
-                  { key: 'izleme', label: t('col_monitoring'),  sortable: true,  sortKey: 'ai'     },
-                  { key: 'action', label: '',           sortable: false, sortKey: '' },
-                ] as Array<{key: string; label: string; sortable: boolean; sortKey?: string}>).map((col, ci) => (
+                  { key: 'os',     label: 'OS',          sortable: true,  sortKey: 'os_type' },
+                  { key: 'cpu',    label: `CPU / ${t('memory')}`,   sortable: true,  sortKey: 'cpu_cores' },
+                  { key: 'izleme', label: t('col_monitoring'),  sortable: true,  sortKey: 'ai_ready' },
+                  { key: 'action', label: '',           sortable: false },
+                ] as Array<{key: string; label: string; sortable: boolean; sortKey?: ServerSortKey}>).map((col, ci) => (
                   <th key={col.key}
                     className="relative px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide overflow-hidden">
                     {/* Başlık + sort ikonu */}
                     <div className="flex items-center gap-1 pr-3">
-                      {col.sortable ? (
+                      {col.sortable && col.sortKey ? (
                         <button
-                          onClick={() => toggleSort(col.sortKey || col.key)}
+                          onClick={() => toggleSort(col.sortKey!)}
                           className="flex items-center gap-1 hover:text-white transition-colors group/sort"
                         >
                           {col.label}
-                          <span className={`text-[11px] ml-0.5 ${sortKey === (col.sortKey || col.key) ? 'text-blue-400' : 'text-slate-600 group-hover/sort:text-slate-400'}`}>
-                            {sortKey === (col.sortKey || col.key) ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                          <span className={`text-[11px] ml-0.5 ${(sortKey ?? 'name') === col.sortKey ? 'text-blue-400' : 'text-slate-600 group-hover/sort:text-slate-400'}`}>
+                            {(sortKey ?? 'name') === col.sortKey ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
                           </span>
                         </button>
                       ) : (
@@ -1910,7 +1958,7 @@ const Servers: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
-              {sortedServers.length === 0 ? (
+              {servers.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-6 py-12 text-center text-slate-400">
                     <p className="font-medium">{t('servers_empty')}</p>
@@ -1918,7 +1966,7 @@ const Servers: React.FC = () => {
                     <p className="text-xs mt-2 text-slate-500">API: {API_BASE_URL}</p>
                   </td>
                 </tr>
-              ) : sortedServers.map((server) => {
+              ) : servers.map((server) => {
                 const osLabelInput = {
                   os_type: server.os_type,
                   os_version: server.os_version,
@@ -1961,7 +2009,7 @@ const Servers: React.FC = () => {
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => toggleSelect(server.id)}
-                      className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded focus:ring-blue-500"
+                      className="w-4 h-4 text-blue-600 bg-white/[0.07] border-slate-600 rounded-sm focus:ring-blue-500"
                     />
                   </td>
 
@@ -1976,7 +2024,7 @@ const Servers: React.FC = () => {
                           </div>
                           {canSeeNameMismatch && hasNameMismatch(server) && (
                             <span
-                              className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded"
+                              className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-sm"
                               title={t('vm_name_title', { name: server.vm_name || server.name })}
                             >
                               <AlertTriangle size={10} strokeWidth={2} />
@@ -1993,7 +2041,7 @@ const Servers: React.FC = () => {
                           )}
                           {server.hypervisor_name ? (
                             <span
-                              className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
+                              className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded-sm"
                               title={
                                 server.vcenter_endpoint
                                   ? `vCenter: ${server.hypervisor_name} (${server.vcenter_endpoint})`
@@ -2005,7 +2053,7 @@ const Servers: React.FC = () => {
                           ) : null}
                           {server.vm_host_name ? (
                             <span
-                              className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded"
+                              className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 bg-white/[0.07]/50 px-1.5 py-0.5 rounded-sm"
                               title={`${t('label_virt_host')}: ${server.vm_host_name}`}
                             >
                               {t('label_virt_host')} {server.vm_host_name}
@@ -2023,6 +2071,7 @@ const Servers: React.FC = () => {
                         : (server.server_type || '').toUpperCase() === 'VIRTUAL' ? t('type_virtual')
                           : serverTypeLabel(server.server_type)
                     }</span>
+                    {(server.server_type || '').toUpperCase() !== 'VIRTUAL' && <div className="mt-1"><HwBadge kind="server" id={server.id} /></div>}
                   </td>
 
                   {/* ── Durum ── */}
@@ -2147,7 +2196,7 @@ const Servers: React.FC = () => {
             </tbody>
           </table>
         </div>
-        {sortedServers.length === 0 && (
+        {servers.length === 0 && (
           <div className="text-center py-12 text-slate-500">
             {searchTerm || statusFilter !== 'all' || aiReadyFilter !== 'all' || typeFilter !== 'all' || nodeExporterFilter !== 'all' || nameMismatchFilter
               ? t('servers_filter_empty')
@@ -2188,7 +2237,7 @@ const Servers: React.FC = () => {
 
       {contextMenu && (
         <div
-          className="fixed z-[60] w-64 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-900/95 shadow-2xl shadow-black/50 backdrop-blur-md"
+          className="fixed z-60 w-64 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-900/95 shadow-2xl shadow-black/50 backdrop-blur-md"
           style={{
             left: Math.min(contextMenu.x, typeof window !== 'undefined' ? window.innerWidth - 280 : contextMenu.x),
             top: Math.min(contextMenu.y, typeof window !== 'undefined' ? window.innerHeight - 360 : contextMenu.y),
@@ -2298,6 +2347,21 @@ const Servers: React.FC = () => {
                 <span className="block text-[11px] text-slate-500">{t('detail_hint')}</span>
               </span>
             </button>
+            {(user?.is_admin || user?.role === 'admin' || user?.role === 'operator') && (
+              <button
+                type="button"
+                data-testid="ctx-edit-server"
+                onClick={() => { setContextMenu(null); setDrawerStartEdit(true); setSelectedServer(contextMenu.server) }}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-blue-500/10"
+              >
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-800 text-slate-300 ring-1 ring-slate-700/80">
+                  <Settings2 size={14} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm text-slate-100">{t('edit')}</span>
+                </span>
+              </button>
+            )}
           </div>
 
           <div className="mx-2 border-t border-slate-700/70" />
@@ -2329,7 +2393,11 @@ const Servers: React.FC = () => {
       )}
 
       {selectedServer && (
-        <ServerDetailDrawer server={selectedServer} onClose={() => setSelectedServer(null)} />
+        <ServerDetailDrawer
+          server={selectedServer}
+          startEditing={drawerStartEdit}
+          onClose={() => { setSelectedServer(null); setDrawerStartEdit(false) }}
+        />
       )}
 
       {/* SSH Terminal Modal */}

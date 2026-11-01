@@ -490,7 +490,7 @@ export function ServerConsolePage() {
   return (
     <div className="l1-server-console flex h-full min-h-0 flex-1 flex-col">
       {/* Genel üst bilgi — hostname sunucuya göre değişir */}
-      <header className="l1-console-header shrink-0 border-b border-white/[0.06] bg-[var(--bg-surface)]/80 px-4 py-2 md:px-5">
+      <header className="l1-console-header shrink-0 border-b border-white/[0.06] bg-(--bg-surface)/80 px-4 py-2 md:px-5">
         {/* Geri ikonu + fact chip’leri aynı satır */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <BackNavButton to="/level1" label={t("console_back")} />
@@ -500,22 +500,22 @@ export function ServerConsolePage() {
               ? Array.from({ length: 6 }).map((_, i) => (
                   <div
                     key={i}
-                    className="h-7 w-[5.5rem] animate-pulse rounded-md border border-white/[0.05] bg-[var(--bg-elevated)]/60"
+                    className="h-7 w-[5.5rem] animate-pulse rounded-md border border-white/[0.05] bg-(--bg-elevated)/60"
                   />
                 ))
               : factChips.map((chip) => (
                   <div
                     key={chip.label}
-                    className="inline-flex max-w-[11rem] items-baseline gap-1 rounded-md border border-white/[0.06] bg-[var(--bg-elevated)]/45 px-1.5 py-0.5 xl:max-w-[14rem]"
+                    className="inline-flex max-w-[11rem] items-baseline gap-1 rounded-md border border-white/[0.06] bg-(--bg-elevated)/45 px-1.5 py-0.5 xl:max-w-[14rem]"
                     title={`${chip.label}: ${chip.value}`}
                   >
-                    <span className="shrink-0 text-[8px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    <span className="shrink-0 text-[8px] font-semibold uppercase tracking-wide text-(--text-muted)">
                       {chip.label}
                     </span>
                     <span
                       className={cn(
-                        "min-w-0 truncate text-[10px] leading-tight text-[var(--text-primary)]",
-                        chip.mono && "font-mono text-[9px] text-[var(--text-secondary)]",
+                        "min-w-0 truncate text-[10px] leading-tight text-(--text-primary)",
+                        chip.mono && "font-mono text-[9px] text-(--text-secondary)",
                       )}
                     >
                       {chip.value}
@@ -526,10 +526,10 @@ export function ServerConsolePage() {
         </div>
 
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-          <h1 className="shrink-0 truncate text-lg font-bold tracking-tight text-[var(--text-primary)] md:text-xl">
+          <h1 className="shrink-0 truncate text-lg font-bold tracking-tight text-(--text-primary) md:text-xl">
             {hostTitle}
           </h1>
-          <span className="shrink-0 rounded-md border border-white/[0.08] bg-[var(--bg-elevated)] px-2 py-0.5 font-mono text-[12px] text-[var(--info)]">
+          <span className="shrink-0 rounded-md border border-white/[0.08] bg-(--bg-elevated) px-2 py-0.5 font-mono text-[12px] text-(--info)">
             {hostIp}
           </span>
           {server ? (
@@ -537,8 +537,8 @@ export function ServerConsolePage() {
               className={cn(
                 "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
                 server.status === "ready"
-                  ? "bg-[var(--success-bg)] text-[var(--success)]"
-                  : "bg-white/[0.06] text-[var(--text-secondary)]",
+                  ? "bg-(--success-bg) text-(--success)"
+                  : "bg-white/[0.06] text-(--text-secondary)",
               )}
             >
               {server.status}
@@ -548,7 +548,7 @@ export function ServerConsolePage() {
           <Button
             variant="secondary"
             size="sm"
-            className="ml-auto shrink-0 border border-white/[0.08] bg-[var(--bg-elevated)] hover:bg-[var(--bg-overlay)]"
+            className="ml-auto shrink-0 border border-white/[0.08] bg-(--bg-elevated) hover:bg-(--bg-overlay)"
             disabled={factsLoading}
             onClick={() => void loadFacts()}
           >
@@ -557,13 +557,13 @@ export function ServerConsolePage() {
         </div>
 
         {factsError ? (
-          <p className="mt-1.5 rounded-lg border border-[var(--error)]/30 bg-[var(--error-bg)] px-3 py-1.5 text-xs text-[var(--error)]">
+          <p className="mt-1.5 rounded-lg border border-(--error)/30 bg-(--error-bg) px-3 py-1.5 text-xs text-(--error)">
             {factsError}
           </p>
         ) : null}
 
         <div className="mt-2.5">
-          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-(--text-muted)">
             {t("operations")}
           </p>
           <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
@@ -588,16 +588,16 @@ export function ServerConsolePage() {
       </header>
 
       {activeJob ? (
-        <div className="shrink-0 border-b border-white/[0.06] bg-[var(--bg-elevated)]/40 px-4 py-2 md:px-5">
+        <div className="shrink-0 border-b border-white/[0.06] bg-(--bg-elevated)/40 px-4 py-2 md:px-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
-              <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-                <span className="font-mono text-[var(--text-secondary)]">#{activeJob.id}</span>
+              <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-(--text-primary)">
+                <span className="font-mono text-(--text-secondary)">#{activeJob.id}</span>
                 <span className="truncate">{activeJob.title}</span>
                 <Badge variant="muted">{activeJob.status}</Badge>
               </p>
-              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                {t("talep_id")}: <span className="font-mono text-[var(--text-primary)]">{activeJob.talep_id}</span>
+              <p className="mt-0.5 text-xs text-(--text-secondary)">
+                {t("talep_id")}: <span className="font-mono text-(--text-primary)">{activeJob.talep_id}</span>
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -616,48 +616,48 @@ export function ServerConsolePage() {
             </div>
           </div>
           {activeJob.preview ? (
-            <div className="mt-1.5 rounded-lg border border-white/[0.06] bg-[var(--bg-deep)]/50 px-3 py-1.5 text-sm text-[var(--text-primary)]">
+            <div className="mt-1.5 rounded-lg border border-white/[0.06] bg-(--bg-deep)/50 px-3 py-1.5 text-sm text-(--text-primary)">
               <p className="line-clamp-2">{activeJob.preview.summary_tr}</p>
               <button
                 type="button"
-                className="mt-0.5 text-xs font-medium text-[var(--accent)] hover:underline"
+                className="mt-0.5 text-xs font-medium text-(--accent) hover:underline"
                 onClick={() => setShowTech((v) => !v)}
               >
                 {showTech ? t("hide_technical") : t("technical_detail")}
               </button>
               {showTech ? (
-                <pre className="mt-1.5 max-h-28 overflow-auto rounded-md border border-white/[0.06] bg-[var(--bg-base)] p-2 font-mono text-xs text-[var(--text-secondary)]">
+                <pre className="mt-1.5 max-h-28 overflow-auto rounded-md border border-white/[0.06] bg-(--bg-base) p-2 font-mono text-xs text-(--text-secondary)">
                   {activeJob.preview.technical_detail || "(boş)"}
                 </pre>
               ) : null}
             </div>
           ) : null}
-          {error ? <p className="mt-1.5 text-sm text-[var(--error)]">{error}</p> : null}
+          {error ? <p className="mt-1.5 text-sm text-(--error)">{error}</p> : null}
         </div>
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-2 md:px-5">
         <div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-(--text-muted)">
             {t("console_log_title")}
           </p>
-          <p className="text-[10px] text-[var(--text-muted)]">Salt okunur önizleme · etkileşimli shell değil</p>
+          <p className="text-[10px] text-(--text-muted)">Salt okunur önizleme · etkileşimli shell değil</p>
         </div>
         {jobProgress && (busy || jobProgress.percent < 100) ? (
-          <div className="mb-2 shrink-0 rounded-xl border border-white/[0.08] bg-[var(--bg-surface)] px-3 py-2">
+          <div className="mb-2 shrink-0 rounded-xl border border-white/[0.08] bg-(--bg-surface) px-3 py-2">
             <div className="mb-1 flex items-center justify-between gap-2 text-xs">
-              <span className="truncate text-[var(--text-secondary)]" title={jobProgress.label}>
+              <span className="truncate text-(--text-secondary)" title={jobProgress.label}>
                 {jobProgress.label || "İlerleme"}
               </span>
-              <span className="shrink-0 font-mono tabular-nums text-[var(--success)]">
+              <span className="shrink-0 font-mono tabular-nums text-(--success)">
                 {jobProgress.percent}%
                 {jobProgress.total > 0 ? ` · ${jobProgress.done}/${jobProgress.total}` : ""}
               </span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-deep)]">
+            <div className="h-1.5 overflow-hidden rounded-full bg-(--bg-deep)">
               <div
                 className={cn(
-                  "h-full rounded-full bg-[var(--accent)] transition-[width] duration-500 ease-out",
+                  "h-full rounded-full bg-(--accent) transition-[width] duration-500 ease-out",
                   busy && jobProgress.percent > 0 && jobProgress.percent < 100 && "animate-pulse",
                 )}
                 style={{ width: `${Math.min(100, Math.max(0, jobProgress.percent))}%` }}
@@ -667,29 +667,29 @@ export function ServerConsolePage() {
         ) : null}
         <div
           ref={hostRef}
-          className="l1-job-console min-h-0 flex-1 overflow-hidden rounded-xl border border-white/[0.08] bg-[var(--theme-terminal-bg,#060a12)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+          className="l1-job-console min-h-0 flex-1 overflow-hidden rounded-xl border border-white/[0.08] bg-(--theme-terminal-bg,#060a12) shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
         />
         {applyResult ? (
           <div
             role="status"
             className={cn(
               "mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2",
-              applyResult.status === "success" && "border-[var(--success)]/40 bg-[var(--success-bg)]",
-              applyResult.status === "partial" && "border-[var(--warning)]/40 bg-[var(--warning-bg)]",
+              applyResult.status === "success" && "border-(--success)/40 bg-(--success-bg)",
+              applyResult.status === "partial" && "border-(--warning)/40 bg-(--warning-bg)",
               applyResult.status !== "success" &&
                 applyResult.status !== "partial" &&
-                "border-[var(--error)]/40 bg-[var(--error-bg)]",
+                "border-(--error)/40 bg-(--error-bg)",
             )}
           >
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-[var(--text-primary)]">
+              <p className="text-sm font-semibold text-(--text-primary)">
                 {applyResult.status === "success"
                   ? `✓ ${t("console_done_success")}`
                   : applyResult.status === "partial"
                     ? `⚠ ${t("console_done_partial")}`
                     : `✗ ${t("console_done_failed")}`}
               </p>
-              <p className="mt-0.5 truncate text-xs text-[var(--text-secondary)]">
+              <p className="mt-0.5 truncate text-xs text-(--text-secondary)">
                 {applyResult.title} · {applyResult.status} (ok={applyResult.success} fail=
                 {applyResult.failed} skip={applyResult.skipped})
               </p>
@@ -713,7 +713,7 @@ export function ServerConsolePage() {
         <DialogContent
           data-console-wizard
           className={cn(
-            "l1-wizard-dialog overflow-hidden border-white/[0.08] bg-[var(--bg-surface)] p-0 text-[var(--text-primary)] shadow-2xl",
+            "l1-wizard-dialog overflow-hidden border-white/[0.08] bg-(--bg-surface) p-0 text-(--text-primary) shadow-2xl",
             wizardPath === "/app/asm"
               ? "max-h-[96vh] w-[min(96vw,90rem)] max-w-[min(96vw,90rem)]"
               : wizardPath === "/app/filesystem"
@@ -724,11 +724,11 @@ export function ServerConsolePage() {
           {wizardPath === "/app/asm" ? (
             <DialogTitle className="sr-only">{wizardTitle ? t(wizardTitle.key) : t("operations")}</DialogTitle>
           ) : (
-            <DialogHeader className="!mb-0 sticky top-0 z-10 space-y-0 border-b border-white/[0.06] bg-[var(--bg-surface)] px-5 py-3.5">
+            <DialogHeader className="!mb-0 sticky top-0 z-10 space-y-0 border-b border-white/[0.06] bg-(--bg-surface) px-5 py-3.5">
               <DialogTitle className="text-[15px] font-semibold tracking-tight">
                 {wizardTitle ? t(wizardTitle.key) : t("operations")}
               </DialogTitle>
-              <p className="mt-0.5 text-[11px] font-normal text-[var(--text-secondary)]">
+              <p className="mt-0.5 text-[11px] font-normal text-(--text-secondary)">
                 {hostTitle}
                 {hostIp !== "—" ? ` · ${hostIp}` : ""}
               </p>

@@ -163,12 +163,12 @@ export default function OcpVmDetailDrawer({ clusterId, namespace, name, onClose,
               type="button"
               disabled={!canConsole && !!detail}
               title={canConsole ? t('ocp_console_novnc') : t('ocp_vm_must_running')}
-              className="text-xs text-violet-300 px-2 py-1 rounded border border-violet-500/30 hover:bg-violet-500/10 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+              className="text-xs text-violet-300 px-2 py-1 rounded-sm border border-violet-500/30 hover:bg-violet-500/10 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
               onClick={() => openVmConsole(clusterId, namespace, name)}
             >
               <Monitor size={12} /> Console
             </button>
-            <button type="button" className="text-xs text-rose-300 px-2 py-1 rounded border border-white/[0.08] hover:bg-white/[0.04]" onClick={showYaml}>
+            <button type="button" className="text-xs text-rose-300 px-2 py-1 rounded-sm border border-white/[0.08] hover:bg-white/[0.04]" onClick={showYaml}>
               YAML
             </button>
             <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-white/[0.06]"><X size={18} /></button>
@@ -301,7 +301,7 @@ export default function OcpVmDetailDrawer({ clusterId, namespace, name, onClose,
                         <button
                           type="button"
                           disabled={busy || s.ready === false}
-                          className="px-2 py-1 rounded border border-white/[0.08] text-slate-200 hover:bg-white/[0.06] disabled:opacity-40"
+                          className="px-2 py-1 rounded-sm border border-white/[0.08] text-slate-200 hover:bg-white/[0.06] disabled:opacity-40"
                           onClick={() => {
                             if (!window.confirm(t('ocp_snap_restore_confirm', { name: s.name }))) return
                             run(() => api(`${base}/snapshots/restore`, {
@@ -316,7 +316,7 @@ export default function OcpVmDetailDrawer({ clusterId, namespace, name, onClose,
                           type="button"
                           disabled={busy}
                           title={t('ocp_snap_delete')}
-                          className="p-1 rounded text-red-300 hover:bg-red-500/10"
+                          className="p-1 rounded-sm text-red-300 hover:bg-red-500/10"
                           onClick={() => {
                             if (!window.confirm(t('ocp_snap_delete_confirm', { name: s.name }))) return
                             run(() => api(`${base}/snapshots/${encodeURIComponent(s.name)}`, { method: 'DELETE' }))
@@ -424,7 +424,7 @@ export default function OcpVmDetailDrawer({ clusterId, namespace, name, onClose,
       </div>
 
       {yamlText != null && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={() => setYamlText(null)}>
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 p-4" onClick={() => setYamlText(null)}>
           <div className="w-full max-w-3xl max-h-[85vh] bg-cyber-card border border-white/[0.08] rounded-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
               <span className="text-sm text-white">YAML</span>

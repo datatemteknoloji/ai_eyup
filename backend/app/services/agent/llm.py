@@ -462,10 +462,13 @@ def chat_with_tools_stream(
     *,
     think: Optional[str] = None,
     num_predict: Optional[int] = None,
+    emit_thinking: bool = False,
 ):
     """`chat_with_tools` ile aynı sonuç sözleşmesi, ama görünür içerik canlı akıtılır.
 
     Üretilen olaylar:
+      {"type": "thinking", "text": str} — modelin akıl yürütme parçası (YALNIZ `emit_thinking=True`; cevap DEĞİL,
+                                         çağıran kullanıcıya göstermeyi/maskelemeyi kendisi belirler — Adım 14)
       {"type": "token", "text": str}   — kullanıcıya gösterilebilir yanıt parçası
                                          (yalnızca tool çağrısı OLMAYAN turda)
       {"type": "result", "content": str, "tool_calls": [...], "error": str|None,
@@ -504,6 +507,8 @@ def chat_with_tools_stream(
                 et = ev.get("type")
                 if et == "thinking":
                     thinking_chars += len(ev.get("text") or "")
+                    if emit_thinking and ev.get("text"):
+                        yield {"type": "thinking", "text": ev.get("text")}
                 elif et == "content":
                     txt = ev.get("text") or ""
                     content_all += txt
@@ -537,6 +542,11 @@ def chat_with_tools_stream(
             pass
 
         if err is not None:
+            logger.warning(
+                "[AgentLLM] stream hatası (HTTP %s; %d kr akıtılmıştı, %d kr içerik): %s",
+                err.get("status"), streamed_chars, len(content_all), (err.get("text") or "")[:300],
+            )
+            logger.warning("[AgentLLM] stream hatası içerik başı: %r", content_all[:140])
             if streamed_chars:
                 # Kullanıcıya zaten içerik gitti — tekrar üretmeden kısmi içerikle bitir.
                 yield {"type": "result", "content": _strip_thinking(content_all), "tool_calls": [],

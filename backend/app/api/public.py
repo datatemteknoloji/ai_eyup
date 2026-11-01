@@ -16,7 +16,7 @@ from app.models.app_settings import AppSettings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-DEFAULT_APP_NAME = "datatem AI"
+DEFAULT_APP_NAME = "ainew"
 LOGO_DIR = "/app/uploads/branding"
 
 _EXT_TO_MEDIA_TYPE = {
@@ -44,6 +44,25 @@ async def get_branding(db: Session = Depends(get_db)):
         "app_name": app_name,
         "has_logo": has_logo,
         "version": get_app_version(),
+        # Boş = arayüz varsayılanını kullanır (giriş ekranı metinleri).
+        "company_name": _get_setting(db, "branding_company_name"),
+        "tagline": _get_setting(db, "branding_tagline"),
+        "footer_text": _get_setting(db, "branding_footer_text"),
+        "hero_title": _get_setting(db, "branding_hero_title"),
+        "hero_text": _get_setting(db, "branding_hero_text"),
+    }
+
+
+@router.get("/login-options")
+def get_login_options(db: Session = Depends(get_db)):
+    """Giriş ekranı seçenekleri — yalnızca mantıksal bayraklar (gizli bilgi yok)."""
+    from app.services import sso_oidc
+    from app.services.identity_store import get_or_create_identity
+
+    cfg = get_or_create_identity(db)
+    return {
+        "ad_enabled": bool(cfg.ad_enabled),
+        "sso_enabled": sso_oidc.is_configured(cfg),
     }
 
 

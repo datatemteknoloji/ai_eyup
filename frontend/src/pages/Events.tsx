@@ -412,7 +412,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
     { label: t('delete'), icon: '✕', accent: NEON.red, onClick: () => { if (confirm(t('ev_delete_confirm'))) deleteEvent.mutate(e.id) } },
   ]
 
-  const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-none'
+  const inputCls = 'w-full rounded-lg px-3 py-2 text-white text-sm focus:outline-hidden'
   const inputStyle = { background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.2)' } as React.CSSProperties
 
   return (
@@ -434,7 +434,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
 
       {platform === 'virt' && (
         <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
-          <input type="checkbox" checked={showRoutine} onChange={e => { setShowRoutine(e.target.checked); setPage(0) }} className="rounded border-slate-600" />
+          <input type="checkbox" checked={showRoutine} onChange={e => { setShowRoutine(e.target.checked); setPage(0) }} className="rounded-sm border-slate-600" />
           {t('ev_show_routine')}
         </label>
       )}
@@ -478,7 +478,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
               <p className="mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ev_without_list')}</p>
               <div className="flex flex-wrap gap-1.5 max-h-16 overflow-y-auto">
                 {coverage.without_events.slice(0, 40).map(s => (
-                  <span key={s.id} className="px-2 py-0.5 rounded border text-[11px]"
+                  <span key={s.id} className="px-2 py-0.5 rounded-sm border text-[11px]"
                     style={{ borderColor: 'rgba(251,191,36,0.25)', color: 'rgba(251,191,36,0.9)', background: 'rgba(251,191,36,0.06)' }}
                     title={s.ip || ''}>{s.name}</span>
                 ))}
@@ -559,7 +559,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
           <div onClick={() => { setGroupedView(v => !v); setPage(0) }}
             className="relative w-9 h-5 rounded-full transition-colors cursor-pointer"
             style={{ background: groupedView ? NEON.cyan : 'rgba(100,116,139,0.5)' }}>
-            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${groupedView ? 'translate-x-4' : ''}`} />
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${groupedView ? 'translate-x-4' : ''}`} />
           </div>
           <span className="text-xs" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_group_similar')}</span>
         </label>
@@ -567,7 +567,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
           <div onClick={() => { setExcludeKnown(v => !v); setPage(0) }}
             className="relative w-9 h-5 rounded-full transition-colors cursor-pointer"
             style={{ background: excludeKnown ? NEON.orange : 'rgba(100,116,139,0.5)' }}>
-            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${excludeKnown ? 'translate-x-4' : ''}`} />
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${excludeKnown ? 'translate-x-4' : ''}`} />
           </div>
           <span className="text-xs" style={{ color: excludeKnown ? NEON.orange : 'rgba(148,163,184,0.5)' }}>
             {t('ev_hide_known')}
@@ -638,7 +638,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                       <td className="max-w-md"><p className="text-white truncate" title={grp.title}>{grp.title}</p></td>
                       <td><span className="font-mono text-xs" style={{ color: grp.server_name ? NEON.blue : 'rgba(148,163,184,0.4)' }}>{grp.server_name || '-'}</span></td>
                       <td>
-                        <span className="px-2 py-0.5 rounded text-xs font-bold"
+                        <span className="px-2 py-0.5 rounded-sm text-xs font-bold"
                           style={grp.count > 1 ? { background: `rgba(${rgb(NEON.orange)},0.15)`, color: NEON.orange } : { background: 'rgba(255,255,255,0.05)', color: 'rgba(148,163,184,0.6)' }}>
                           {grp.count}×
                         </span>
@@ -686,7 +686,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                           )}
                         </td>
                         <td><span className="font-mono text-xs" style={{ color: event.server_name ? NEON.blue : 'rgba(148,163,184,0.4)' }}>{event.server_name || '-'}</span></td>
-                        <td><span className="font-mono text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{event.event_type}</span></td>
+                        <td><span className="font-mono text-[11px] px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{event.event_type}</span></td>
                         <td><StatusPill e={event} /></td>
                         <td className="text-xs whitespace-nowrap" style={{ color: 'rgba(148,163,184,0.6)' }}>{fmtDate(event.created_at, true, locale)}</td>
                         <td><div className="flex justify-end"><ActionMenu items={flatMenu(event)} /></div></td>
@@ -695,7 +695,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                         <tr>
                           <td colSpan={8} className="px-5 py-3" style={{ background: 'var(--bg-deep)' }}>
                             <p className="text-xs mb-1 font-medium" style={{ color: 'rgba(148,163,184,0.7)' }}>{t('ev_raw_data')}</p>
-                            <pre className="text-[11px] font-mono rounded p-3 overflow-auto max-h-40" style={{ background: '#05080f', color: NEON.green }}>
+                            <pre className="text-[11px] font-mono rounded-sm p-3 overflow-auto max-h-40" style={{ background: '#05080f', color: NEON.green }}>
                               {rawCache[event.id] === undefined
                                 ? t('loading')
                                 : JSON.stringify(rawCache[event.id] ?? event.raw_data, null, 2)}
@@ -725,11 +725,11 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                 <div className="flex items-center gap-2 flex-wrap">
                   <SeverityBadge severity={ev.severity} />
                   {ev.server_name && <span className="text-[11px] font-mono" style={{ color: NEON.blue }}>{ev.server_name}</span>}
-                  <span className="text-[11px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{ev.event_type}</span>
+                  <span className="text-[11px] font-mono px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' }}>{ev.event_type}</span>
                   <StatusPill e={ev} />
                   <span className="ml-auto text-[11px]" style={{ color: 'rgba(148,163,184,0.5)' }}>{fmtDate(ev.created_at, false, locale)}</span>
                 </div>
-                <p className="text-white text-xs mt-2 break-words">{ev.title}</p>
+                <p className="text-white text-xs mt-2 wrap-break-word">{ev.title}</p>
                 {ev.description && ev.description !== ev.title && <p className="text-[11px] mt-1" style={{ color: 'rgba(148,163,184,0.6)' }}>{ev.description}</p>}
               </div>
             ))}
@@ -785,7 +785,7 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                 <AiBlock method="ai.chat">
                   <div className="chat-response-content prose prose-invert prose-sm max-w-none text-slate-200">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisText}</ReactMarkdown>
-                    {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-sm" style={{ background: NEON.blue }} />}
+                    {isAnalyzing && <span className="inline-block w-2 h-4 animate-pulse ml-1 rounded-xs" style={{ background: NEON.blue }} />}
                   </div>
                 </AiBlock>
               )}
@@ -843,14 +843,14 @@ const Events: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> = ({ platf
                       <div className="text-xs font-semibold mb-2 flex items-center gap-2" style={{ color: NEON.green }}>
                         {t('ops_recommended')}
                         {logAnalysis.requires_approval && (
-                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(251,191,36,0.15)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.3)' }}>{t('ev_approval_needed')}</span>
+                          <span className="text-xs px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(251,191,36,0.15)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.3)' }}>{t('ev_approval_needed')}</span>
                         )}
                       </div>
                       <ol className="space-y-1.5">
                         {logAnalysis.recommendations.map((rec, i) => (
                           <li key={i} className="flex gap-2 text-sm" style={{ color: 'rgba(226,232,240,0.85)' }}>
-                            <span className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: 'rgba(34,197,94,0.15)', color: NEON.green }}>{i + 1}</span>
-                            <code className="text-xs bg-black/20 px-1.5 py-0.5 rounded font-mono" style={{ color: 'rgba(226,232,240,0.9)' }}>{rec}</code>
+                            <span className="shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: 'rgba(34,197,94,0.15)', color: NEON.green }}>{i + 1}</span>
+                            <code className="text-xs bg-black/20 px-1.5 py-0.5 rounded-sm font-mono" style={{ color: 'rgba(226,232,240,0.9)' }}>{rec}</code>
                           </li>
                         ))}
                       </ol>

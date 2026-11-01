@@ -12,48 +12,21 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.exec_format import _IP, _safe_name, _tr_gb, _tr_int, _tr_pct  # noqa: F401
 from app.services.exec_health import FORMULA_TR, score_area
+from app.services.exec_inventory import (  # noqa: F401
+    _CARD_ACTION, _FIX, _SEV_RANK, _finding_action, _finding_problem, _kind_label, _open_findings,
+    _stamp_issues, build_attention, build_inventory, landscape_summary, template_from_view,
+)
 from app.services.exec_risks import RULE_TR, rank_findings
-from app.services.synthetic_scope import synthetic_hypervisor_ids, synthetic_server_ids
+from app.services.synthetic_scope import synthetic_cluster_ids, synthetic_hypervisor_ids, synthetic_server_ids
 
 OCP_NOTE = (
     "Bu not küme olaylarından hesaplanıyor. Red Hat'in önerdiği alert tabanlı ölçüm henüz toplanmıyor; "
     "not gerçekte olduğundan kötü görünebilir."
 )
 SECTION_COUNT = 12
-_IP = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 Counts = Tuple[int, int]
-
-
-def _tr_int(value: int) -> str:
-    return f"{int(value):,}".replace(",", ".")
-
-
-def _tr_pct(value: Optional[float]) -> str:
-    if value is None:
-        return "—"
-    text_value = f"{float(value):.0f}"
-    return f"%{text_value}"
-
-
-def _tr_gb(value: float) -> str:
-    if value >= 1024:
-        text = f"{value / 1024:.1f}".replace(".", ",")
-        if text.endswith(",0"):
-            text = text[:-2]
-        return f"{text} TB"
-    text = f"{value:.1f}".replace(".", ",")
-    if text.endswith(",0"):
-        text = text[:-2]
-    return f"{text} GB"
-
-
-def _safe_name(value: Optional[str]) -> Optional[str]:
-    if not value:
-        return None
-    if value.startswith("ZZ-FAKE") or _IP.search(value):
-        return None
-    return value
 
 
 def _fit_assets(pairs: List[Counts], population: int) -> List[Counts]:
@@ -276,6 +249,7 @@ def _areas(db: Session, facts: List[Dict[str, Any]], series: List[Dict[str, Any]
     events = _event_assets(db)
     pairs: Dict[str, List[Counts]] = events["pairs"]
     named: Dict[str, List[Dict[str, str]]] = events["named"]
+    lines = _area_lines(db)
 
     def assets_for(name: str, population: int, monitored: bool) -> List[Counts]:
         if not monitored:
@@ -347,6 +321,11 @@ def _areas(db: Session, facts: List[Dict[str, Any]], series: List[Dict[str, Any]
         reason = card["reason"]
         if card["name"] == "Linux" and scored["critical_assets"]:
             reason = f"Bu ay Linux alanında { _tr_int(scored['critical_assets']) } sunucuda kritik uyarı açık."
+        if card["name"] == "Sanallaştırma" and scored["critical_assets"]:
+            reason = f"Son 24 saatte {_tr_int(scored['critical_assets'])} hostta kritik olay açık."
+        assets = named.get(card["name"]) or []
+        if not assets and card["name"] == "Sanallaştırma":
+            assets = _virt_cluster_assets(facts)
         built.append({
             "name": card["name"],
             "status": scored["status"],
@@ -356,9 +335,151 @@ def _areas(db: Session, facts: List[Dict[str, Any]], series: List[Dict[str, Any]
             "series": points,
             "formula": card["formula"],
             "change": "ilk ay",
-            "assets": named.get(card["name"]) or [],
+            "assets": assets,
+            "events": lines.get(card["name"]) or [],
         })
+    real_uc4 = _uc4_area()
+    if real_uc4:
+        built.append(real_uc4)
     return built
+
+
+def _virt_cluster_assets(facts: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """Olay bir sunucuya bağlı değilse detay küme satırını gösterir."""
+    rows = (_section(facts, "b1_virt") or {}).get("rows") or []
+    out = []
+    for row in rows:
+        raw = row.get("cluster") or ""
+        name = "Adsız küme" if raw in ("", "(küme yok)") else str(raw)
+        mem = row.get("memory_pct")
+        out.append({
+            "name": name,
+            "status": "Dikkat" if isinstance(mem, (int, float)) and float(mem) >= 85 else "Normal",
+            "critical": "—",
+            "warning": "—",
+            "usage": _tr_pct(mem) if mem is not None else "—",
+        })
+    return out
+
+
+def _area_lines(db: Session) -> Dict[str, List[str]]:
+    """Son 24 saat kritik olay cümlesi. IP ve oturum satırı yazılmaz."""
+    from app.services.exec_risks import _plain
+
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    hidden = list(synthetic_server_ids(db)) or [0]
+    try:
+        rows = db.execute(text("""
+            SELECT
+              CASE
+                WHEN event_type ILIKE '%openshift%' OR COALESCE(source, '') ILIKE '%openshift%' THEN 'OpenShift'
+                WHEN event_type ILIKE '%vcenter%' OR event_type ILIKE '%virt%'
+                  OR COALESCE(source, '') ILIKE '%virt%' OR COALESCE(source, '') ILIKE '%olvm%' THEN 'Sanallaştırma'
+                WHEN event_type ILIKE '%windows%' OR COALESCE(source, '') ILIKE '%windows%' THEN 'Windows'
+                ELSE 'Linux'
+              END AS area,
+              left(COALESCE(title, ''), 160) AS title,
+              COUNT(*) AS n
+            FROM system_events
+            WHERE created_at >= :since
+              AND severity IN ('critical', 'emergency')
+              AND (server_id IS NULL OR server_id != ALL(:hidden))
+            GROUP BY 1, 2
+            ORDER BY 3 DESC
+            LIMIT 40
+        """), {"since": since, "hidden": hidden}).all()
+    except Exception:
+        db.rollback()
+        return {}
+    out: Dict[str, List[str]] = {}
+    for area, title, n in rows:
+        bucket = out.setdefault(str(area), [])
+        if len(bucket) >= 5:
+            continue
+        plain = _plain(title) or "Açık olay"
+        bucket.append(f"{plain} · {_tr_int(int(n or 0))}")
+    return out
+
+
+def _uc4_snapshot() -> Optional[Dict[str, Any]]:
+    """Açık UC4 sistemi. Sahte kaynak demo kartıdır ve kilitli pakete girmez."""
+    try:
+        from app.models.automic import AutomicAgent, AutomicExecution, AutomicSystem
+        from app.services.automic.database import automic_db_available, get_automic_thread_session
+        from app.services.automic.source.factory import fake_mode_enabled
+    except Exception:
+        return None
+    if not automic_db_available(5):
+        return None
+    session = get_automic_thread_session()
+    if session is None:
+        return None
+    try:
+        systems = session.query(AutomicSystem).filter(AutomicSystem.enabled.is_(True)).all()
+        if not systems:
+            return None
+        demo = fake_mode_enabled() or all((s.source_type or "") == "fake" for s in systems)
+        chosen = systems if demo else [s for s in systems if (s.source_type or "") != "fake"]
+        if not chosen:
+            return None
+        ids = [s.id for s in chosen]
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        failed = (
+            session.query(AutomicExecution)
+            .filter(
+                AutomicExecution.system_id.in_(ids),
+                AutomicExecution.status_class == "failed",
+                AutomicExecution.end_time >= since,
+            )
+            .count()
+        )
+        down = (
+            session.query(AutomicAgent)
+            .filter(AutomicAgent.system_id.in_(ids), AutomicAgent.status.in_(("disconnected", "missing")))
+            .count()
+        )
+        label = _safe_name(chosen[0].name) or "Örnek sistem"
+        if len(chosen) > 1:
+            label = _tr_int(len(chosen))
+        if down:
+            status = "Kritik"
+        elif failed:
+            status = "Dikkat"
+        else:
+            status = "Normal"
+        return {
+            "demo": demo,
+            "status": status,
+            "lines": [
+                {"label": "Sistem", "value": label},
+                {"label": "Son 24 saat başarısız iş", "value": _tr_int(failed)},
+                {"label": "Kopuk agent", "value": _tr_int(down)},
+            ],
+        }
+    except Exception:
+        session.rollback()
+        return None
+    finally:
+        session.close()
+
+
+def _uc4_area() -> Optional[Dict[str, Any]]:
+    """Gerçek UC4 alanı kilitli pakete girer. Sahte kaynak girmez."""
+    snap = _uc4_snapshot()
+    if not snap or snap["demo"]:
+        return None
+    return {
+        "name": "UC4",
+        "status": snap["status"],
+        "score": None,
+        "reason": "İş ve agent durumu. Başarısız iş varsa Dikkat, kopuk agent varsa Kritik.",
+        "metrics": snap["lines"],
+        "series": [],
+        "formula": "UC4 notu başarısız iş ve kopuk agent sayısından gelir. Altyapı sağlık notundan ayrıdır.",
+        "change": "ilk ay",
+        "assets": [],
+        "events": [],
+    }
 
 
 def _highest_mem(rows: List[Dict[str, Any]]) -> str:
@@ -486,10 +607,6 @@ def _calendar(capacity: List[Dict[str, Any]]) -> Dict[str, Any]:
             "event": "Bellek eşiği",
             "impact": "Kapasite",
         })
-    bands.append({"label": "Destek bitişi", "missing": True})
-    bands.append({"label": "Garanti bitişi", "missing": True})
-    items.append({"when": "—", "area": "Destek", "event": "veri yok", "impact": "—"})
-    items.append({"when": "—", "area": "Garanti", "event": "veri yok", "impact": "—"})
     return {"bands": bands, "items": items}
 
 
@@ -592,8 +709,8 @@ def _coverage(
         {
             "section": "Takvim",
             "status": "Ölçüldü" if capacity else "Ölçülemedi",
-            "missing": "Destek ve garanti kaydı yok",
-            "how": "Referans paketi ve gerçek garanti kaydı gerekir",
+            "missing": "" if capacity else "Küme bellek serisi yok",
+            "how": "" if capacity else "En az 14 günlük bellek ölçümü gerekir",
         },
         {
             "section": "Risk",
@@ -628,6 +745,7 @@ def build_view(db: Session, facts: List[Dict[str, Any]], summary: Dict[str, str]
     hidden = synthetic_server_ids(db)
     series = _sparkline(db, hidden)
     areas = _areas(db, facts, series)
+    _stamp_issues(db, areas)
     risks = rank_findings(db, synthetic_source_ids=synthetic_hypervisor_ids(db))
     mom = _section(facts, "a1_mom") or {}
     if mom.get("status") == "ok":
@@ -635,6 +753,7 @@ def build_view(db: Session, facts: List[Dict[str, Any]], summary: Dict[str, str]
             area["change"] = "aylık kilit"
     cap = _capacity_rows(facts)
     hosts = _num(facts, "b2", "hosts_needed")
+    landscape = build_inventory(db)
     return {
         "summary": summary,
         "kpis": _kpis(facts, areas, risks),
@@ -665,39 +784,15 @@ def build_view(db: Session, facts: List[Dict[str, Any]], summary: Dict[str, str]
         "coverage": _coverage(facts, areas, cap, summary),
         "openshift_note": OCP_NOTE,
         "formula": FORMULA_TR,
+        "landscape": landscape,
+        "attention": build_attention(landscape.get("hosts") or [], risks),
     }
 
 
 def demo_cards(db: Session) -> List[Dict[str, Any]]:
-    """Bayrak açıksa demo sağlayıcı sayıları. Kilitli pakete yazılmaz."""
-    from app.services.backup.demo_gate import backup_mode
-    from app.services.hw.demo_gate import hw_mode
-
+    """Yedek kapsamı ve donanım kartı kalkmıştır. Yalnız sahte UC4 önizlemesi kalır."""
     cards = []
-    if backup_mode(db) == "demo":
-        from app.models.backup import BkProtectedObject
-        from app.services.backup.demo_gate import active_instances
-        ids = [row.id for row in active_instances(db, include_demo=True)]
-        count = db.query(BkProtectedObject).filter(BkProtectedObject.instance_id.in_(ids or [0])).count() if ids else 0
-        cards.append({
-            "title": "Yedek kapsamı",
-            "demo": True,
-            "lines": [{"label": "Korunan nesne", "value": _tr_int(count)}],
-        })
-    else:
-        cards.append({"title": "Yedek kapsamı", "demo": False, "lines": [], "status": "Ölçülemedi"})
-    if hw_mode(db) == "demo":
-        from app.models.hw import HwWarranty
-        from app.services.hw.demo_gate import _enabled_rows, is_demo_kind
-        ids = [row.id for row in _enabled_rows(db) if is_demo_kind(row.kind)]
-        count = db.query(HwWarranty).filter(HwWarranty.instance_id.in_(ids or [0])).count() if ids else 0
-        cards.append({
-            "title": "Donanım ve garanti",
-            "demo": True,
-            "lines": [{"label": "Garanti kaydı", "value": _tr_int(count)}],
-        })
-    else:
-        cards.append({"title": "Donanım ve garanti", "demo": False, "lines": [], "status": "Ölçülemedi"})
-    if os.getenv("BACKUP_DEMO_ENABLED") or os.getenv("HW_DEMO_ENABLED"):
-        return cards
+    uc4 = _uc4_snapshot()
+    if uc4 and uc4["demo"]:
+        cards.append({"title": "UC4", "demo": True, "lines": uc4["lines"]})
     return cards

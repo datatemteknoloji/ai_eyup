@@ -87,7 +87,7 @@ function ClusterPlan({ r }: { r: any }) {
         {' · '}vCPU:core {fmt(r.before?.vcpu_ratio, 2)} → {fmt(r.after?.vcpu_ratio, 2)}
       </div>
       {(r.unplaced || []).length > 0 && (
-        <div className="rounded border border-red-500/30 bg-red-500/5 p-2 text-xs space-y-0.5" data-testid="bp-unplaced">
+        <div className="rounded-sm border border-red-500/30 bg-red-500/5 p-2 text-xs space-y-0.5" data-testid="bp-unplaced">
           <div className="text-red-300 font-medium">{t('vi_bp_unplaced')} ({r.unplaced.length})</div>
           {r.unplaced.map((u: any) => (
             <div key={u.vm} className="font-mono text-slate-300">
@@ -155,7 +155,7 @@ export default function BulkPlacement({ scopeNode, scopeBody }: { scopeNode?: Re
   const [res, setRes] = useState<any>(null)
   const [err, setErr] = useState('')
   const set = (id: number, k: keyof Profile, v: string) => setRows(rs => rs.map(r => (r.id === id ? { ...r, [k]: v } : r)))
-  const inp = 'rounded bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono'
+  const inp = 'rounded-sm bg-black/30 border border-white/[0.08] px-2 py-1.5 text-sm text-white font-mono'
   const run = async () => {
     setErr('')
     const b = buildProfiles(rows)

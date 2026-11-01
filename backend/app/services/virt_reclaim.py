@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services import capacity_policy, virt_insights_data as vd
+from app.services.chat_quality import power_state as _ps_canon
 
 IDLE_CPU_PCT = 8.0
 SNAPSHOT_WARN_DAYS = 3
@@ -39,7 +40,7 @@ def _f(v: Any) -> Optional[float]:
 def vm_usage(db: Session, hv_ids: List[int], days: int = 7) -> Dict[Tuple[int, str], Dict[str, Any]]:
     if not hv_ids:
         return {}
-    rows = db.execute(text("""
+    rows = db.execute(text(f"""
         SELECT hypervisor_id, vm_name,
                avg(cpu_usage_pct) AS avg_cpu, avg(mem_usage_pct) AS avg_mem,
                percentile_cont(0.95) WITHIN GROUP (ORDER BY cpu_usage_pct) AS p95_cpu,
@@ -48,7 +49,7 @@ def vm_usage(db: Session, hv_ids: List[int], days: int = 7) -> Dict[Tuple[int, s
                count(DISTINCT date_trunc('day', timestamp)) AS data_days
           FROM virt_vm_metrics
          WHERE hypervisor_id = ANY(:ids) AND timestamp > now() - make_interval(days => :d)
-           AND power_state IN ('POWERED_ON', 'poweredOn', 'up', 'running')
+           AND {_ps_canon.sql_is_on('power_state')}
          GROUP BY hypervisor_id, vm_name
         HAVING count(*) >= 3
     """), {"ids": hv_ids, "d": days}).mappings().all()
@@ -62,10 +63,10 @@ def vm_usage(db: Session, hv_ids: List[int], days: int = 7) -> Dict[Tuple[int, s
 def last_powered_on(db: Session, hv_ids: List[int]) -> Tuple[Dict[Tuple[int, str], datetime], Optional[datetime]]:
     if not hv_ids:
         return {}, None
-    rows = db.execute(text("""
+    rows = db.execute(text(f"""
         SELECT hypervisor_id, vm_name, max(timestamp) AS t
           FROM virt_vm_metrics
-         WHERE hypervisor_id = ANY(:ids) AND power_state IN ('POWERED_ON', 'poweredOn', 'up', 'running')
+         WHERE hypervisor_id = ANY(:ids) AND {_ps_canon.sql_is_on('power_state')}
          GROUP BY hypervisor_id, vm_name
     """), {"ids": hv_ids}).mappings().all()
     oldest = db.execute(text("SELECT min(timestamp) FROM virt_vm_metrics WHERE hypervisor_id = ANY(:ids)"),
@@ -120,8 +121,10 @@ def _rightsize(vcpu: int, mem_gb: float, u: Dict[str, Any]) -> Dict[str, Any]:
             "basis": f"p95 CPU %{p95c} hedef %{target:.0f}; Memory yalnız p95 < %25 ise (aktif bellek)"}
 
 
-def _vm_rows(db: Session, hvs, overrides: Optional[Dict[str, float]] = None) -> Dict[str, List[Dict[str, Any]]]:
-    """`overrides`: istek başına GEÇİCİ eşikler (rs_* vb.); politika kaydedilmez, yalnız bu çağrı için etkindir."""
+def _vm_rows(db: Session, hvs, overrides: Optional[Dict[str, float]] = None,
+             vms: Optional[List[Dict[str, Any]]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """`overrides`: istek başına GEÇİCİ eşikler (rs_* vb.); politika kaydedilmez, yalnız bu çağrı için etkindir.
+    `vms`: çağıran `vd.vm_allocations` sonucunu zaten yüklediyse tekrar sorgulanmaz."""
     th = capacity_policy.activate(db)
     if overrides:
         th = capacity_policy.activate(values={**th, **overrides})
@@ -131,7 +134,8 @@ def _vm_rows(db: Session, hvs, overrides: Optional[Dict[str, float]] = None) -> 
     hv_ids = [h.id for h in hvs]
     plat = {h.id: vd.platform_of(h) for h in hvs}
     hv_name = {h.id: h.name for h in hvs}
-    vms = vd.vm_allocations(db, hv_ids)
+    if vms is None:
+        vms = vd.vm_allocations(db, hv_ids)
     usage = vm_usage(db, hv_ids)                       # atıl: 7 gün (rapor ile aynı)
     usage_w = usage if window == 7 else vm_usage(db, hv_ids, days=window)
     last_on, oldest = last_powered_on(db, hv_ids)
@@ -361,9 +365,10 @@ def build_reclaim(db: Session, *, hypervisor_id: Optional[int] = None, platform:
 
 def reclaim_rollup_by_cluster(db: Session, hv_ids: List[int]) -> Dict[Tuple[int, str], Dict[str, Any]]:
     hvs = [h for h in vd.virt_hypervisors(db) if h.id in set(hv_ids)]
-    vm = _vm_rows(db, hvs)
+    allocs = vd.vm_allocations(db, hv_ids)           # tek yükleme: _vm_rows ve cluster eşlemesi paylaşır
+    vm = _vm_rows(db, hvs, vms=allocs)
     snaps = snapshot_space(db, hv_ids)
-    cl_of = {(v["hypervisor_id"], v["name"]): v.get("cluster") for v in vd.vm_allocations(db, hv_ids)}
+    cl_of = {(v["hypervisor_id"], v["name"]): v.get("cluster") for v in allocs}
     out: Dict[Tuple[int, str], Dict[str, float]] = defaultdict(lambda: {
         "powered_off_memory_gb": 0.0, "idle_memory_gb": 0.0, "oversized_memory_gb": 0.0, "snapshot_gb": 0.0,
         "powered_off_count": 0, "idle_count": 0, "oversized_count": 0})

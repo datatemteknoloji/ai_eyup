@@ -17,6 +17,7 @@ from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor, HypervisorType
 from app.models.hypervisor_metric import HypervisorHostMetric
 from app.models.server import Server
+from app.services.chat_quality import power_state as _ps_canon
 from app.services.virt_scope import count_names, disambiguate, encode_ref, parse_ref
 from app.services.virt_trend_query import _ENTITIES
 
@@ -686,7 +687,7 @@ def build_overview(db: Session, hypervisor_ids: Optional[Sequence[int]] = None) 
     if scoped is not None:
         vm_q = vm_q.filter(Server.hypervisor_id.in_(scoped or [-1]))
     vm_total = vm_q.count()
-    vm_running = vm_q.filter(Server.vm_power_state.ilike("%on%")).count()
+    vm_running = vm_q.filter(_ps_canon.sqla_is_on(Server.vm_power_state)).count()
 
     ds_clause, ds_params = _hv_sql(scoped)
     ds_health = {"healthy": 0, "warning": 0, "critical": 0, "unknown": 0}

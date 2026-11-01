@@ -1,7 +1,7 @@
 ---
 description: ainew ürün asistanı kurallarının nerede düzenleneceği (OV/KubeVirt dahil)
 alwaysApply: false
-globs: backend/app/api/*chat*.py,backend/app/services/unified_tool_chat.py,backend/app/services/infra_summary.py,backend/app/services/hypervisor_intelligence.py,backend/app/services/chat_planning_intent.py
+globs: backend/app/api/*chat*.py,backend/app/services/unified_tool_chat.py,backend/app/services/infra_summary.py,backend/app/services/hypervisor_intelligence.py,backend/app/services/chat_planning_intent.py,backend/app/services/chat_orchestrator/*.py,backend/app/services/chat_quality/*.py,backend/app/services/route_llm_hint.py,backend/app/services/chat_cache_service.py
 ---
 
 # ainew — Ürün asistanı kuralları (sen de düzenleyebilirsin)
@@ -19,6 +19,12 @@ Uygulama içi sohbet (Unified / Linux / Virt / OpenShift) kuralları **backend p
 | Sanallaştırma chat personası | `backend/app/services/hypervisor_intelligence.py` → `_VIRTUALIZATION_PERSONA` |
 | Linux / Windows chat | `backend/app/api/chat.py`, `backend/app/api/windows_chat.py` |
 | Agent (LangGraph) | `backend/app/services/agent/orchestrator.py` |
+| Ortak kural sabitleri (dürüstlük / kullanıcı dili / `oc`) | `backend/app/services/chat_rules.py` → `HONESTY_RULE_TR`, `USER_LANGUAGE_RULE_TR`, `OC_RULE_TR` (Automic'e eklenmez) |
+| Veride olmayan bilgi (lisans/müşteri/sözleşme/sahip/maliyet/grafik isteği) sabit cevabı + `[Not]` hint | `backend/app/services/chat_quality/unavailable_info.py` (`chat_chitchat_policy.canned_chitchat_answer`) |
+| Model cevap üretemeyince kanıt özeti | `backend/app/services/chat_quality/evidence_summary.py` |
+| Yönlendirme ipucu LLM'i (modül listesi; düşük güvende) | `backend/app/services/route_llm_hint.py` (`build_hint_prompt`; ayarlar `route_hint_*`, `unified_route_llm_hint`) |
+| İlerleme metinleri (ilk token öncesi, sabit şablon) | `backend/app/services/chat_orchestrator/progress.py` → `_TEXT` (kullanıcı verisi/argüman/sonuç KONMAZ) |
+| Cevap önbelleği (yalnız kavramsal) | `backend/app/services/chat_cache_service.py` (`classify_question`, `classify_answer`) |
 | AI mimari GUIDE (Hakkında PDF) | `docs/guides/tr/modules/ai-architecture.md` + `en/` eşi |
 
 Kalıcı ürün kuralı eklemek = bu dosyalara kısa Türkçe madde eklemek + `docker restart server_management_backend`.

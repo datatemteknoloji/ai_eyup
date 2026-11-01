@@ -204,12 +204,46 @@ Send a message and stream the AI response (Server-Sent Events).
 }
 ```
 
-**Response:** `text/event-stream` — each chunk is a JSON object:
+**Response:** `text/event-stream` — each chunk is a JSON object. The same
+event contract is used by `/chat/stream`, `/unified-chat/stream`,
+`/windows-chat/stream` and the hypervisor chat stream. Most events are
+identified by a key (`token`, `done`, …); newer ones carry an explicit `type`:
 ```
-data: {"type": "content", "text": "The CPU usage on web-01 is "}
-data: {"type": "content", "text": "34%..."}
-data: {"type": "done"}
+data: {"start": true, "turn_id": "…", "session_id": 1}
+data: {"queued": true, "position": 2, "message": "…"}          # AI gate full (≤ 3 concurrent)
+data: {"phase": "collecting" | "tools" | "answering"}
+data: {"type": "progress", "step": "querying", "text": "Veriler sorgulanıyor (…)", "elapsed_s": 4.1}
+data: {"type": "progress", "step": "waiting", "text": "Sonuçlar değerlendiriliyor — 12 sn", "elapsed_s": 12.0, "heartbeat": true}
+data: {"type": "tool_call", "tool": "…", "label": "…"}
+data: {"type": "tool_result", "tool": "…"}
+data: {"token": "The CPU usage on web-01 is "}
+data: {"replace_answer": "…"}                                    # verifier replaced the draft
+data: {"clarify_options": [{"label": "…"}]}                      # ambiguous entity → ask
+data: {"evidence": {"level": "…", "sources": []}, "usage": {}}
+data: {"suggestions": ["…"]}
+data: {"error": "…"}
+data: {"done": true, "turn_id": "…", "from_cache": false}
 ```
+`progress` events are sent only before the first token (stage events ≤ 60,
+heartbeats every `chat_progress_heartbeat_sec`, ≤ 720); they contain no user
+data and are cleared by the client on the first `token`/`replace_answer`.
+Clients must ignore unknown keys/`type` values. Admins may additionally receive
+`debug_trace` when enabled.
+
+### Chat turns (`/chat-turns`)
+
+A turn survives page reloads and client disconnects.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /chat-turns/{turn_id}` | Turn status |
+| `GET /chat-turns/{turn_id}/events?after=…` | Replay events from the Redis stream (resume) |
+| `GET /chat-turns/{turn_id}/snapshot` | Partial answer collected so far |
+| `POST /chat-turns/{turn_id}/cancel` | Cancel a running turn |
+
+### `POST /chat/feedback`
+
+👍/👎 for an answer (authenticated). A 👎 invalidates the matching cached answer.
 
 ---
 

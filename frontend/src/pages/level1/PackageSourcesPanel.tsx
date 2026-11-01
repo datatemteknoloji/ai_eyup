@@ -20,7 +20,7 @@ import { ensureDroptSession } from './Level1Shell'
 type SourceType = 'nfs' | 'portal_files' | 'subscription'
 
 const inputClass =
-  'w-full bg-[var(--bg-deep,#080d16)] border border-white/[0.08] rounded-lg px-3.5 py-2.5 text-sm text-[var(--text-primary,#e8edf5)] placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/50 transition-colors'
+  'w-full bg-(--bg-deep,#080d16) border border-white/[0.08] rounded-lg px-3.5 py-2.5 text-sm text-(--text-primary,#e8edf5) placeholder:text-slate-600 focus:outline-hidden focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/50 transition-colors'
 const labelClass = 'block text-xs font-medium text-slate-400 mb-1.5 tracking-wide'
 const panelClass =
   'rounded-xl border border-white/[0.06] bg-cyber-card p-5'
@@ -448,7 +448,7 @@ export default function PackageSourcesPanel() {
                 <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
                   <input
                     type="checkbox"
-                    className="rounded border-slate-600"
+                    className="rounded-sm border-slate-600"
                     checked={needsFs}
                     onChange={(e) => setNeedsFs(e.target.checked)}
                   />
@@ -493,7 +493,7 @@ export default function PackageSourcesPanel() {
               <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
                 <input
                   type="checkbox"
-                  className="rounded border-slate-600"
+                  className="rounded-sm border-slate-600"
                   checked={needsFs}
                   onChange={(e) => setNeedsFs(e.target.checked)}
                 />

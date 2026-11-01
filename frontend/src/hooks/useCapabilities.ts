@@ -3,7 +3,7 @@ import { API_BASE_URL } from '../config/api'
 
 /** Backend capability registry (GET /capabilities). Opsiyonel entegrasyon yoksa küme boş döner. */
 export function useCapabilities() {
-  const q = useQuery<{ capabilities: string[]; has_backup: boolean; demo_active?: boolean; has_hw?: boolean; hw_demo_active?: boolean }>({
+  const q = useQuery<{ capabilities: string[]; has_backup: boolean; demo_active?: boolean; has_hw?: boolean; hw_demo_active?: boolean; has_automic?: boolean; has_centrify?: boolean }>({
     queryKey: ['capabilities'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/capabilities`)
@@ -24,6 +24,8 @@ export function useCapabilities() {
     hasHw: caps.includes('hw') || hwDemoActive,
     hwDemoActive,
     hasBackup: caps.includes('backup') || demoActive,
+    hasAutomic: !!q.data?.has_automic || caps.includes('automic'),
+    hasCentrify: !!q.data?.has_centrify || caps.includes('centrify'),
     hasRealBackup: caps.includes('backup'),
     demoActive,
     isLoading: q.isLoading,

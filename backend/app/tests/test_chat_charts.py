@@ -48,14 +48,15 @@ def test_normalize_virt_disk_io_to_iops():
 def test_parse_explicit_defaults_hour_and_cpu_mem():
     got = parse_chart_intent("web01 ile web02 karşılaştır", explicit=True)
     assert got is not None
-    assert got["hours"] == 24.0
+    assert got["hours"] == 6.0          # Adım 8G: varsayılan 6 saat
     assert got["groups"] == ["cpu", "memory"]
 
 
-def test_parse_explicit_default_is_24h():
+def test_parse_explicit_default_is_6h():
     got = parse_chart_intent("cpu /grafik", explicit=True)
     assert got is not None
-    assert got["hours"] == 24.0
+    assert got["hours"] == 6.0
+    assert got["hours_defaulted"] is True
 
 
 def test_parse_cpu_and_memory_together():

@@ -53,13 +53,13 @@ function ArchNode({ data }: NodeProps) {
   const Icon = meta.icon
   return (
     <div
-      className="min-w-[156px] max-w-[220px] rounded-xl border bg-white px-3 py-2.5 shadow-sm"
+      className="min-w-[156px] max-w-[220px] rounded-xl border bg-white px-3 py-2.5 shadow-xs"
       style={{
         borderColor: `${meta.accent}55`,
         boxShadow: '0 1px 3px rgba(15,23,42,0.08), 0 0 0 1px rgba(15,23,42,0.04)',
       }}
     >
-      <Handle type="target" position={Position.Top} className="!w-2 !h-2 !bg-slate-400 !border-0" />
+      <Handle type="target" position={Position.Top} className="!w-2 !h-2 !bg-slate-400 border-0!" />
       <div className="flex items-start gap-2">
         <span
           className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
@@ -73,10 +73,10 @@ function ArchNode({ data }: NodeProps) {
               {meta.chip}
             </p>
           ) : null}
-          <p className="text-[13px] font-semibold leading-snug text-slate-800 break-words">{label}</p>
+          <p className="text-[13px] font-semibold leading-snug text-slate-800 wrap-break-word">{label}</p>
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !bg-slate-400 !border-0" />
+      <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !bg-slate-400 border-0!" />
     </div>
   )
 }
@@ -155,7 +155,7 @@ function DiagramCanvas({ diagram }: { diagram: ArchitectureDiagram }) {
         style={{ background: '#f8fafc', colorScheme: 'light' }}
       >
         <Background color="#cbd5e1" gap={20} size={1} />
-        <Controls showInteractive={false} className="!border-slate-200 !bg-white !shadow-sm" />
+        <Controls showInteractive={false} className="!border-slate-200 !bg-white !shadow-xs" />
       </ReactFlow>
     </div>
   )
@@ -163,7 +163,7 @@ function DiagramCanvas({ diagram }: { diagram: ArchitectureDiagram }) {
 
 export function ChatArchitectureDiagram({ diagram }: { diagram: ArchitectureDiagram }) {
   return (
-    <div className="my-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
+    <div className="my-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-xs">
       {diagram.title ? (
         <div className="border-b border-slate-200 bg-white px-4 py-2.5">
           <p className="text-xs font-semibold tracking-wide text-slate-700">{diagram.title}</p>

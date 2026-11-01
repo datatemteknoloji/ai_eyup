@@ -71,14 +71,14 @@ export function ServerPicker({
   return (
     <div className={cn("flex min-h-0 flex-col gap-2", className)}>
       <div className="flex shrink-0 items-center justify-between gap-2">
-        <p className="text-xs text-[var(--color-muted-foreground)]">
+        <p className="text-xs text-(--color-muted-foreground)">
           {label || t("server")}
           {multiple && value.length > 0 ? ` (${value.length})` : ""}
         </p>
         {multiple && value.length > 0 ? (
           <button
             type="button"
-            className="text-[10px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+            className="text-[10px] text-(--color-muted-foreground) hover:text-(--color-foreground)"
             onClick={() => onChange([])}
             disabled={disabled}
           >
@@ -87,7 +87,7 @@ export function ServerPicker({
         ) : null}
       </div>
       <div className="relative shrink-0">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-muted-foreground)" />
         <Input
           className="h-8 pl-8 text-xs"
           placeholder="Hostname veya IP ara…"
@@ -98,7 +98,7 @@ export function ServerPicker({
       </div>
       <div
         className={cn(
-          "min-h-0 max-h-48 flex-1 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-background)]/40",
+          "min-h-0 max-h-48 flex-1 overflow-y-auto rounded-md border border-(--color-border) bg-(--color-background)/40",
           listClassName,
           disabled && "opacity-50",
         )}
@@ -106,7 +106,7 @@ export function ServerPicker({
         aria-multiselectable={multiple}
       >
         {filtered.length === 0 ? (
-          <p className="px-3 py-4 text-center text-xs text-[var(--color-muted-foreground)]">Sonuç yok</p>
+          <p className="px-3 py-4 text-center text-xs text-(--color-muted-foreground)">Sonuç yok</p>
         ) : (
           filtered.map((s) => {
             const on = selectedSet.has(s.id);
@@ -119,18 +119,18 @@ export function ServerPicker({
                 disabled={disabled}
                 onClick={() => toggle(s.id)}
                 className={cn(
-                  "flex w-full items-center gap-2 border-b border-[var(--color-border)] px-2.5 py-1 text-left text-sm last:border-b-0",
+                  "flex w-full items-center gap-2 border-b border-(--color-border) px-2.5 py-1 text-left text-sm last:border-b-0",
                   on
-                    ? "bg-[var(--color-primary)]/15 text-[var(--color-foreground)]"
-                    : "text-[var(--color-foreground)] hover:bg-[var(--color-accent)]",
+                    ? "bg-(--color-primary)/15 text-(--color-foreground)"
+                    : "text-(--color-foreground) hover:bg-(--color-accent)",
                 )}
               >
                 <span
                   className={cn(
-                    "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border text-[9px]",
+                    "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-xs border text-[9px]",
                     on
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white"
-                      : "border-[var(--color-border)]",
+                      ? "border-(--color-primary) bg-(--color-primary) text-white"
+                      : "border-(--color-border)",
                     !multiple && "rounded-full",
                   )}
                 >
@@ -140,7 +140,7 @@ export function ServerPicker({
                   {s.hostname}
                 </span>
                 {s.ip ? (
-                  <span className="shrink-0 font-mono text-[10px] text-[var(--color-muted-foreground)]">
+                  <span className="shrink-0 font-mono text-[10px] text-(--color-muted-foreground)">
                     {s.ip}
                   </span>
                 ) : null}

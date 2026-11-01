@@ -182,15 +182,15 @@ export function VlanPage({ embeddedTitle = false }: { embeddedTitle?: boolean } 
       <h2 className="text-lg font-semibold tracking-tight">
         {embeddedTitle ? t("network_add_vlan") : t("wizard_vlan")}
       </h2>
-      <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+      <p className="mt-1 text-xs text-(--color-muted-foreground)">
         Yönetim / docker / ilo arayüzleri gizli · con-name = ifname = Interface.VLAN
       </p>
       <form
         onSubmit={onSubmit}
-        className="mt-3 max-w-xl space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4"
+        className="mt-3 max-w-xl space-y-3 rounded-xl border border-(--color-border) bg-(--color-card) p-4"
       >
         <div>
-          <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">{t("talep_id")}</label>
+          <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">{t("talep_id")}</label>
           <Input
             className="h-9"
             value={talepId}
@@ -208,9 +208,9 @@ export function VlanPage({ embeddedTitle = false }: { embeddedTitle?: boolean } 
         />
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Interface</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">Interface</label>
           {ifacesLoading ? (
-            <p className="text-xs text-[var(--color-muted-foreground)]">Interface listesi yükleniyor…</p>
+            <p className="text-xs text-(--color-muted-foreground)">Interface listesi yükleniyor…</p>
           ) : (
             <Select value={parent || undefined} onValueChange={setParent} disabled={!ifaces.length}>
               <SelectTrigger>
@@ -226,14 +226,14 @@ export function VlanPage({ embeddedTitle = false }: { embeddedTitle?: boolean } 
             </Select>
           )}
           {predictedName ? (
-            <p className="mt-1 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+            <p className="mt-1 font-mono text-[11px] text-(--color-muted-foreground)">
               → {predictedName}
             </p>
           ) : null}
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">VLAN ID</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">VLAN ID</label>
           <Input
             className="font-mono"
             type="number"
@@ -247,7 +247,7 @@ export function VlanPage({ embeddedTitle = false }: { embeddedTitle?: boolean } 
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">IP</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">IP</label>
           <Input
             className="font-mono"
             placeholder="örn. 192.168.1.224"
@@ -256,16 +256,16 @@ export function VlanPage({ embeddedTitle = false }: { embeddedTitle?: boolean } 
             required
           />
           {ipError ? (
-            <p className="mt-1 text-xs text-[var(--color-destructive)]">{ipError}</p>
+            <p className="mt-1 text-xs text-(--color-destructive)">{ipError}</p>
           ) : (
-            <p className="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+            <p className="mt-1 text-[10px] text-(--color-muted-foreground)">
               4 octet · yalnız rakam · octet başında 0 yok
             </p>
           )}
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Subnet</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">Subnet</label>
           <Select value={subnet} onValueChange={setSubnet}>
             <SelectTrigger>
               <SelectValue placeholder="Subnet" />
@@ -281,7 +281,7 @@ export function VlanPage({ embeddedTitle = false }: { embeddedTitle?: boolean } 
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Gateway</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">Gateway</label>
           <Input
             className="font-mono"
             placeholder="örn. 192.168.1.1"
@@ -290,16 +290,16 @@ export function VlanPage({ embeddedTitle = false }: { embeddedTitle?: boolean } 
             required
           />
           {sameIpGw || gatewayError ? (
-            <p className="mt-1 text-xs text-[var(--color-destructive)]">{sameIpGw || gatewayError}</p>
+            <p className="mt-1 text-xs text-(--color-destructive)">{sameIpGw || gatewayError}</p>
           ) : (
-            <p className="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+            <p className="mt-1 text-[10px] text-(--color-muted-foreground)">
               Unicast · 0.x / 127.x / 255.255.255.255 / multicast yok
             </p>
           )}
         </div>
 
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
-        <div className="flex justify-end border-t border-[var(--color-border)] pt-3">
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
+        <div className="flex justify-end border-t border-(--color-border) pt-3">
           <Button type="submit" className="h-9 px-4" disabled={!canSubmit}>
             {busy ? "…" : ifacesLoading ? "Interface yükleniyor…" : t("preview")}
           </Button>

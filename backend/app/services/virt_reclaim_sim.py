@@ -34,7 +34,7 @@ def reclaim_sim(db: Session, *, hypervisor_id: Optional[int] = None, cluster: Op
     overrides = capacity_policy.validate(thresholds or {})            # ValueError → çağıran 400 yapar
     capacity_policy.activate(db)
     hvs = vd.virt_hypervisors(db, hypervisor_id=hypervisor_id)
-    cap = build_capacity(db, hypervisor_id=hypervisor_id, cluster=cluster, with_forecast=False)
+    cap = build_capacity(db, hypervisor_id=hypervisor_id, cluster=cluster, with_forecast=False, with_reclaim=False)
     vm = virt_reclaim._vm_rows(db, hvs, overrides)
     used_th = dict(capacity_policy.active())
     by_cluster: Dict[tuple, Dict[str, Dict[str, Any]]] = {}

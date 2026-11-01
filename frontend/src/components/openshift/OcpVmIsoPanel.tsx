@@ -223,7 +223,7 @@ export default function OcpVmIsoPanel({ clusterId, vm, running, onClose, onChang
   const needGi = file ? Math.max(1, Math.ceil((file.size * 1.1 + 64 * 1024 * 1024) / 1024 ** 3)) : 0
 
   return (
-    <div className="fixed inset-0 bg-black/55 z-[90] flex items-center justify-center p-4" onClick={() => !busy && close()} onContextMenu={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/55 z-90 flex items-center justify-center p-4" onClick={() => !busy && close()} onContextMenu={(e) => e.stopPropagation()}>
       <div
         className="bg-cyber-card border border-white/[0.08] rounded-xl w-full max-w-lg p-4 space-y-3 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
@@ -363,7 +363,7 @@ export default function OcpVmIsoPanel({ clusterId, vm, running, onClose, onChang
             )}
             {pct !== null && (
               <div className="space-y-1">
-                <div className="h-2 rounded bg-white/[0.08] overflow-hidden">
+                <div className="h-2 rounded-sm bg-white/[0.08] overflow-hidden">
                   <div className="h-full bg-sky-500 transition-all" style={{ width: `${pct}%` }} />
                 </div>
                 <div className="text-[11px] text-slate-400">{t('ocp_iso_uploading', { pct: `${pct}%` })}</div>

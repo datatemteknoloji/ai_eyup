@@ -258,7 +258,7 @@ function centrifyJobMeta(drafts: DraftOp[], zones: Zone[]): { title: string; sum
 
 const PreviewMark: React.FC = () => {
   const t = useT()
-  return <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300">{t('cz_preview')}</span>
+  return <span className="ml-1 text-[9px] px-1 py-0.5 rounded-sm bg-amber-500/20 text-amber-300">{t('cz_preview')}</span>
 }
 
 async function centrifyMutate(path: string, body: Record<string, unknown>, label: string) {
@@ -445,7 +445,7 @@ const VNode: React.FC<{
         onClick={() => { onSel({ zoneId, nodeType, zoneName, itemId, itemName }) }}
         onDoubleClick={() => { onSel({ zoneId, nodeType, zoneName, itemId, itemName }); if (hasKids) openKids() }}
         onContextMenu={e => { e.preventDefault(); onCtx?.(e) }}
-        className={`w-full flex items-center gap-1 px-1.5 py-[3px] text-[12.5px] rounded transition-colors
+        className={`w-full flex items-center gap-1 px-1.5 py-[3px] text-[12.5px] rounded-sm transition-colors
           ${isSel ? 'bg-blue-600/20 text-blue-400 font-medium' : 'text-slate-300 hover:bg-slate-700/40 hover:text-slate-100'}`}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
       >
@@ -519,7 +519,7 @@ const ZoneTreeNode: React.FC<{
       <button
         onClick={() => { onSel({ zoneId: zone.id, nodeType: 'zone', zoneName: zone.name }); toggle() }}
         onContextMenu={e => { e.preventDefault(); onCtx(e, zone.id, 'zone') }}
-        className={`w-full flex items-center gap-1 px-1.5 py-[3px] text-[12.5px] rounded transition-colors
+        className={`w-full flex items-center gap-1 px-1.5 py-[3px] text-[12.5px] rounded-sm transition-colors
           ${isSel ? 'bg-blue-600/20 text-blue-400 font-medium' : 'text-slate-300 hover:bg-slate-700/40 hover:text-slate-100'}`}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
       >
@@ -696,7 +696,7 @@ const DialogTab: React.FC<{
 const Chk: React.FC<{ checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }> = ({ checked, onChange, label, disabled }) => (
   <label className={`flex items-start gap-2 py-0.5 ${disabled ? 'opacity-50' : 'cursor-pointer'}`}>
     <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} disabled={disabled}
-      className="mt-0.5 rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-500/30" />
+      className="mt-0.5 rounded-sm border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-500/30" />
     <span className="text-xs text-slate-300 leading-relaxed">{label}</span>
   </label>
 )
@@ -795,19 +795,19 @@ const RoleDialog: React.FC<{
             <div className="space-y-3">
               <div>
                 <label className="block text-xs text-slate-400 mb-1">{t('cz_role_name')}</label>
-                <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 outline-none"
+                <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 outline-hidden"
                   value={name} onChange={e => setName(e.target.value)} autoFocus />
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1">{t('cz_role_desc')}</label>
-                <textarea className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 outline-none resize-none h-20"
+                <textarea className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 outline-hidden resize-none h-20"
                   value={desc} onChange={e => setDesc(e.target.value)} />
               </div>
               <div className="border border-slate-700/50 rounded-lg p-3">
                 <Chk checked={allowLocal} onChange={setAllowLocal} label={t('cz_allow_local_accounts')} />
                 <p className="text-[10px] text-slate-500 ml-5 mt-1 leading-relaxed">{t('cz_allow_local_accounts_warn')}</p>
               </div>
-              <button className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded px-3 py-1.5">
+              <button className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-sm px-3 py-1.5">
                 {t('cz_available_times')}
               </button>
             </div>
@@ -885,7 +885,7 @@ const RoleDialog: React.FC<{
           {tab === 'custom_attrs' && (
             <div>
               <div className="flex gap-2 mb-3">
-                <div className="flex-1 border border-slate-700 rounded overflow-hidden">
+                <div className="flex-1 border border-slate-700 rounded-sm overflow-hidden">
                   <table className="w-full text-xs">
                     <thead><tr className="bg-slate-900/50 text-slate-400">
                       <th className="text-left py-1.5 px-2 font-medium">{t('cz_attr_name')}</th>
@@ -903,22 +903,22 @@ const RoleDialog: React.FC<{
                   </table>
                 </div>
                 <div className="flex flex-col gap-1 min-w-[80px]">
-                  <button className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-xs text-slate-200 rounded"
+                  <button className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-xs text-slate-200 rounded-sm"
                     onClick={() => {
                       if (newAttrName.trim()) {
                         setAttrs(prev => [...prev, { name: newAttrName.trim(), value: newAttrValue }])
                         setNewAttrName(''); setNewAttrValue('')
                       }
                     }}>{t('cz_attr_add')}</button>
-                  <button className="px-2 py-1 bg-slate-700/50 text-xs text-slate-400 rounded" disabled>{t('cz_attr_edit')}</button>
-                  <button className="px-2 py-1 bg-slate-700/50 text-xs text-slate-400 rounded"
+                  <button className="px-2 py-1 bg-slate-700/50 text-xs text-slate-400 rounded-sm" disabled>{t('cz_attr_edit')}</button>
+                  <button className="px-2 py-1 bg-slate-700/50 text-xs text-slate-400 rounded-sm"
                     onClick={() => setAttrs(prev => prev.slice(0, -1))} disabled={attrs.length === 0}>{t('cz_attr_remove')}</button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <input className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none"
+                <input className="bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden"
                   value={newAttrName} onChange={e => setNewAttrName(e.target.value)} placeholder="Name" />
-                <input className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none"
+                <input className="bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden"
                   value={newAttrValue} onChange={e => setNewAttrValue(e.target.value)} placeholder="Value" />
               </div>
             </div>
@@ -929,7 +929,7 @@ const RoleDialog: React.FC<{
         <div className="border-t border-slate-700/50 pt-3 mt-3 space-y-2">
           <div>
             <label className="block text-xs text-slate-400 mb-1">{t('cz_reason')}</label>
-            <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 outline-none"
+            <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 outline-hidden"
               value={reason} onChange={e => setReason(e.target.value)} placeholder="min 3 karakter" />
           </div>
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -991,41 +991,41 @@ const CommandDialog: React.FC<{
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="block text-xs text-slate-400 mb-1">{t('cz_cmd_name')}</label>
-              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none"
+              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-hidden"
                 value={name} onChange={e => setName(e.target.value)} autoFocus />
             </div>
             <div className="col-span-2">
               <label className="block text-xs text-slate-400 mb-1">{t('cz_cmd_path')}</label>
-              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono outline-none"
+              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono outline-hidden"
                 value={path} onChange={e => setPath(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">{t('cz_cmd_match')}</label>
-              <select className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none"
+              <select className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-hidden"
                 value={matchType} onChange={e => setMatchType(e.target.value)}>
                 <option value="exact">Exact</option><option value="glob">Glob</option><option value="regex">Regex</option>
               </select>
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">{t('cz_cmd_run_as')}</label>
-              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none"
+              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-hidden"
                 value={runAs} onChange={e => setRunAs(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">{t('cz_cmd_auth')}</label>
-              <select className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none"
+              <select className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-hidden"
                 value={authType} onChange={e => setAuthType(e.target.value)}>
                 <option value="none">None</option><option value="password">User password</option><option value="mfa">MFA</option>
               </select>
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">{t('cz_role_desc')}</label>
-              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none"
+              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-hidden"
                 value={desc} onChange={e => setDesc(e.target.value)} />
             </div>
             <div className="col-span-2">
               <label className="block text-xs text-slate-400 mb-1">{t('cz_reason')}</label>
-              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none"
+              <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-hidden"
                 value={reason} onChange={e => setReason(e.target.value)} placeholder="min 3 karakter" />
             </div>
           </div>
@@ -1085,11 +1085,11 @@ const CommandToRoleDialog: React.FC<{
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-slate-400 mb-1">{t('cz_cmd_name')}</label>
-            <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300 outline-none" value={cmd.name} readOnly />
+            <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300 outline-hidden" value={cmd.name} readOnly />
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1">{t('cz_col_role')}</label>
-            <select className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none"
+            <select className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-hidden"
               value={roleName} onChange={e => setRoleName(e.target.value)}>
               <option value="">{t('cz_select_role')}</option>
               {roles.map(r => (
@@ -1099,7 +1099,7 @@ const CommandToRoleDialog: React.FC<{
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1">{t('cz_reason')}</label>
-            <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none"
+            <input className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-hidden"
               value={reason} onChange={e => setReason(e.target.value)} placeholder="min 3 karakter" />
           </div>
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -1127,19 +1127,19 @@ const AddADAccountDialog: React.FC<{
   const [name, setName] = useState('')
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 z-60 flex items-center justify-center" onClick={onClose}>
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 w-[440px] shadow-2xl" onClick={e => e.stopPropagation()}>
         <h3 className="text-sm font-semibold text-slate-100 mb-3 flex items-center gap-2">
           <Search size={14} className="text-blue-400" /> {t('cz_ar_add_ad_title')}
         </h3>
         <div className="flex items-center gap-2 mb-3">
           <span className="text-xs text-slate-400">{t('cz_ar_find')}</span>
-          <select className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none"
+          <select className="bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden"
             value={findType} onChange={e => setFindType(e.target.value)}>
             <option value="User">User</option><option value="Group">Group</option>
           </select>
           <span className="text-xs text-slate-400">{t('cz_ar_in')}</span>
-          <input className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none"
+          <input className="flex-1 bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden"
             value={domain} onChange={e => setDomain(e.target.value)} />
         </div>
         <div className="flex gap-2 mb-3 border-b border-slate-700/50 pb-1">
@@ -1147,23 +1147,23 @@ const AddADAccountDialog: React.FC<{
           <span className="text-xs text-slate-500 px-2 py-1">{t('cz_ar_advanced_tab')}</span>
           <div className="ml-auto flex flex-col gap-1">
             <button onClick={() => { if (name.trim()) { onAdd(findType === 'User' ? 'AD User' : 'AD Group', name.trim()); onClose() } }}
-              className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-[10px] text-white rounded">{t('cz_ar_find_now')}</button>
-            <button className="px-3 py-1 bg-slate-700/50 text-[10px] text-slate-500 rounded" disabled>{t('cz_ar_clear_all')}</button>
+              className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-[10px] text-white rounded-sm">{t('cz_ar_find_now')}</button>
+            <button className="px-3 py-1 bg-slate-700/50 text-[10px] text-slate-500 rounded-sm" disabled>{t('cz_ar_clear_all')}</button>
           </div>
         </div>
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400 w-20">Name:</span>
-            <input className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none"
+            <input className="flex-1 bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden"
               value={name} onChange={e => setName(e.target.value)} autoFocus />
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400 w-20">{t('cz_ar_description')}:</span>
-            <input className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none" />
+            <input className="flex-1 bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden" />
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-3">
-          <button onClick={onClose} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-slate-200 rounded">{t('cancel')}</button>
+          <button onClick={onClose} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-slate-200 rounded-sm">{t('cancel')}</button>
         </div>
       </div>
     </div>
@@ -1188,28 +1188,28 @@ const AddLocalAccountDialog: React.FC<{
   ]
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 z-60 flex items-center justify-center" onClick={onClose}>
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 w-[360px] shadow-2xl" onClick={e => e.stopPropagation()}>
         <h3 className="text-sm font-semibold text-slate-100 mb-3">{t('cz_ar_add_local_title')}</h3>
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400 w-16">{t('cz_ar_local_type')}</span>
-            <select className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 outline-none"
+            <select className="flex-1 bg-slate-900 border border-slate-700 rounded-sm px-2 py-1.5 text-xs text-slate-200 outline-hidden"
               value={localType} onChange={e => setLocalType(e.target.value)}>
               {types.map(lt => <option key={lt.value} value={lt.value}>{lt.label}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400 w-16">{t('cz_ar_local_account')}</span>
-            <input className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 outline-none"
+            <input className="flex-1 bg-slate-900 border border-slate-700 rounded-sm px-2 py-1.5 text-xs text-slate-200 outline-hidden"
               value={account} onChange={e => setAccount(e.target.value)} autoFocus />
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={() => { if (account.trim()) { onAdd(localType, account.trim()); onClose() } }}
-            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs text-white rounded"
+            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs text-white rounded-sm"
             disabled={!account.trim()}>OK</button>
-          <button onClick={onClose} className="px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-slate-200 rounded">{t('cancel')}</button>
+          <button onClick={onClose} className="px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-slate-200 rounded-sm">{t('cancel')}</button>
         </div>
       </div>
     </div>
@@ -1316,7 +1316,7 @@ const AssignRoleDialog: React.FC<{
 
         {computerId && (
           <div className="mb-2">
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-0.5">
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-sm px-2 py-0.5">
               <Monitor size={11} /> {computerName}
             </span>
           </div>
@@ -1329,22 +1329,22 @@ const AssignRoleDialog: React.FC<{
                 <tr className="bg-slate-900 text-slate-400 border-b border-slate-700">
                   <th className="text-left py-1.5 px-2 font-medium w-[150px]">
                     {t('cz_col_role')}
-                    <input className="block w-full mt-0.5 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-slate-300 outline-none"
+                    <input className="block w-full mt-0.5 bg-slate-800 border border-slate-700 rounded-sm px-1.5 py-0.5 text-[10px] text-slate-300 outline-hidden"
                       value={fRole} onChange={e => setFRole(e.target.value)} placeholder="Enter text …" />
                   </th>
                   <th className="text-left py-1.5 px-2 font-medium">
                     {t('cz_col_zone')}
-                    <input className="block w-full mt-0.5 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-slate-300 outline-none"
+                    <input className="block w-full mt-0.5 bg-slate-800 border border-slate-700 rounded-sm px-1.5 py-0.5 text-[10px] text-slate-300 outline-hidden"
                       value={fZone} onChange={e => setFZone(e.target.value)} placeholder="Enter text here" />
                   </th>
                   <th className="text-left py-1.5 px-2 font-medium w-[100px]">
                     {t('cz_col_allow_local')}
-                    <input className="block w-full mt-0.5 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-slate-300 outline-none"
+                    <input className="block w-full mt-0.5 bg-slate-800 border border-slate-700 rounded-sm px-1.5 py-0.5 text-[10px] text-slate-300 outline-hidden"
                       value={fAllow} onChange={e => setFAllow(e.target.value)} placeholder="Enter text here" />
                   </th>
                   <th className="text-left py-1.5 px-2 font-medium">
                     {t('cz_col_desc')}
-                    <input className="block w-full mt-0.5 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-slate-300 outline-none"
+                    <input className="block w-full mt-0.5 bg-slate-800 border border-slate-700 rounded-sm px-1.5 py-0.5 text-[10px] text-slate-300 outline-hidden"
                       value={fDesc} onChange={e => setFDesc(e.target.value)} placeholder="Enter text here" />
                   </th>
                 </tr>
@@ -1395,31 +1395,31 @@ const AssignRoleDialog: React.FC<{
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 w-20 shrink-0">{t('cz_ar_role_label')}</span>
-              <input className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none" value={roleName} readOnly />
+              <input className="flex-1 bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden" value={roleName} readOnly />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 w-20 shrink-0">{t('cz_ar_start_time')}</span>
-              <input type="datetime-local" className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none"
+              <input type="datetime-local" className="flex-1 bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden"
                 value={startTime} onChange={e => setStartTime(e.target.value)} disabled={startImmediate} />
               <label className="flex items-center gap-1 text-xs text-slate-400 shrink-0 cursor-pointer">
                 <input type="checkbox" checked={startImmediate} onChange={e => setStartImmediate(e.target.checked)}
-                  className="rounded border-slate-600 bg-slate-900 text-blue-500" />
+                  className="rounded-sm border-slate-600 bg-slate-900 text-blue-500" />
                 {t('cz_ar_start_immediately')}
               </label>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 w-20 shrink-0">{t('cz_ar_end_time')}</span>
-              <input type="datetime-local" className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none"
+              <input type="datetime-local" className="flex-1 bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden"
                 value={endTime} onChange={e => setEndTime(e.target.value)} disabled={neverExpire} />
               <label className="flex items-center gap-1 text-xs text-slate-400 shrink-0 cursor-pointer">
                 <input type="checkbox" checked={neverExpire} onChange={e => setNeverExpire(e.target.checked)}
-                  className="rounded border-slate-600 bg-slate-900 text-blue-500" />
+                  className="rounded-sm border-slate-600 bg-slate-900 text-blue-500" />
                 {t('cz_ar_never_expire')}
               </label>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 w-20 shrink-0">{t('cz_ar_description')}</span>
-              <input className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none"
+              <input className="flex-1 bg-slate-900 border border-slate-700 rounded-sm px-2 py-1 text-xs text-slate-200 outline-hidden"
                 value={assignDesc} onChange={e => setAssignDesc(e.target.value)} />
             </div>
           </div>
@@ -1441,17 +1441,17 @@ const AssignRoleDialog: React.FC<{
                   <div className="ml-4 mt-1 space-y-0.5">
                     <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                       <input type="checkbox" checked={allAD} onChange={e => setAllAD(e.target.checked)}
-                        className="rounded border-slate-600 bg-slate-900 text-blue-500" />
+                        className="rounded-sm border-slate-600 bg-slate-900 text-blue-500" />
                       {t('cz_ar_all_ad_check')}
                     </label>
                     <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                       <input type="checkbox" checked={allWindows} onChange={e => setAllWindows(e.target.checked)}
-                        className="rounded border-slate-600 bg-slate-900 text-blue-500" />
+                        className="rounded-sm border-slate-600 bg-slate-900 text-blue-500" />
                       {t('cz_ar_all_windows_check')}
                     </label>
                     <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                       <input type="checkbox" checked={allUnix} onChange={e => setAllUnix(e.target.checked)}
-                        className="rounded border-slate-600 bg-slate-900 text-blue-500" />
+                        className="rounded-sm border-slate-600 bg-slate-900 text-blue-500" />
                       {t('cz_ar_all_unix_check')}
                     </label>
                   </div>
@@ -1468,7 +1468,7 @@ const AssignRoleDialog: React.FC<{
 
             {assigneeMode === 'below' && (
               <div className="ml-5 flex gap-2">
-                <div className="flex-1 border border-slate-700 rounded overflow-hidden">
+                <div className="flex-1 border border-slate-700 rounded-sm overflow-hidden">
                   <table className="w-full text-xs">
                     <thead><tr className="bg-slate-900/50 text-slate-400">
                       <th className="text-left py-1 px-2 font-medium w-[120px]">{t('cz_ar_col_type')}</th>
@@ -1487,17 +1487,17 @@ const AssignRoleDialog: React.FC<{
                 </div>
                 <div className="flex flex-col gap-1.5 min-w-[148px]">
                   <button type="button" onClick={() => setShowAddAD(true)}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-[11px] font-medium text-white rounded-md shadow-sm text-center">
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-[11px] font-medium text-white rounded-md shadow-xs text-center">
                     {t('cz_ar_add_ad_account')}
                   </button>
                   {allowLocal && (
                     <button type="button" onClick={() => setShowAddLocal(true)}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-[11px] font-medium text-white rounded-md shadow-sm text-center">
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-[11px] font-medium text-white rounded-md shadow-xs text-center">
                       {t('cz_ar_add_local_account')}
                     </button>
                   )}
                   <button type="button" onClick={() => setAssignees(prev => prev.slice(0, -1))} disabled={assignees.length === 0}
-                    className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-[11px] font-medium text-white rounded-md shadow-sm text-center disabled:opacity-40">
+                    className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-[11px] font-medium text-white rounded-md shadow-xs text-center disabled:opacity-40">
                     {t('cz_ar_remove')}
                   </button>
                 </div>
@@ -1509,7 +1509,7 @@ const AssignRoleDialog: React.FC<{
         {/* Reason (ainew specific) */}
         <div className="mb-3">
           <label className="block text-xs text-slate-400 mb-1">{t('cz_reason')}</label>
-          <input className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 outline-none"
+          <input className="w-full bg-slate-900 border border-slate-700 rounded-sm px-2 py-1.5 text-xs text-slate-200 outline-hidden"
             value={reason} onChange={e => setReason(e.target.value)} placeholder="min 3 karakter" />
         </div>
 
@@ -1535,10 +1535,10 @@ const AssignRoleDialog: React.FC<{
 const Spin: React.FC = () => <div className="flex items-center justify-center py-12 text-slate-500"><Loader2 size={20} className="animate-spin mr-2" /> Loading…</div>
 const Empty: React.FC<{ text: string }> = ({ text }) => <div className="flex flex-col items-center justify-center py-12 text-slate-500"><Info size={24} className="mb-2" /><span className="text-sm">{text}</span></div>
 const Badge: React.FC<{ state: string }> = ({ state }) => state === 'managed'
-  ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">Managed</span>
+  ? <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-green-500/20 text-green-400">Managed</span>
   : state === 'preview'
-    ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">Önizleme</span>
-  : <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-600/30 text-slate-400">Read Only</span>
+    ? <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-amber-500/20 text-amber-300">Önizleme</span>
+  : <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-slate-600/30 text-slate-400">Read Only</span>
 
 const ComputersPanel: React.FC<{
   zoneId: number; zoneName: string
@@ -1660,7 +1660,7 @@ const RolesPanel: React.FC<{ zoneId: number; onRowCtx: (e: React.MouseEvent, r: 
         <td className="py-1.5 px-3"><div className="flex items-center gap-2">
           <Shield size={13} className={r.is_system_role ? 'text-amber-400' : 'text-blue-400'} />
           <span className="text-slate-200 text-xs font-medium">{r.name}</span>
-          {r.is_system_role && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400">SYS</span>}
+          {r.is_system_role && <span className="text-[9px] px-1 py-0.5 rounded-sm bg-amber-500/20 text-amber-400">SYS</span>}
           {(r as any)._preview ? <PreviewMark /> : null}
         </div></td>
         <td className="py-1.5 px-3 text-xs text-slate-400 max-w-xs truncate">{r.description || '—'}</td>
@@ -1694,7 +1694,7 @@ const CommandsPanel: React.FC<{ zoneId: number; onRowCtx: (e: React.MouseEvent, 
         <td className="py-1.5 px-3 text-xs text-slate-300">{c.name}</td>
         <td className="py-1.5 px-3 text-xs text-slate-400 font-mono max-w-[180px] truncate">{c.command_path || '—'}</td>
         <td className="py-1.5 px-3 text-xs text-slate-400">{c.run_as_user || '—'}</td>
-        <td className="py-1.5 px-3"><span className={`text-[10px] px-1.5 py-0.5 rounded ${
+        <td className="py-1.5 px-3"><span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${
           c.auth_type === 'mfa' ? 'bg-red-500/20 text-red-400' : c.auth_type === 'password' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-slate-700 text-slate-400'
         }`}>{c.auth_type === 'password' ? 'User password' : c.auth_type || 'None'}</span></td>
       </tr>)}
@@ -1745,7 +1745,7 @@ const AssignmentsPanel: React.FC<{
               <td className="py-1.5 px-3 text-xs text-slate-200">{a.assignee_name}{a._preview ? <PreviewMark /> : null}</td>
               <td className="py-1.5 px-3 text-xs text-slate-400 capitalize">{a.assignee_type}</td>
               <td className="py-1.5 px-3 text-xs text-slate-400">{roleName.get(a.role_id) || a.role_name || a.role_id}</td>
-              <td className="py-1.5 px-3"><span className={`text-[10px] px-1.5 py-0.5 rounded ${
+              <td className="py-1.5 px-3"><span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${
                 a.scope_type === 'computer' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'
               }`}>{a.scope_type || 'zone'}</span></td>
               <td className={`py-1.5 px-3 text-xs ${a._preview ? 'text-amber-300' : 'text-slate-400'}`}>{fmtTs(a.start_time)}</td>
@@ -2000,11 +2000,11 @@ const CentrifyAiDrawer: React.FC<{ zoneId?: number; onClose: () => void; onMinim
         <span className="text-sm font-medium text-slate-100">Centrify AI</span>
         <div className="ml-auto flex items-center gap-0.5">
           {onMinimize && (
-            <button onClick={onMinimize} className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-slate-100" title="Arka plana al">
+            <button onClick={onMinimize} className="p-1 rounded-sm hover:bg-slate-700 text-slate-400 hover:text-slate-100" title="Arka plana al">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>
             </button>
           )}
-          <button onClick={onClose} className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-slate-100" title="Kapat">
+          <button onClick={onClose} className="p-1 rounded-sm hover:bg-slate-700 text-slate-400 hover:text-slate-100" title="Kapat">
             <XCircle size={16} />
           </button>
         </div>
@@ -2029,7 +2029,7 @@ const CentrifyAiDrawer: React.FC<{ zoneId?: number; onClose: () => void; onMinim
       </div>
       <form className="p-2 border-t border-slate-700 flex gap-2" onSubmit={e => { e.preventDefault(); send() }}>
         <input
-          className="flex-1 bg-slate-800 border border-slate-600 rounded-md px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-purple-500"
+          className="flex-1 bg-slate-800 border border-slate-600 rounded-md px-2 py-1.5 text-xs text-slate-200 outline-hidden focus:border-purple-500"
           value={input} onChange={e => setInput(e.target.value)} placeholder="Soru yazın…" disabled={busy}
         />
         <button type="submit" disabled={busy || !input.trim()}
@@ -2148,7 +2148,7 @@ const CentrifyAiDock: React.FC<{
             className="pointer-events-auto absolute top-0 flex h-12 items-center gap-2 whitespace-nowrap rounded-xl bg-blue-600 px-4 text-sm text-white shadow-lg hover:bg-blue-500"
             style={pos.x > 170 ? { right: CZ_FAB_SIZE + 10 } : { left: CZ_FAB_SIZE + 10 }}
           >
-            <Save size={15} /> {t('save')} <span className="text-[11px] bg-white/20 rounded px-1.5">{draftsCount}</span>
+            <Save size={15} /> {t('save')} <span className="text-[11px] bg-white/20 rounded-sm px-1.5">{draftsCount}</span>
           </button>
         )}
         {chatMode === 'open' && (
@@ -2528,20 +2528,20 @@ export default function CentrifyPage() {
                 <FolderTree size={15} className="text-slate-400" />
                 <span className="text-xs font-medium text-slate-300">{t('cz_tree_title')}</span>
                 <div className="ml-auto flex items-center gap-0.5">
-                  <button onClick={() => void runHygiene()} title={t('cz_hygiene_scan')} className="p-1 rounded hover:bg-slate-700/50 text-slate-500 hover:text-slate-300">
+                  <button onClick={() => void runHygiene()} title={t('cz_hygiene_scan')} className="p-1 rounded-sm hover:bg-slate-700/50 text-slate-500 hover:text-slate-300">
                     <ScanSearch size={13} />
                   </button>
-                  <button onClick={triggerSync} disabled={syncing} title="Sync" className="p-1 rounded hover:bg-slate-700/50 text-slate-500 hover:text-slate-300 disabled:opacity-50">
+                  <button onClick={triggerSync} disabled={syncing} title="Sync" className="p-1 rounded-sm hover:bg-slate-700/50 text-slate-500 hover:text-slate-300 disabled:opacity-50">
                     <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
                   </button>
-                  <button onClick={toggleDrawer} title={t('cz_tree_collapse')} className="p-1 rounded hover:bg-slate-700/50 text-slate-500 hover:text-slate-300">
+                  <button onClick={toggleDrawer} title={t('cz_tree_collapse')} className="p-1 rounded-sm hover:bg-slate-700/50 text-slate-500 hover:text-slate-300">
                     <PanelLeftClose size={13} />
                   </button>
                 </div>
               </div>
               <div className="relative">
                 <Search size={13} className="absolute left-2 top-[7px] text-slate-500" />
-                <input className="w-full bg-slate-800 border border-slate-700 rounded-md pl-7 pr-3 py-1 text-xs text-slate-300 placeholder-slate-600 focus:border-blue-500 outline-none"
+                <input className="w-full bg-slate-800 border border-slate-700 rounded-md pl-7 pr-3 py-1 text-xs text-slate-300 placeholder-slate-600 focus:border-blue-500 outline-hidden"
                   placeholder={t('cz_tree_search')} value={searchQ} onChange={e => setSearchQ(e.target.value)} />
                 {isSearching && <Loader2 size={11} className="absolute right-2 top-2 animate-spin text-slate-500" />}
               </div>
@@ -2609,7 +2609,7 @@ export default function CentrifyPage() {
               {hygieneLoading ? <Spin /> : !(hygiene?.items || []).length ? <Empty text={t('cz_hygiene_empty')} /> : (hygiene!.items.map((it, i) => (
                 <div key={i} className="rounded-lg border border-slate-700/60 px-3 py-2">
                   <div className="flex items-center gap-2">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${it.severity === 'high' ? 'bg-red-500/20 text-red-400' : it.severity === 'medium' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-600/40 text-slate-300'}`}>{it.kind}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${it.severity === 'high' ? 'bg-red-500/20 text-red-400' : it.severity === 'medium' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-600/40 text-slate-300'}`}>{it.kind}</span>
                     <span className="text-xs text-slate-100">{it.title}</span>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-0.5">{it.detail}</p>
@@ -2629,7 +2629,7 @@ export default function CentrifyPage() {
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-1">
               {drafts.map(d => (
-                <div key={d.id} className="flex items-center gap-2 text-xs text-slate-200 px-2 py-1.5 rounded bg-slate-900/60">
+                <div key={d.id} className="flex items-center gap-2 text-xs text-slate-200 px-2 py-1.5 rounded-sm bg-slate-900/60">
                   <span className="flex-1 truncate">{d.label}</span>
                   <button type="button" className="text-slate-500 hover:text-red-400" onClick={() => setDrafts(prev => prev.filter(x => x.id !== d.id))}>
                     <Trash2 size={12} />

@@ -25,7 +25,7 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Sequence
 
 from sqlalchemy import text
 
@@ -146,6 +146,41 @@ def module_for_collection(collection_name: str) -> Optional[str]:
     if collection_name == COLLECTION_AUTOMIC:
         return "automic"
     return None
+
+
+# Adım 8R/K3: belge başlığı → modül (runbook `metadata.module`). Eşleşmeyen (kullanıcı yüklemesi vb.) → None = tarafsız.
+_TITLE_MODULE_PREFIXES = (
+    ("AUTOMIC-", "automic"),
+    ("OCP-", "openshift"),
+    ("HUAWEI-ESDK-CSI", "openshift"),
+    ("RHEL9-", "linux"),
+    ("LINUX-", "linux"),
+    ("CENTRIFY-", "linux"),
+    ("VIRT-", "virtualization"),
+    ("AINEW-", "general"),
+)
+
+
+def module_for_title(title: str) -> Optional[str]:
+    t = (title or "").strip().upper()
+    for prefix, mod in _TITLE_MODULE_PREFIXES:
+        if t.startswith(prefix):
+            return mod
+    return None
+
+
+def sanitize_document(text_value: str) -> str:
+    """Postgres metin alanı NUL kabul etmez; ekleme anında son güvenlik ağı."""
+    return (text_value or "").replace("\x00", "")
+
+
+def _module_filter_sql(modules: Optional[Sequence[str]], params: dict) -> str:
+    """Modül kapsamı: satır modülü ∈ modules, `general` veya modül etiketi YOK (tarafsız/kullanıcı yüklemesi)."""
+    if modules is None:
+        return ""
+    mods = sorted({str(m).strip().lower() for m in modules if str(m).strip()} | {"general"})
+    params["mods"] = mods
+    return " AND (NOT (metadata ? 'module') OR metadata->>'module' = ANY(CAST(:mods AS text[])))"
 
 
 def migrate_automic_collection_scope() -> Dict[str, Any]:
@@ -855,7 +890,7 @@ def add_chunks(
             except ValueError as e:
                 logger.error("RAG add_chunks atlandı id=%s: %s", cid, e)
                 continue
-            doc = documents[i] or ""
+            doc = sanitize_document(documents[i])
             conn.execute(
                 text(
                     """
@@ -909,7 +944,7 @@ def upsert_chunks(
             except ValueError as e:
                 logger.error("RAG upsert atlandı id=%s: %s", cid, e)
                 continue
-            doc = documents[i] or ""
+            doc = sanitize_document(documents[i])
             conn.execute(
                 text(
                     """
@@ -969,6 +1004,7 @@ def query_collection(
     *,
     embedding_model: Optional[str] = None,
     embedding_dim: Optional[int] = None,
+    modules: Optional[Sequence[str]] = None,
 ) -> List[dict]:
     """Vektör arama — yalnız aynı model+dim satırları.
 
@@ -1000,6 +1036,7 @@ def query_collection(
     if where:
         where_sql = " AND metadata @> CAST(:where AS jsonb)"
         params["where"] = json.dumps(where, ensure_ascii=False)
+    where_sql += _module_filter_sql(modules, params)
 
     if use_exact:
         # Önce collection B-tree ile daralt (MATERIALIZED), sonra exact mesafe sıralaması.
@@ -1077,12 +1114,43 @@ def _fts_match_sql(mode: str) -> str:
     return "plainto_tsquery(CAST(:fts AS regconfig), :q)"
 
 
+LEXICAL_TIMEOUT_MS_DEFAULT = 1500
+LEXICAL_MAX_CANDIDATES_DEFAULT = 2000
+
+
+def lexical_limits() -> Tuple[int, int]:
+    """(zaman sınırı ms, aday sınırı) — `rag_lexical_timeout_ms` / `rag_lexical_max_candidates`; 0 = sınır yok."""
+    t, c = LEXICAL_TIMEOUT_MS_DEFAULT, LEXICAL_MAX_CANDIDATES_DEFAULT
+    try:
+        from app.services import runtime_settings as _rs
+
+        t = int(_rs.get_int("rag_lexical_timeout_ms"))
+        c = int(_rs.get_int("rag_lexical_max_candidates"))
+    except Exception:
+        pass
+    return max(0, t), max(0, c)
+
+
+def _is_query_timeout(exc: BaseException) -> bool:
+    orig = getattr(exc, "orig", None) or exc
+    code = getattr(orig, "pgcode", None)
+    return code == "57014" or "statement timeout" in str(exc).lower() or "canceling statement" in str(exc).lower()
+
+
 def lexical_search_collection(
     collection_name: str,
     query: str,
     n_results: int = 8,
+    *,
+    modules: Optional[Sequence[str]] = None,
 ) -> List[dict]:
-    """Tam metin arama — yalnız dolu document_tsv + GIN (FTS_CONFIG='simple')."""
+    """Tam metin arama — yalnız dolu document_tsv + GIN (FTS_CONFIG='simple').
+
+    Büyük koleksiyonlarda (>= EXACT_VECTOR_MAX_ROWS; incidents ~1,2 M) yaygın sözcüklerde OR modu yüz binlerce
+    satırı `ts_rank_cd` ile sıralatıp saniyeler/dakikalar sürebiliyordu (Adım 8R R4 ölçümü). Bu yüzden:
+    (1) toplam zaman sınırı (`rag_lexical_timeout_ms`, varsayılan 1500): aşılırsa lexical kol BOŞ döner
+    (hibrit aramada yalnız vektör sonucu kullanılır); (2) büyük koleksiyonda eşleşen satırlar `rag_lexical_max_candidates`
+    ile sınırlanıp yalnız aday kümesi sıralanır. Küçük koleksiyon (runbook vb.) davranışı değişmez."""
     q = (query or "").strip()
     if not q:
         return []
@@ -1090,30 +1158,81 @@ def lexical_search_collection(
         return []
     k = min(max(1, int(n_results or 8)), 40)
     out: List[dict] = []
-    with engine.connect() as conn:
+    mod_params: dict = {}
+    mod_sql = _module_filter_sql(modules, mod_params)
+    timeout_ms, max_cand = lexical_limits()
+    capped = False
+    if max_cand > 0:
+        try:
+            capped = cached_collection_count(collection_name) >= EXACT_VECTOR_MAX_ROWS
+        except Exception:
+            capped = False
+    t0 = time.monotonic()
+    try:
         for mode in ("and", "or"):
             tsq = _fts_match_sql(mode)
-            rows = conn.execute(
-                text(
-                    f"""
+            if capped:
+                sql = f"""
+                    WITH cand AS MATERIALIZED (
+                        SELECT id, document, metadata, document_tsv
+                        FROM rag_embeddings
+                        WHERE collection = :coll
+                          AND document_tsv IS NOT NULL
+                          AND document_tsv @@ {tsq}
+                          {mod_sql}
+                        LIMIT :cand
+                    )
+                    SELECT id, document, metadata,
+                           greatest(0.0, 1.0 - ts_rank_cd(document_tsv, {tsq})) AS distance
+                    FROM cand
+                    ORDER BY ts_rank_cd(document_tsv, {tsq}) DESC
+                    LIMIT :k
+                """
+            else:
+                sql = f"""
                     SELECT id, document, metadata,
                            greatest(0.0, 1.0 - ts_rank_cd(document_tsv, {tsq})) AS distance
                     FROM rag_embeddings
                     WHERE collection = :coll
                       AND document_tsv IS NOT NULL
                       AND document_tsv @@ {tsq}
+                      {mod_sql}
                     ORDER BY ts_rank_cd(document_tsv, {tsq}) DESC
                     LIMIT :k
-                    """
-                ),
-                {"coll": collection_name, "q": q, "k": k, "fts": FTS_CONFIG},
-            ).fetchall()
+                """
+            params = {"coll": collection_name, "q": q, "k": k, "fts": FTS_CONFIG, **mod_params}
+            if capped:
+                params["cand"] = int(max_cand)
+            with engine.begin() as conn:
+                if timeout_ms > 0:
+                    left = timeout_ms - int((time.monotonic() - t0) * 1000)
+                    if left <= 0:
+                        raise TimeoutError("lexical bütçe bitti")
+                    conn.execute(
+                        text("SELECT set_config('statement_timeout', :v, true)"),
+                        {"v": f"{left}ms"},
+                    )
+                rows = conn.execute(text(sql), params).fetchall()
             if rows:
                 for row in rows:
                     hit = _row_hit(row)
                     hit["source"] = "fts"
                     out.append(hit)
                 break
+    except TimeoutError:
+        logger.warning(
+            "RAG lexical zaman sınırı aşıldı (%s ms) collection=%s — yalnız vektör sonucu kullanılacak",
+            timeout_ms, collection_name,
+        )
+        return []
+    except Exception as e:
+        if _is_query_timeout(e):
+            logger.warning(
+                "RAG lexical zaman sınırı aşıldı (%s ms) collection=%s — yalnız vektör sonucu kullanılacak",
+                timeout_ms, collection_name,
+            )
+            return []
+        raise
     return out
 
 
@@ -1155,6 +1274,7 @@ def hybrid_search_collection(
     n_results: int = 8,
     where: Optional[dict] = None,
     code_rerank: bool = True,
+    modules: Optional[Sequence[str]] = None,
 ) -> List[dict]:
     """Vektör (aynı model) + FTS birleşik arama (RRF) + kod/identifier lexical rerank."""
     k = min(max(1, int(n_results or 8)), 40)
@@ -1168,10 +1288,11 @@ def hybrid_search_collection(
             where=where,
             embedding_model=embedding_model,
             embedding_dim=embedding_dim,
+            modules=modules,
         )
         if vhits:
             lists.append(vhits)
-    fhits = lexical_search_collection(collection_name, query, n_results=pool)
+    fhits = lexical_search_collection(collection_name, query, n_results=pool, modules=modules)
     if fhits:
         lists.append(fhits)
     if not lists:

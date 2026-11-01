@@ -68,7 +68,7 @@ DEFAULT_MODULES = [
      "icon": "KeyRound", "color": "purple",  "sort_order": 13},
     {"id": "automation",     "name": "Automic (UC4)",    "description": "Automic iş zamanlama izleme, çalışma/hata analizi ve salt okunur AI asistanı — ayrı atama gerektirir",
      "icon": "Workflow", "color": "amber",   "sort_order": 14},
-    {"id": "hardware",       "name": "Donanım",          "description": "Fiziksel sunucu donanımı (Dell OME / HPE OneView): BMC adresi, seri/service tag, sağlık, alarm, garanti — opsiyonel entegrasyon; varsayılan yalnız Admin, ayrı atama gerektirir",
+    {"id": "hardware",       "name": "Donanım",          "description": "Fiziksel sunucu donanımı (Dell OME / HPE OneView): filo ekranı, BMC adresi, seri/service tag, alarm, garanti raporu, elle eşleştirme — varsayılan yalnız Admin, ayrı atama gerektirir (Linux/Windows/Sanallaştırma kullanıcıları kendi sunucularının donanım ÖZETİNİ bu modül olmadan görür)",
      "icon": "HardDrive", "color": "slate",  "sort_order": 15},
 ]
 

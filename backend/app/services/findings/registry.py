@@ -201,6 +201,13 @@ _DEFS: List[CheckDef] = [
              "Host uzun süredir bakım modunda", "Host in maintenance for a long time",
              "Bakımdaki host kapasiteden düşülür; işi bittiyse bakımdan çıkarın.",
              "Hosts in maintenance are excluded from capacity."),
+    CheckDef("inv.sync.stale", "health", _ALL, "platform", "high",
+             "Envanter senkronu bayat", "Inventory sync is stale",
+             "Yönetim API'sinden VM/host envanteri uzun süredir alınamıyor; yeni/silinen VM'ler görünmez ve "
+             "kapasite/bulgu verileri eskir. Son hata kanıtta; bağlantı, kimlik bilgisi ve API sürümünü kontrol edin.",
+             "The VM/host inventory could not be read from the management API for a long time; new or deleted VMs "
+             "are not discovered and capacity/findings data ages. The last error is in the evidence; check "
+             "connectivity, credentials and API version."),
     CheckDef("vmw.datastore.accessible", "health", _V, "datastore", "critical",
              "Datastore erişilemiyor", "Datastore inaccessible",
              "Datastore erişilemez durumda; depolama bağlantısını kontrol edin.",
@@ -464,6 +471,14 @@ _DEFS: List[CheckDef] = [
              "durumunu inceleyin; BMC adresi ve ayrıntılar Donanım ekranında (yetkiliyse) görünür.",
              "The hardware provider reports the server as Critical. Review alerts and components in the provider console.",
              refs=(ISO_REDUNDANCY,), requires_capability=_REQ_HW),
+    CheckDef("hw.firmware.outdated", "hardware", _HW, "server", "medium",
+             "Sunucu firmware'i referans sunucudan düşük", "Server firmware is older than the reference server",
+             "Aynı modeldeki doğrulanmış referans sunucuya göre bir veya daha fazla bileşenin firmware sürümü düşük. "
+             "Sürümler ve karşılaştırma Donanım › Firmware sekmesinde (yetkiliyse). Bilinçli ise sekmeden «Kabul et»; "
+             "sürüm değişirse kabul otomatik düşer. Ayrıştırılamayan sürümler ölçülemedi sayılır, bulgu üretmez.",
+             "One or more components run older firmware than the verified reference server of the same model. Details in "
+             "Hardware > Firmware (if authorized). Accept deliberately; the acceptance lapses when the version changes.",
+             requires_capability=_REQ_HW),
     CheckDef("hw.alert.recurring", "hardware", _HW, "server", "medium",
              "Aynı donanım alarmı tekrar ediyor", "The same hardware alert keeps recurring",
              "Aynı sunucuda aynı alarm tipi son 24 saatte 3 veya daha fazla kez geldi. Kök nedeni (bileşen, kablo, firmware) "

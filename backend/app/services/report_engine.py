@@ -39,6 +39,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from app.services.chat_quality import power_state as _ps
+
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
@@ -78,7 +80,7 @@ def _fleet_summary_no_host_copy(
 def _latest_host_metrics(db: Session) -> List[Dict]:
     rows = db.execute(text("""
         SELECT DISTINCT ON (hypervisor_id, host_name)
-            host_name, hypervisor_id,
+            host_name, hypervisor_id, host_ref,
             cpu_usage_pct, cpu_usage_mhz, cpu_total_mhz, cpu_cores,
             mem_used_mb, mem_total_mb, mem_usage_pct,
             ds_used_gb, ds_total_gb, ds_usage_pct,
@@ -88,6 +90,9 @@ def _latest_host_metrics(db: Session) -> List[Dict]:
         FROM hypervisor_host_metrics
         ORDER BY hypervisor_id, host_name, timestamp DESC
     """)).all()
+    # Yeniden adlandırılan/envanterden çıkan host'un eski adı (hayalet) raporlara girmesin.
+    from app.services.host_freshness import fresh_hosts
+    rows = fresh_hosts(rows)
     from app.models.hypervisor import Hypervisor
     from app.services.virt_scope import count_names, disambiguate
     hv_ids = {r.hypervisor_id for r in rows if r.hypervisor_id is not None}
@@ -102,6 +107,7 @@ def _latest_host_metrics(db: Session) -> List[Dict]:
         result.append({
             "host": disambiguate(raw_name, r.hypervisor_id, counts, hv_names),
             "host_key": raw_name,
+            "host_ref": (r.host_ref or "").strip() or None,
             "hypervisor_id": r.hypervisor_id,
             "hypervisor_name": hv_names.get(r.hypervisor_id),
             "cpu_pct": round(r.cpu_usage_pct or 0, 1),
@@ -161,6 +167,17 @@ def _datastore_capacity_index(db: Session) -> Dict[str, Dict[str, Any]]:
     return idx
 
 
+def _is_vmware_vm(v: Dict) -> bool:
+    """VMware Tools kavramı yalnız VMware (vCenter) VM'lerinde vardır; KubeVirt/oVirt/KVM VM'lerinde YOK."""
+    return (v.get("hypervisor_type") or "").lower() == "vmware"
+
+
+def _vmware_tools_missing(v: Dict) -> bool:
+    """VMware Tools çalışmıyor/yok mu? `guestToolsNotRunning` alt dizesi «running» içerdiği için ayrıca elenir."""
+    st = (v.get("tools_status") or "").lower()
+    return (not st) or ("running" not in st) or ("notrunning" in st.replace("_", "").replace(" ", ""))
+
+
 def _get_vms(db: Session) -> List[Dict]:
     from app.models.server import Server
     from app.models.hypervisor import Hypervisor
@@ -170,7 +187,9 @@ def _get_vms(db: Session) -> List[Dict]:
             Server.server_type == "VIRTUAL",
         )
     ).all()
-    hvs = {hv.id: hv.name for hv in db.query(Hypervisor).all()}
+    _hv_all = db.query(Hypervisor).all()
+    hvs = {hv.id: hv.name for hv in _hv_all}
+    hv_types = {hv.id: (hv.hypervisor_type.value if hv.hypervisor_type else "") for hv in _hv_all}
     result = []
     for v in vms:
         result.append({
@@ -178,6 +197,7 @@ def _get_vms(db: Session) -> List[Dict]:
             "name": v.name,
             "ip": v.ip_address or v.vm_guest_ip or "",
             "hypervisor": hvs.get(v.hypervisor_id, "?"),
+            "hypervisor_type": hv_types.get(v.hypervisor_id, ""),
             "os_type": v.os_type or "",
             "os_version": v.os_version or "",
             "os_release": v.os_release_id or "",
@@ -435,12 +455,12 @@ def _build_executive_recommendations(
         recs.append(f"{len(high_mem)} host bellek baskısı altında — kapasite planlaması yapın.")
     no_tools = [
         v for v in vms
-        if v["power_state"] in ("POWERED_ON", "up", "running", "poweredOn")
-        and (not v["tools_status"] or "running" not in (v["tools_status"] or "").lower())
+        if _is_vmware_vm(v) and _ps.is_on(v["power_state"])  # VMware Tools: yalnız VMware VM'leri, kanonik güç durumu
+        and _vmware_tools_missing(v)
     ]
     if no_tools:
         recs.append(f"{len(no_tools)} çalışan VM'de guest tools eksik — güvenlik/uyumluluk riski.")
-    powered_off = [v for v in vms if v["power_state"] not in ("POWERED_ON", "up", "running", "poweredOn")]
+    powered_off = [v for v in vms if _ps.is_off(v["power_state"])]
     if len(powered_off) >= 5:
         recs.append(f"{len(powered_off)} kapalı VM — konsolidasyon raporu ile kaynak geri kazanımı değerlendirin.")
     if not recs:
@@ -459,8 +479,8 @@ def generate_executive_summary(db: Session) -> Dict[str, Any]:
 
     critical_cnt = sum(1 for e in events if e["severity"] in ("critical", "error"))
     warning_cnt = sum(1 for e in events if e["severity"] == "warning")
-    powered_on = [v for v in vms if v["power_state"] in ("POWERED_ON", "up", "running", "poweredOn")]
-    powered_off = [v for v in vms if v not in powered_on]
+    powered_on = [v for v in vms if _ps.is_on(v["power_state"])]
+    powered_off = [v for v in vms if _ps.is_off(v["power_state"])]
 
     avg_cpu = round(sum(h["cpu_pct"] for h in hosts) / len(hosts), 1) if hosts else 0
     avg_mem = round(sum(h["mem_pct"] for h in hosts) / len(hosts), 1) if hosts else 0
@@ -541,11 +561,13 @@ def generate_capacity_report(db: Session) -> Dict[str, Any]:
         series_rows = db.execute(text("""
             SELECT timestamp, cpu_usage_pct, mem_usage_pct, ds_usage_pct
             FROM hypervisor_host_metrics
-            WHERE host_name = :host
+            WHERE (CASE WHEN CAST(:ref AS text) IS NOT NULL THEN host_ref = CAST(:ref AS text)
+                        ELSE host_name = :host END)
               AND hypervisor_id IS NOT DISTINCT FROM :hid
               AND timestamp >= NOW() - INTERVAL '90 days'
             ORDER BY timestamp ASC
-        """), {"host": h.get("host_key") or h["host"], "hid": h.get("hypervisor_id")}).all()
+        """), {"host": h.get("host_key") or h["host"], "hid": h.get("hypervisor_id"),
+                "ref": h.get("host_ref")}).all()
         cpu_series = ra.aggregate_host_metrics_series(series_rows, value_key="cpu_usage_pct")
         mem_series = ra.aggregate_host_metrics_series(series_rows, value_key="mem_usage_pct")
         ds_series = ra.aggregate_host_metrics_series(series_rows, value_key="ds_usage_pct")
@@ -734,8 +756,8 @@ def generate_risk_dashboard(db: Session) -> Dict[str, Any]:
 
     # VMware Tools yüklü olmayan powered-on VM'ler
     no_tools_vms = [v for v in vms
-                    if v["power_state"] in ("POWERED_ON", "up", "running")
-                    and (not v["tools_status"] or "running" not in (v["tools_status"] or "").lower())]
+                    if _is_vmware_vm(v) and _ps.is_on(v["power_state"])  # VMware Tools: yalnız VMware VM'leri, kanonik güç durumu
+                    and _vmware_tools_missing(v)]
 
     # Bakım modundaki hostlar
     maintenance_hosts = [h for h in hosts if h["maintenance"]]
@@ -792,7 +814,7 @@ def generate_vm_health_scores(db: Session) -> Dict[str, Any]:
         issues = []
 
         # Güç durumu
-        if vm["power_state"] not in ("POWERED_ON", "up", "running", "poweredOn"):
+        if _ps.is_off(vm["power_state"]):
             score -= 20
             issues.append("VM kapalı")
 
@@ -858,7 +880,7 @@ def generate_vm_health_scores(db: Session) -> Dict[str, Any]:
 
 def generate_resource_usage_report(db: Session) -> Dict[str, Any]:
     vms = _get_vms(db)
-    powered_on = [v for v in vms if v["power_state"] in ("POWERED_ON", "up", "running", "poweredOn")]
+    powered_on = [v for v in vms if _ps.is_on(v["power_state"])]
 
     top_cpu = sorted(powered_on, key=lambda v: -(v["cpu_count"] or 0))[:10]
     top_ram = sorted(powered_on, key=lambda v: -(v["memory_gb"] or 0))[:10]
@@ -916,7 +938,8 @@ def generate_security_compliance_report(db: Session) -> Dict[str, Any]:
         os_key = v.get("os_release") or v.get("os_type") or "Bilinmiyor"
         os_dist[os_key] = os_dist.get(os_key, 0) + 1
 
-    powered_on_no_tools = [v for v in no_tools if v["power_state"] in ("POWERED_ON", "up", "running")]
+    # VMware Tools: yalnız VMware VM'leri + kanonik güç durumu (KubeVirt/oVirt/KVM'de Tools kavramı yok)
+    powered_on_no_tools = [v for v in vms if _is_vmware_vm(v) and _ps.is_on(v["power_state"]) and _vmware_tools_missing(v)]
 
     compliance_score = 100
     issues = []
@@ -951,8 +974,8 @@ def generate_security_compliance_report(db: Session) -> Dict[str, Any]:
 def generate_consolidation_report(db: Session) -> Dict[str, Any]:
     vms = _get_vms(db)
 
-    powered_off = [v for v in vms if v["power_state"] not in ("POWERED_ON", "up", "running", "poweredOn")]
-    powered_on = [v for v in vms if v["power_state"] in ("POWERED_ON", "up", "running", "poweredOn")]
+    powered_off = [v for v in vms if _ps.is_off(v["power_state"])]
+    powered_on = [v for v in vms if _ps.is_on(v["power_state"])]
 
     # Toplam kaynak israfı (kapalı VM'lerin tahsisatı)
     wasted_vcpu = sum(v["cpu_count"] or 0 for v in powered_off)
@@ -960,7 +983,7 @@ def generate_consolidation_report(db: Session) -> Dict[str, Any]:
     wasted_disk = sum(v["disk_gb"] or 0 for v in powered_off)
 
     # Gerçek kullanım: son 7 gün virt_vm_metrics ortalaması (right-sizing)
-    usage_rows = db.execute(text("""
+    usage_rows = db.execute(text(f"""
         SELECT COALESCE(server_id::text, vm_name) AS key,
                MAX(vm_name) AS vm_name,
                AVG(cpu_usage_pct) AS avg_cpu,
@@ -970,7 +993,7 @@ def generate_consolidation_report(db: Session) -> Dict[str, Any]:
                COUNT(*) AS samples
         FROM virt_vm_metrics
         WHERE timestamp >= NOW() - INTERVAL '7 days'
-          AND power_state IN ('POWERED_ON', 'poweredOn', 'up', 'running')
+          AND {_ps.sql_is_on('power_state')}
         GROUP BY COALESCE(server_id::text, vm_name)
         HAVING COUNT(*) >= 3
     """)).all()
@@ -1206,14 +1229,16 @@ def generate_forecast_report(db: Session) -> Dict[str, Any]:
 
     for h in hosts:
         host_name = h.get("host_key") or h["host"]
+        # Seri kimliği: host_ref (kalıcı) — yeniden adlandırılan host'un (IP → ad) geçmişi tek seri olur.
         series_rows = db.execute(text("""
             SELECT timestamp, cpu_usage_pct, mem_usage_pct, ds_usage_pct
             FROM hypervisor_host_metrics
-            WHERE host_name = :host
+            WHERE (CASE WHEN CAST(:ref AS text) IS NOT NULL THEN host_ref = CAST(:ref AS text)
+                        ELSE host_name = :host END)
               AND hypervisor_id IS NOT DISTINCT FROM :hid
               AND timestamp >= NOW() - INTERVAL '90 days'
             ORDER BY timestamp ASC
-        """), {"host": host_name, "hid": h.get("hypervisor_id")}).all()
+        """), {"host": host_name, "hid": h.get("hypervisor_id"), "ref": h.get("host_ref")}).all()
 
         cpu_series = ra.aggregate_host_metrics_series(series_rows, value_key="cpu_usage_pct")
         mem_series = ra.aggregate_host_metrics_series(series_rows, value_key="mem_usage_pct")
@@ -1296,10 +1321,11 @@ def generate_finance_report(db: Session) -> Dict[str, Any]:
     ram_rate = cost_cfg.ram_per_gb if cost_cfg else 20.0
     disk_rate = cost_cfg.storage_per_gb if cost_cfg else 0.5
     currency = cost_cfg.currency if cost_cfg else "TL"
+    rates_configured = cost_cfg is not None
 
     vm_costs = []
     for v in vms:
-        if v["power_state"] not in ("POWERED_ON", "up", "running", "poweredOn"):
+        if not _ps.is_on(v["power_state"]):
             continue
         cost = (
             (v["cpu_count"] or 0) * cpu_rate +
@@ -1321,6 +1347,15 @@ def generate_finance_report(db: Session) -> Dict[str, Any]:
     return {
         "generated_at": datetime.utcnow().isoformat(),
         "currency": currency,
+        # Adım 8e: sohbetin etiketi uydurmaması için nitelik/kapsam alanları (yalnız yeni anahtarlar)
+        "is_estimate": True,
+        "rates_configured": rates_configured,
+        "scope": "Tüm hypervisor ve OpenShift Virtualization kayıtlarındaki AÇIK VM'ler (cluster/şirket bazında ayrım yok)",
+        "rates": {
+            "cpu_per_core": cpu_rate,
+            "ram_per_gb": ram_rate,
+            "storage_per_gb": disk_rate,
+        },
         "cost_rates": {
             "cpu_per_core": cpu_rate,
             "ram_per_gb": ram_rate,
@@ -1331,9 +1366,10 @@ def generate_finance_report(db: Session) -> Dict[str, Any]:
         "top_cost_vms": vm_costs[:20],
         "powered_off_savings": round(
             sum((v["cpu_count"] or 0) * cpu_rate + (v["memory_gb"] or 0) * ram_rate
-                for v in vms if v["power_state"] not in ("POWERED_ON", "up", "running", "poweredOn")), 2
+                for v in vms if _ps.is_off(v["power_state"])), 2
         ),
-        "note": "Maliyet hesabı DB'deki tahsisat bilgisine göre yapılmıştır (gerçek tüketim değil).",
+        "note": "Maliyet hesabı DB'deki tahsisat bilgisine göre yapılmıştır (gerçek tüketim değil)."
+                + ("" if rates_configured else " Birim fiyatlar yapılandırılmamış: varsayılan örnek oranlar kullanıldı."),
     }
 
 
@@ -1368,7 +1404,7 @@ def generate_riskiest_assets(db: Session) -> Dict[str, Any]:
     for v in vms:
         risk = server_scores.get(v["name"], 0)
         reasons = []
-        if v["power_state"] not in ("POWERED_ON", "up", "running", "poweredOn"):
+        if not _ps.is_on(v["power_state"]):
             pass  # kapalı VM zaten risk değil (konsolidasyon raporunda)
         else:
             tools = (v["tools_status"] or "").lower()
@@ -2087,6 +2123,11 @@ def format_report_as_markdown(report_type: str, data: Dict[str, Any]) -> str:
     # ── Finans / Maliyet ─────────────────────────────────────────────────────
     elif report_type == "finance":
         cur = data.get("currency", "TL")
+        if data.get("scope"):
+            lines += [f"_Tahmini, tahsisat bazlı maliyet (gerçek tüketim/fatura değil). Kapsam: {data['scope']}._"]
+            if data.get("rates_configured") is False:
+                lines += ["_Birim fiyatlar yapılandırılmamış; varsayılan örnek oranlar kullanıldı._"]
+            lines += [""]
         lines += [
             f"**Aylık Maliyet:** {data.get('total_monthly_cost', 0):,.0f} {cur}",
             f"**Yıllık Maliyet:** {data.get('total_annual_cost', 0):,.0f} {cur}",

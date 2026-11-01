@@ -55,17 +55,25 @@ try:
                 ("computer_id", "INTEGER REFERENCES centrify_computers(id)"),
             ],
         }
+        _mig_failed: list[str] = []
         for _tbl, _cols in _new_cols.items():
             for _col, _typ in _cols:
                 try:
                     _db.execute(__import__("sqlalchemy").text(
                         f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS {_col} {_typ}"
                     ))
-                except Exception:
-                    pass
-        _db.commit()
+                    _db.commit()  # PG: hatalı ifade işlemi bozar; her sütun ayrı işlem
+                except Exception as _col_err:
+                    _db.rollback()
+                    _mig_failed.append(f"{_tbl}.{_col}: {_col_err}")
         _db.close()
-        logger.info("Centrify role/assignment sütun migrasyonu tamamlandı")
+        if _mig_failed:
+            logger.warning("Centrify sütun migrasyonu KISMEN başarısız (%d sütun): %s",
+                           len(_mig_failed), "; ".join(_mig_failed[:5]))
+        else:
+            logger.info("Centrify role/assignment sütun migrasyonu tamamlandı")
+    else:
+        logger.info("Centrify sütun migrasyonu atlandı: Centrify DB erişilemiyor")
 except Exception as _mig_err:
     logger.warning("Centrify sütun migrasyonu atlandı: %s", _mig_err)
 

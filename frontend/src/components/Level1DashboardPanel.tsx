@@ -206,7 +206,7 @@ export default function Level1DashboardPanel() {
               const tot = x.success + x.failed + x.other
               return (
                 <div key={x.date} className="flex-1 flex flex-col items-center justify-end h-full" title={`${x.date}: ${x.success} ✓ / ${x.failed} ✗`}>
-                  <div className="w-full flex flex-col-reverse rounded overflow-hidden" style={{ height: `${(tot / maxDay) * 100}%`, minHeight: tot ? 3 : 0 }}>
+                  <div className="w-full flex flex-col-reverse rounded-sm overflow-hidden" style={{ height: `${(tot / maxDay) * 100}%`, minHeight: tot ? 3 : 0 }}>
                     <div className="bg-emerald-500" style={{ flex: x.success }} />
                     <div className="bg-red-500" style={{ flex: x.failed }} />
                     <div className="bg-slate-500" style={{ flex: x.other }} />

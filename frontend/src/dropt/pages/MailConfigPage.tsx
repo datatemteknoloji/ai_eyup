@@ -80,21 +80,21 @@ export function MailConfigPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("wizard_mail_config")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">
         sendmail kurulum + DS smart-host · Settings SMTP kullanılır
       </p>
 
       <form
         onSubmit={onSubmit}
-        className="mt-6 max-w-xl space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
+        className="mt-6 max-w-xl space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-5"
       >
-        <div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning-bg)] px-3 py-2 text-sm leading-relaxed text-[var(--color-foreground)]">
+        <div className="rounded-lg border border-(--warning)/40 bg-(--warning-bg) px-3 py-2 text-sm leading-relaxed text-(--color-foreground)">
           Talep eden ekibin ÇM üzerinden Relay için Uygulama Üzerinden Mail Gönderim talebini
           oluşturması gerekmektedir.
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Talep ID</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">Talep ID</label>
           <Input value={talepId} onChange={(e) => setTalepId(e.target.value)} required />
         </div>
 
@@ -108,22 +108,22 @@ export function MailConfigPage() {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">SMTP Host</label>
+            <label className="mb-1 block text-xs text-(--color-muted-foreground)">SMTP Host</label>
             <Input className="font-mono" value={smtpHost} readOnly title="Ayarlar’dan gelir" />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+            <label className="mb-1 block text-xs text-(--color-muted-foreground)">
               Test mail (opsiyonel)
             </label>
             <Input className="font-mono" value={testMail} readOnly title="Ayarlar’dan gelir" />
           </div>
         </div>
-        <p className="text-[11px] text-[var(--color-muted-foreground)]">
+        <p className="text-[11px] text-(--color-muted-foreground)">
           SMTP host ve test adresi Ayarlar → Mail / SMTP bölümünden yönetilir. Uygulama sonrası hedef
           sunucuda 25/tcp ve test mail doğrulamaları opsiyonel çalışır.
         </p>
 
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
         <Button type="submit" disabled={busy || !selectedIds.length}>
           {busy ? "…" : t("preview")}
         </Button>

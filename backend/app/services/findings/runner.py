@@ -48,6 +48,8 @@ def _file_scan_due(db: Session, platform: str, source_id: int) -> bool:
 
 
 def _collect(db: Session, platform: str, hv, file_scan: bool) -> Dict[str, Any]:
+    if (getattr(hv, "meta_data", None) or {}).get("fake_seed"):
+        return {"ok": False, "error": "sahte (test) envanter — canlı toplama yapılmaz"}
     if platform == "vmware":
         from app.services.findings.collectors import vmware
         return vmware.collect(hv, file_scan=file_scan)
@@ -193,6 +195,13 @@ def run_for_hypervisor(db: Session, hv, *, file_scan: Optional[bool] = None,
             # G.4: paket yokluğu HİÇBİR mevcut bulguyu kapatmaz (bkz. virt_reference_checks.persist_reference_findings)
             stats.update(virt_reference_checks.persist_reference_findings(
                 db, platform=platform, source_id=hv.id, source_name=hv.name, col=col, run_id=run.id, now=now))
+        # Envanter senkron bayatlığı: toplayıcıdan bağımsız (envanter alınamıyorsa da üretilir); yalnız kendi
+        # kontrolünü çözer (başka sağlık bulgularına dokunmaz).
+        sdraft = virt_health_checks.sync_stale_draft(
+            hv, interval_minutes=_setting_int("inventory_sync_interval_minutes", 5))
+        stats["sync_stale"] = store.persist_findings(
+            db, platform=platform, source_id=hv.id, source_name=hv.name, categories=("health",),
+            drafts=[sdraft], run_id=run.id, now=now, resolve_checks=["inv.sync.stale"])
         # Kapasite DB'den hesaplanır — toplayıcı başarısız olsa da güncellenir
         if capacity is not None:
             from app.services.virt_capacity_planner import capacity_findings

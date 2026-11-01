@@ -74,7 +74,7 @@ def _latest_host_metrics(db: Session, hypervisor_id: int) -> List[HypervisorHost
         .group_by(HypervisorHostMetric.host_name)
         .subquery()
     )
-    return (
+    rows = (
         db.query(HypervisorHostMetric)
         .join(
             subq,
@@ -84,6 +84,9 @@ def _latest_host_metrics(db: Session, hypervisor_id: int) -> List[HypervisorHost
         .filter(HypervisorHostMetric.hypervisor_id == hypervisor_id)
         .all()
     )
+    # Yeniden adlandırılan/envanterden çıkan host'un hayalet satırı sayıma girmesin.
+    from app.services.host_freshness import fresh_hosts
+    return fresh_hosts(rows)
 
 
 def _host_issues(host: HypervisorHostMetric, hv_name: str, platform: str) -> List[Dict[str, Any]]:

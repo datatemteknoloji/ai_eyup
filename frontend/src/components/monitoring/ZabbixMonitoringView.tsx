@@ -79,14 +79,14 @@ function KpiCard({
     info: 'text-sky-400 bg-sky-500/10',
   }[tone]
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[var(--bg-surface)] p-3 min-h-[88px] flex flex-col justify-between">
+    <div className="rounded-xl border border-white/[0.06] bg-(--bg-surface) p-3 min-h-[88px] flex flex-col justify-between">
       <div className="flex items-start justify-between gap-2">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">{label}</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-(--text-muted)">{label}</span>
         <span className={`rounded-md p-1.5 ${toneCls}`}><Icon size={14} /></span>
       </div>
       <div className="mt-2">
-        <div className="text-xl font-semibold text-[var(--text-primary)] tabular-nums tracking-tight">{value}</div>
-        {hint && <div className="text-[11px] text-[var(--text-muted)] mt-0.5 truncate">{hint}</div>}
+        <div className="text-xl font-semibold text-(--text-primary) tabular-nums tracking-tight">{value}</div>
+        {hint && <div className="text-[11px] text-(--text-muted) mt-0.5 truncate">{hint}</div>}
       </div>
     </div>
   )
@@ -95,7 +95,7 @@ function KpiCard({
 function SeverityBadge({ severity }: { severity?: string | number }) {
   const m = severityMeta(severity)
   return (
-    <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ${m.className}`}>
+    <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-sm border ${m.className}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${m.bar}`} aria-hidden />
       {m.label}
     </span>
@@ -104,9 +104,9 @@ function SeverityBadge({ severity }: { severity?: string | number }) {
 
 function EmptyState({ title, body }: { title: string; body?: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-white/[0.08] bg-[var(--bg-surface)]/50 px-4 py-10 text-center">
-      <p className="text-sm text-[var(--text-secondary)]">{title}</p>
-      {body && <p className="text-[11px] text-[var(--text-muted)] mt-1">{body}</p>}
+    <div className="rounded-xl border border-dashed border-white/[0.08] bg-(--bg-surface)/50 px-4 py-10 text-center">
+      <p className="text-sm text-(--text-secondary)">{title}</p>
+      {body && <p className="text-[11px] text-(--text-muted) mt-1">{body}</p>}
     </div>
   )
 }
@@ -117,7 +117,7 @@ function ErrorBanner({ message, hint }: { message: string; hint?: string }) {
       <ShieldAlert className="text-red-400 shrink-0 mt-0.5" size={18} />
       <div>
         <p className="text-sm text-red-300">{message}</p>
-        {hint && <p className="text-[11px] text-[var(--text-muted)] mt-1">{hint}</p>}
+        {hint && <p className="text-[11px] text-(--text-muted) mt-1">{hint}</p>}
       </div>
     </div>
   )
@@ -169,7 +169,7 @@ function SeriesChart({
               borderRadius: 8, fontSize: 11, color: '#e8edf5',
             }}
             labelFormatter={(v) => formatChartLabel(v)}
-            formatter={(val: number, name: string) => [fmtUnit(val, unit), name]}
+            formatter={(val, name) => [fmtUnit(Number(val), unit), name]}
           />
           <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
           {threshold != null && (
@@ -211,18 +211,18 @@ function TopList({
 }) {
   const max = Math.max(...rows.map((r) => r.value), 1)
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[var(--bg-surface)] p-3 h-full">
-      <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">{title}</div>
+    <div className="rounded-xl border border-white/[0.06] bg-(--bg-surface) p-3 h-full">
+      <div className="text-[10px] font-bold uppercase tracking-wider text-(--text-muted) mb-3">{title}</div>
       {!rows.length ? (
-        <p className="text-xs text-[var(--text-muted)]">Veri yok</p>
+        <p className="text-xs text-(--text-muted)">Veri yok</p>
       ) : (
         <ul className="space-y-2">
           {rows.map((r) => (
             <li key={r.hostid}>
               <button type="button" onClick={() => onSelect?.(r.hostid)} className="w-full text-left group">
                 <div className="flex justify-between text-xs mb-1 gap-2">
-                  <span className="text-[var(--text-secondary)] truncate group-hover:text-blue-300">{r.host}</span>
-                  <span className="font-mono text-[var(--text-muted)] shrink-0">{fmtUnit(r.value, unit)}</span>
+                  <span className="text-(--text-secondary) truncate group-hover:text-blue-300">{r.host}</span>
+                  <span className="font-mono text-(--text-muted) shrink-0">{fmtUnit(r.value, unit)}</span>
                 </div>
                 <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
                   <div className="h-full rounded-full bg-blue-500/70" style={{ width: `${Math.min(100, (r.value / max) * 100)}%` }} />
@@ -257,7 +257,7 @@ function MetricSelect({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={className || 'bg-[var(--bg-elevated)] border border-white/[0.08] rounded-md px-2 py-1 text-xs text-[var(--text-primary)]'}
+      className={className || 'bg-(--bg-elevated) border border-white/[0.08] rounded-md px-2 py-1 text-xs text-(--text-primary)'}
     >
       {byFam.map(([fam, rows]) => (
         <optgroup key={fam} label={fam}>
@@ -473,10 +473,10 @@ export const ZabbixMonitoringView: React.FC<{
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <Activity size={16} className="text-blue-400 shrink-0" />
-          <h3 className="text-[15px] font-semibold text-[var(--text-primary)] truncate">
+          <h3 className="text-[15px] font-semibold text-(--text-primary) truncate">
             {titleLabel || ov?.source?.label || 'Zabbix'}
           </h3>
-          <span className="text-[10px] font-mono text-[var(--text-muted)] px-1.5 py-0.5 rounded border border-white/[0.06]">
+          <span className="text-[10px] font-mono text-(--text-muted) px-1.5 py-0.5 rounded-sm border border-white/[0.06]">
             v{ov?.zabbix_version || '—'}
           </span>
         </div>
@@ -488,7 +488,7 @@ export const ZabbixMonitoringView: React.FC<{
                 type="button"
                 onClick={() => setRangeSec(r.sec)}
                 className={`px-2 py-1 text-[11px] font-medium ${
-                  rangeSec === r.sec ? 'bg-blue-600 text-white' : 'text-[var(--text-secondary)] hover:text-white'
+                  rangeSec === r.sec ? 'bg-blue-600 text-white' : 'text-(--text-secondary) hover:text-white'
                 }`}
               >
                 {r.label}
@@ -499,7 +499,7 @@ export const ZabbixMonitoringView: React.FC<{
             type="button"
             onClick={() => setAutoRefresh((v) => !v)}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] ${
-              autoRefresh ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10' : 'border-white/[0.08] text-[var(--text-muted)]'
+              autoRefresh ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10' : 'border-white/[0.08] text-(--text-muted)'
             }`}
           >
             <RefreshCw size={12} />
@@ -512,7 +512,7 @@ export const ZabbixMonitoringView: React.FC<{
                 type="button"
                 onClick={() => setTab(tb.id)}
                 className={`px-2.5 py-1 text-[11px] font-medium ${
-                  tab === tb.id ? 'bg-blue-600 text-white' : 'text-[var(--text-secondary)] hover:text-white'
+                  tab === tb.id ? 'bg-blue-600 text-white' : 'text-(--text-secondary) hover:text-white'
                 }`}
               >
                 {tb.label}
@@ -540,27 +540,27 @@ export const ZabbixMonitoringView: React.FC<{
           </div>
 
           <div className="grid lg:grid-cols-5 gap-3">
-            <div className="lg:col-span-3 rounded-xl border border-white/[0.06] bg-[var(--bg-surface)] p-3">
+            <div className="lg:col-span-3 rounded-xl border border-white/[0.06] bg-(--bg-surface) p-3">
               <div className="flex items-center gap-2 mb-2">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] shrink-0">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-(--text-muted) shrink-0">
                   Top 5 · {t('mon_zbx_all_metrics')}
                 </div>
                 <MetricSelect
                   value={overviewMetric}
                   onChange={setOverviewMetric}
                   metrics={metrics}
-                  className="flex-1 min-w-0 bg-[var(--bg-elevated)] border border-white/[0.08] rounded-md px-2 py-1 text-xs text-[var(--text-primary)]"
+                  className="flex-1 min-w-0 bg-(--bg-elevated) border border-white/[0.08] rounded-md px-2 py-1 text-xs text-(--text-primary)"
                 />
                 <button
                   type="button"
                   onClick={() => setFullscreen('overview')}
-                  className="text-[var(--text-muted)] hover:text-white p-1"
+                  className="text-(--text-muted) hover:text-white p-1"
                   title={t('mon_zbx_fullscreen')}
                 >
                   <Maximize2 size={14} />
                 </button>
               </div>
-              <p className="text-[10px] text-[var(--text-muted)] mb-2">
+              <p className="text-[10px] text-(--text-muted) mb-2">
                 Seçili metrik için son değere göre en yüksek 5 host. Tüm host’lar için Grafikler sekmesinde çoklu seçim kullanın.
               </p>
               <SeriesChart
@@ -592,25 +592,25 @@ export const ZabbixMonitoringView: React.FC<{
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
-              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-(--text-muted)" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={t('mon_zbx_host_search')}
-                className="bg-[var(--bg-elevated)] border border-white/[0.08] rounded-md pl-7 pr-2 py-1.5 text-xs text-[var(--text-primary)] w-56"
+                className="bg-(--bg-elevated) border border-white/[0.08] rounded-md pl-7 pr-2 py-1.5 text-xs text-(--text-primary) w-56"
               />
             </div>
             <select
               value={groupid}
               onChange={(e) => setGroupid(e.target.value)}
-              className="bg-[var(--bg-elevated)] border border-white/[0.08] rounded-md px-2 py-1.5 text-xs text-[var(--text-secondary)] max-w-[14rem]"
+              className="bg-(--bg-elevated) border border-white/[0.08] rounded-md px-2 py-1.5 text-xs text-(--text-secondary) max-w-[14rem]"
             >
               <option value="">{t('mon_zbx_all_groups')}</option>
               {(hosts.data?.groups || []).map((g) => (
                 <option key={g.groupid} value={g.groupid}>{g.name}</option>
               ))}
             </select>
-            <span className="text-[11px] text-[var(--text-muted)]">
+            <span className="text-[11px] text-(--text-muted)">
               {t('mon_zbx_selected_n', { n: selectedHosts.length })} · {t('mon_zbx_max_hosts')}
             </span>
             <button
@@ -622,9 +622,9 @@ export const ZabbixMonitoringView: React.FC<{
               {t('mon_zbx_show_charts')}
             </button>
           </div>
-          <div className="rounded-xl border border-white/[0.06] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="rounded-xl border border-white/[0.06] bg-(--bg-surface) overflow-hidden">
             <table className="w-full text-xs">
-              <thead className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] border-b border-white/[0.06] bg-black/20">
+              <thead className="text-[10px] uppercase tracking-wider text-(--text-muted) border-b border-white/[0.06] bg-black/20">
                 <tr>
                   <th className="w-8 px-3 py-2.5">
                     <input
@@ -662,10 +662,10 @@ export const ZabbixMonitoringView: React.FC<{
                           onChange={() => toggleHost(h.hostid)}
                         />
                       </td>
-                      <td className="px-3 py-2 text-[var(--text-primary)] font-medium">{h.name}</td>
-                      <td className="px-3 py-2 font-mono text-[var(--text-muted)]">{h.host}</td>
-                      <td className="px-3 py-2 font-mono text-[var(--text-muted)]">{h.ip || '—'}</td>
-                      <td className="px-3 py-2 text-[var(--text-muted)] truncate max-w-[14rem]">
+                      <td className="px-3 py-2 text-(--text-primary) font-medium">{h.name}</td>
+                      <td className="px-3 py-2 font-mono text-(--text-muted)">{h.host}</td>
+                      <td className="px-3 py-2 font-mono text-(--text-muted)">{h.ip || '—'}</td>
+                      <td className="px-3 py-2 text-(--text-muted) truncate max-w-[14rem]">
                         {(h.groups || []).map((g) => g.name).join(', ')}
                       </td>
                     </tr>
@@ -682,20 +682,20 @@ export const ZabbixMonitoringView: React.FC<{
         <div className="space-y-3">
           <div className="grid lg:grid-cols-[240px_1fr] gap-3">
             {/* Host multi-select panel */}
-            <div className="rounded-xl border border-white/[0.06] bg-[var(--bg-surface)] p-3 max-h-[70vh] overflow-hidden flex flex-col">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+            <div className="rounded-xl border border-white/[0.06] bg-(--bg-surface) p-3 max-h-[70vh] overflow-hidden flex flex-col">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-(--text-muted) mb-2">
                 {t('mon_zbx_pick_hosts')}
               </div>
               <div className="relative mb-2">
-                <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+                <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-(--text-muted)" />
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={t('mon_zbx_host_search')}
-                  className="w-full bg-[var(--bg-elevated)] border border-white/[0.08] rounded-md pl-7 pr-2 py-1.5 text-xs text-[var(--text-primary)]"
+                  className="w-full bg-(--bg-elevated) border border-white/[0.08] rounded-md pl-7 pr-2 py-1.5 text-xs text-(--text-primary)"
                 />
               </div>
-              <div className="text-[10px] text-[var(--text-muted)] mb-1">
+              <div className="text-[10px] text-(--text-muted) mb-1">
                 {t('mon_zbx_selected_n', { n: selectedHosts.length })}
               </div>
               <ul className="flex-1 overflow-y-auto space-y-0.5 pr-1">
@@ -704,8 +704,8 @@ export const ZabbixMonitoringView: React.FC<{
                   const blocked = !on && selectedHosts.length >= MAX_HOSTS
                   return (
                     <li key={h.hostid}>
-                      <label className={`flex items-center gap-2 px-1.5 py-1 rounded text-xs cursor-pointer ${
-                        on ? 'bg-blue-500/15 text-blue-200' : 'text-[var(--text-secondary)] hover:bg-white/[0.03]'
+                      <label className={`flex items-center gap-2 px-1.5 py-1 rounded-sm text-xs cursor-pointer ${
+                        on ? 'bg-blue-500/15 text-blue-200' : 'text-(--text-secondary) hover:bg-white/[0.03]'
                       } ${blocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                         <input
                           type="checkbox"
@@ -724,7 +724,7 @@ export const ZabbixMonitoringView: React.FC<{
             {/* Metric slots + charts */}
             <div className="space-y-3 min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-(--text-muted)">
                   {t('mon_zbx_pick_metrics')}
                 </span>
                 <div className="relative">
@@ -737,20 +737,20 @@ export const ZabbixMonitoringView: React.FC<{
                     {t('mon_zbx_add_metric')}
                   </button>
                   {metricPickerOpen && (
-                    <div className="absolute z-20 mt-1 w-72 max-h-64 overflow-y-auto rounded-lg border border-white/[0.1] bg-[var(--bg-elevated)] shadow-xl p-1">
+                    <div className="absolute z-20 mt-1 w-72 max-h-64 overflow-y-auto rounded-lg border border-white/[0.1] bg-(--bg-elevated) shadow-xl p-1">
                       {metrics.map((m) => (
                         <button
                           key={m.id}
                           type="button"
-                          className="w-full text-left px-2 py-1.5 text-xs text-[var(--text-secondary)] hover:bg-white/[0.05] rounded"
+                          className="w-full text-left px-2 py-1.5 text-xs text-(--text-secondary) hover:bg-white/[0.05] rounded-sm"
                           onClick={() => {
                             if (!slots.includes(m.id)) setSlots((s) => [...s, m.id])
                             setMetricPickerOpen(false)
                           }}
                         >
-                          <span className="text-[var(--text-primary)]">{m.title}</span>
-                          <span className="text-[var(--text-muted)] font-mono ml-1">{m.id}</span>
-                          {m.unit && <span className="text-[var(--text-muted)] ml-1">· {m.unit}</span>}
+                          <span className="text-(--text-primary)">{m.title}</span>
+                          <span className="text-(--text-muted) font-mono ml-1">{m.id}</span>
+                          {m.unit && <span className="text-(--text-muted) ml-1">· {m.unit}</span>}
                         </button>
                       ))}
                     </div>
@@ -765,7 +765,7 @@ export const ZabbixMonitoringView: React.FC<{
                 {slots.map((metric, i) => {
                   const q = slotQueries[i]
                   return (
-                    <div key={`${metric}-${i}`} className="rounded-xl border border-white/[0.06] bg-[var(--bg-surface)] overflow-hidden">
+                    <div key={`${metric}-${i}`} className="rounded-xl border border-white/[0.06] bg-(--bg-surface) overflow-hidden">
                       <div className="flex items-center gap-2 px-2 py-1.5 border-b border-white/[0.06]">
                         <HardDrive size={12} className="text-blue-400 shrink-0" />
                         <MetricSelect
@@ -778,12 +778,12 @@ export const ZabbixMonitoringView: React.FC<{
                             })
                           }}
                           metrics={metrics}
-                          className="flex-1 min-w-0 bg-transparent text-xs text-[var(--text-primary)] outline-none"
+                          className="flex-1 min-w-0 bg-transparent text-xs text-(--text-primary) outline-hidden"
                         />
                         <button
                           type="button"
                           onClick={() => setFullscreen(i)}
-                          className="text-[var(--text-muted)] hover:text-white p-1"
+                          className="text-(--text-muted) hover:text-white p-1"
                           title={t('mon_zbx_fullscreen')}
                         >
                           <Maximize2 size={14} />
@@ -792,7 +792,7 @@ export const ZabbixMonitoringView: React.FC<{
                           <button
                             type="button"
                             onClick={() => setSlots((prev) => prev.filter((_, j) => j !== i))}
-                            className="text-[var(--text-muted)] hover:text-red-300 p-1"
+                            className="text-(--text-muted) hover:text-red-300 p-1"
                           >
                             <X size={14} />
                           </button>
@@ -826,8 +826,8 @@ export const ZabbixMonitoringView: React.FC<{
             <button
               type="button"
               onClick={() => setSevFilter('all')}
-              className={`text-[10px] font-bold uppercase px-2 py-1 rounded border ${
-                sevFilter === 'all' ? 'border-blue-500/40 bg-blue-500/15 text-blue-300' : 'border-white/[0.08] text-[var(--text-muted)]'
+              className={`text-[10px] font-bold uppercase px-2 py-1 rounded-sm border ${
+                sevFilter === 'all' ? 'border-blue-500/40 bg-blue-500/15 text-blue-300' : 'border-white/[0.08] text-(--text-muted)'
               }`}
             >
               All
@@ -839,8 +839,8 @@ export const ZabbixMonitoringView: React.FC<{
                   key={s}
                   type="button"
                   onClick={() => setSevFilter(s)}
-                  className={`text-[10px] font-bold uppercase px-2 py-1 rounded border ${
-                    sevFilter === s ? m.className : 'border-white/[0.08] text-[var(--text-muted)]'
+                  className={`text-[10px] font-bold uppercase px-2 py-1 rounded-sm border ${
+                    sevFilter === s ? m.className : 'border-white/[0.08] text-(--text-muted)'
                   }`}
                 >
                   {m.label}
@@ -848,9 +848,9 @@ export const ZabbixMonitoringView: React.FC<{
               )
             })}
           </div>
-          <div className="rounded-xl border border-white/[0.06] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="rounded-xl border border-white/[0.06] bg-(--bg-surface) overflow-hidden">
             <table className="w-full text-xs">
-              <thead className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] border-b border-white/[0.06] bg-black/20">
+              <thead className="text-[10px] uppercase tracking-wider text-(--text-muted) border-b border-white/[0.06] bg-black/20">
                 <tr>
                   <th className="text-left px-3 py-2.5 font-bold">Severity</th>
                   <th className="text-left px-3 py-2.5 font-bold">Problem</th>
@@ -862,9 +862,9 @@ export const ZabbixMonitoringView: React.FC<{
                 {filteredProblems.map((p) => (
                   <tr key={p.eventid} className="border-b border-white/[0.03]">
                     <td className="px-3 py-2"><SeverityBadge severity={p.severity} /></td>
-                    <td className="px-3 py-2 text-[var(--text-primary)]">{p.name}</td>
-                    <td className="px-3 py-2 text-[var(--text-muted)]">{(p.hosts || []).join(', ') || '—'}</td>
-                    <td className="px-3 py-2 font-mono text-[var(--text-muted)] whitespace-nowrap">
+                    <td className="px-3 py-2 text-(--text-primary)">{p.name}</td>
+                    <td className="px-3 py-2 text-(--text-muted)">{(p.hosts || []).join(', ') || '—'}</td>
+                    <td className="px-3 py-2 font-mono text-(--text-muted) whitespace-nowrap">
                       {p.clock ? formatChartLabel(Number(p.clock)) : '—'}
                     </td>
                   </tr>
@@ -886,7 +886,7 @@ export const ZabbixMonitoringView: React.FC<{
             <KpiCard label="Unmapped" value={coverage.data?.unmapped_count ?? '—'} icon={AlertTriangle} tone="warn" />
           </div>
           <div className="grid md:grid-cols-2 gap-3">
-            <div className="rounded-xl border border-white/[0.06] bg-[var(--bg-surface)] p-3 max-h-80 overflow-y-auto">
+            <div className="rounded-xl border border-white/[0.06] bg-(--bg-surface) p-3 max-h-80 overflow-y-auto">
               <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400/90 mb-2">Mapped</div>
               <ul className="space-y-1.5">
                 {(coverage.data?.mapped || []).map((m: { metric_id: string; title: string; examples?: { key: string }[] }) => (
@@ -901,16 +901,16 @@ export const ZabbixMonitoringView: React.FC<{
                     >
                       {m.metric_id}
                     </button>
-                    <span className="text-[var(--text-muted)]"> — {m.title}</span>
+                    <span className="text-(--text-muted)"> — {m.title}</span>
                   </li>
                 ))}
               </ul>
             </div>
-            <div className="rounded-xl border border-white/[0.06] bg-[var(--bg-surface)] p-3 max-h-80 overflow-y-auto">
+            <div className="rounded-xl border border-white/[0.06] bg-(--bg-surface) p-3 max-h-80 overflow-y-auto">
               <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400/90 mb-2">Unmapped / orphans</div>
               <ul className="space-y-1">
                 {(coverage.data?.unmapped || []).map((m: { metric_id: string; title: string }) => (
-                  <li key={m.metric_id} className="text-xs text-[var(--text-muted)]">
+                  <li key={m.metric_id} className="text-xs text-(--text-muted)">
                     <span className="font-mono">{m.metric_id}</span> — {m.title}
                   </li>
                 ))}
@@ -926,19 +926,19 @@ export const ZabbixMonitoringView: React.FC<{
           onClick={() => setFullscreen(null)}
         >
           <div
-            className="w-full max-w-6xl rounded-xl border border-white/[0.1] bg-[var(--bg-surface)] p-4"
+            className="w-full max-w-6xl rounded-xl border border-white/[0.1] bg-(--bg-surface) p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3 gap-2">
-              <div className="text-sm font-semibold text-[var(--text-primary)] truncate">
+              <div className="text-sm font-semibold text-(--text-primary) truncate">
                 {titleOf(fsMetric)}{fsUnit ? ` (${fsUnit})` : ''}
                 {hasHostSel && fullscreen !== 'overview' && (
-                  <span className="text-[11px] font-normal text-[var(--text-muted)] ml-2">
+                  <span className="text-[11px] font-normal text-(--text-muted) ml-2">
                     {selectedHosts.length} host
                   </span>
                 )}
               </div>
-              <button type="button" onClick={() => setFullscreen(null)} className="text-[var(--text-muted)] hover:text-white">
+              <button type="button" onClick={() => setFullscreen(null)} className="text-(--text-muted) hover:text-white">
                 <X size={18} />
               </button>
             </div>

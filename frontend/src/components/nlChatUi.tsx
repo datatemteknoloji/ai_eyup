@@ -4,8 +4,10 @@
  */
 import React, { useLayoutEffect, useRef, useState } from 'react'
 import {
-  History, Plus, Trash2, Search, Loader2, Send, Lightbulb, ChevronLeft, ChevronRight,
+  History, Plus, Trash2, Search, Loader2, Send, Lightbulb, BarChart3, ChevronLeft, ChevronRight,
 } from 'lucide-react'
+
+import { CHAT_FONT_SIZES, getChatFontSize, setChatFontSize, type ChatFontSize } from '../lib/chatFontSize'
 
 const HISTORY_COLLAPSE_KEY = 'ainew.nl-history-collapsed'
 
@@ -38,7 +40,7 @@ export function NlChatRoot({
   return (
     <div
       className={`flex bg-slate-900 min-h-0 overflow-hidden ${
-        embedded ? 'h-full' : '-m-5 h-[calc(100vh-3.5rem)]'
+        embedded ? 'h-full' : '-m-5 flex-1'  // main flex-col: DEMO bandı varken de taşmaz
       }`}
     >
       {children}
@@ -84,7 +86,7 @@ export function NlHistorySidebar({
 
   if (collapsed) {
     return (
-      <div className="nl-history-sidebar w-12 flex-shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col items-center py-3 gap-2 min-h-0 transition-[width] duration-300">
+      <div className="nl-history-sidebar w-12 shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col items-center py-3 gap-2 min-h-0 transition-[width] duration-300">
         <button
           type="button"
           onClick={() => setCollapsedPersist(false)}
@@ -114,10 +116,10 @@ export function NlHistorySidebar({
   }
 
   return (
-    <div className="nl-history-sidebar w-64 flex-shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col min-h-0 transition-[width] duration-300">
-      <div className="p-3 border-b border-slate-700/50 space-y-2 flex-shrink-0">
+    <div className="nl-history-sidebar w-56 shrink-0 border-r border-slate-700/50 bg-slate-900/80 flex flex-col min-h-0 transition-[width] duration-300">
+      <div className="p-2 border-b border-slate-700/50 space-y-1.5 shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)]">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-(--text-secondary)">
             <History size={14} />
             Geçmiş
           </div>
@@ -157,7 +159,7 @@ export function NlHistorySidebar({
               value={search}
               onChange={e => onSearchChange(e.target.value)}
               placeholder="Sohbetlerde ara..."
-              className="w-full bg-slate-800 border border-slate-700/50 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
+              className="w-full bg-slate-800 border border-slate-700/50 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-blue-500/50"
             />
           </div>
         )}
@@ -199,7 +201,7 @@ export function NlHistorySidebar({
               <button
                 type="button"
                 onClick={e => { e.stopPropagation(); onDelete(session.id) }}
-                className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition-opacity flex-shrink-0"
+                className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition-opacity shrink-0"
               >
                 <Trash2 size={12} />
               </button>
@@ -217,8 +219,8 @@ export function NlChatPanel({ children }: { children: React.ReactNode }) {
 
 export function NlTopBar({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex-shrink-0 px-4 py-3 border-b border-slate-700/50 bg-slate-900/80">
-      <div className="flex items-center gap-3 flex-wrap">{children}</div>
+    <div className="shrink-0 px-3 py-1.5 border-b border-slate-700/50 bg-slate-900/80">
+      <div className="flex items-center gap-2 flex-wrap">{children}</div>
     </div>
   )
 }
@@ -235,6 +237,7 @@ export function NlModelSelect({
   storageKey?: string
 }) {
   return (
+    <div className="flex items-center gap-3 flex-wrap">
     <div className="flex items-center gap-2">
       <span className="text-slate-400 text-sm font-medium">Model:</span>
       <select
@@ -243,7 +246,7 @@ export function NlModelSelect({
           onChange(e.target.value)
           if (storageKey) localStorage.setItem(storageKey, e.target.value)
         }}
-        className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[180px]"
+        className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-xl text-white text-sm font-medium hover:border-blue-500 focus:outline-hidden focus:ring-2 focus:ring-blue-400 cursor-pointer min-w-[180px]"
         style={{ appearance: 'auto', colorScheme: 'dark' }}
       >
         {models.map(m => (
@@ -252,6 +255,35 @@ export function NlModelSelect({
           </option>
         ))}
       </select>
+    </div>
+    <NlFontSizeSelect />
+    </div>
+  )
+}
+
+/** Adım 16: sohbet yazı boyutu seçici (tüm NL sohbet ekranlarında model seçicinin yanında). */
+export function NlFontSizeSelect() {
+  const [size, setSize] = useState<ChatFontSize>(() => getChatFontSize())
+  return (
+    <div className="flex items-center gap-1.5" data-testid="chat-font-size">
+      <span className="text-slate-400 text-sm font-medium">Yazı:</span>
+      <div className="inline-flex rounded-xl border border-slate-600 overflow-hidden">
+        {CHAT_FONT_SIZES.map(o => (
+          <button
+            key={o.id}
+            type="button"
+            title={`${o.px} px`}
+            aria-pressed={size === o.id}
+            onClick={() => { setSize(o.id); setChatFontSize(o.id) }}
+            className={`px-2.5 py-1.5 font-medium transition-colors ${
+              size === o.id ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+            style={{ fontSize: `${Math.min(o.px, 15)}px`, lineHeight: 1 }}
+          >
+            A
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
@@ -305,28 +337,55 @@ export function NlEmptyState({
   title = 'Altyapınızı Sorgulayın',
   description,
   suggestions,
+  reportSuggestions,
+  reportTitle = 'Rapor soruları',
+  sampleTitle = 'Örnek sorular',
   onSelectSuggestion,
 }: {
   icon: React.ReactNode
   title?: string
   description: string
   suggestions?: string[]
+  /** «Rapor soruları» chip'leri (Sanallaştırma sohbetindeki gibi, örnek sorulardan ÖNCE) */
+  reportSuggestions?: string[]
+  reportTitle?: string
+  sampleTitle?: string
   onSelectSuggestion?: (q: string) => void
 }) {
   return (
     <div className="max-w-2xl mx-auto mt-6 space-y-6">
       <div className="text-center space-y-2">
-        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center mx-auto shadow-xl shadow-blue-500/20">
+        <div className="w-14 h-14 rounded-2xl bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center mx-auto shadow-xl shadow-blue-500/20">
           {icon}
         </div>
         <h2 className="text-lg font-semibold text-white">{title}</h2>
         <p className="text-slate-400 text-sm max-w-md mx-auto">{description}</p>
       </div>
+      {reportSuggestions && reportSuggestions.length > 0 && onSelectSuggestion && (
+        <div data-testid="nl-report-questions">
+          <div className="flex items-center gap-2 text-xs text-emerald-500 mb-2">
+            <BarChart3 size={12} />
+            <span>{reportTitle}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {reportSuggestions.slice(0, 12).map(s => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => onSelectSuggestion(s)}
+                className="text-xs px-3 py-1.5 rounded-full bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-300 border border-emerald-500/30 transition-all"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {suggestions && suggestions.length > 0 && onSelectSuggestion && (
         <div>
           <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
             <Lightbulb size={12} />
-            <span>Örnek sorular</span>
+            <span>{sampleTitle}</span>
           </div>
           <div className="flex flex-wrap gap-2">
             {suggestions.slice(0, 8).map(s => (
@@ -347,14 +406,14 @@ export function NlEmptyState({
 }
 
 /** Mesaj sütunu — tablolar sığsın diye 48rem yerine sayfanın büyük kısmı */
-export const nlChatColumnClass = 'w-full max-w-7xl mx-auto'
+export const nlChatColumnClass = 'w-full max-w-[96rem] mx-auto'
 
 /** Kullanıcı balonu dar kalır; asistan cevabı sütunun tamamını kullanır */
 export const nlUserBubbleClass =
-  'min-w-0 max-w-[min(72%,42rem)] rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed overflow-hidden bg-blue-600 text-white'
+  'chat-user-text min-w-0 max-w-[min(72%,42rem)] rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed overflow-hidden bg-blue-600 text-white'
 
 export const nlAssistantBubbleClass =
-  'min-w-0 w-full max-w-full rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed overflow-hidden bg-slate-800 text-slate-100 border border-slate-700/50'
+  'chat-assistant-text min-w-0 w-full max-w-full rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed overflow-hidden bg-slate-800 text-slate-100 border border-slate-700/50'
 
 export function NlChatInput({
   value,
@@ -392,9 +451,9 @@ export function NlChatInput({
   }
 
   return (
-    <div className={`px-4 pb-4 ${nlChatColumnClass} flex-shrink-0`}>
+    <div className={`px-3 pb-2 ${nlChatColumnClass} shrink-0`}>
       {extra}
-      <div className="flex items-end gap-2 bg-slate-800 border border-slate-700/50 rounded-2xl px-4 py-3 focus-within:border-blue-500/50 transition-colors">
+      <div className="flex items-end gap-2 bg-slate-800 border border-slate-700/50 rounded-2xl px-4 py-2 focus-within:border-blue-500/50 transition-colors">
         <textarea
           ref={ref}
           value={value}
@@ -403,14 +462,14 @@ export function NlChatInput({
           placeholder={loading ? 'AI düşünüyor...' : placeholder}
           rows={1}
           disabled={!!loading && !onAbort}
-          className="flex-1 bg-transparent text-white placeholder-slate-500 text-sm resize-none focus:outline-none leading-relaxed disabled:opacity-70"
+          className="chat-user-text flex-1 bg-transparent text-white placeholder-slate-500 text-sm resize-none focus:outline-hidden leading-relaxed disabled:opacity-70"
           style={{ minHeight: '24px', maxHeight: '160px', overflowY: 'auto' }}
         />
         {loading && onAbort ? (
           <button
             type="button"
             onClick={onAbort}
-            className="h-8 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium transition-all flex-shrink-0"
+            className="h-8 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium transition-all shrink-0"
           >
             Durdur
           </button>
@@ -419,7 +478,7 @@ export function NlChatInput({
             type="button"
             onClick={onSubmit}
             disabled={!value.trim() || loading}
-            className="w-8 h-8 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:opacity-50 flex items-center justify-center transition-all flex-shrink-0"
+            className="w-8 h-8 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:opacity-50 flex items-center justify-center transition-all shrink-0"
           >
             {loading ? (
               <Loader2 size={15} className="text-white animate-spin" />
@@ -429,7 +488,7 @@ export function NlChatInput({
           </button>
         )}
       </div>
-      <p className="text-center text-[10px] text-slate-600 mt-1.5">{hint}</p>
+      <p className="text-center text-[10px] text-slate-600 mt-1">{hint}</p>
     </div>
   )
 }

@@ -555,7 +555,7 @@ const EnterpriseMetricChart: React.FC<{
             <Tooltip
               contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
               labelStyle={{ color: '#94a3b8' }}
-              formatter={(value: number) => [unit ? `${Number(value).toFixed(2)} ${unit}` : Number(value).toFixed(2), '']}
+              formatter={(value) => [unit ? `${Number(value).toFixed(2)} ${unit}` : Number(value).toFixed(2), '']}
               labelFormatter={(label) => `${t('lm_time')}: ${label}`}
             />
             {seriesKeys.length <= 8 && (
@@ -1007,7 +1007,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
           <button
             type="button"
             onClick={() => setRealTimeMode((prev) => !prev)}
-            className={`flex items-center gap-2 rounded-lg px-4 py-2.5 font-medium text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 ${
+            className={`flex items-center gap-2 rounded-lg px-4 py-2.5 font-medium text-sm transition-all focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 ${
               realTimeMode
                 ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/25 focus:ring-emerald-500'
                 : 'bg-white/[0.07] text-slate-300 hover:bg-slate-600 focus:ring-slate-500'
@@ -1032,7 +1032,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
               onChange={(e) => setTimeRangeIndex(Number(e.target.value))}
               disabled={realTimeMode}
               style={{ colorScheme: 'dark' }}
-              className="bg-cyber-card border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-cyber-card border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {TIME_RANGES.map((r, i) => (
                 <option key={r.value} value={i} className="bg-slate-900 text-white">{t(r.labelKey)}</option>
@@ -1046,7 +1046,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
             <button
               type="button"
               onClick={() => setInstanceDropdownOpen((prev) => !prev)}
-              className="flex items-center gap-2 min-w-[220px] bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white text-left hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex items-center gap-2 min-w-[220px] bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white text-left hover:bg-white/[0.06] focus:outline-hidden focus:ring-2 focus:ring-blue-500"
             >
               <span className="truncate">
                 {selectedInstances.length === 0
@@ -1063,14 +1063,14 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
                     value={instanceSearch}
                     onChange={(e) => setInstanceSearch(e.target.value)}
                     placeholder={t('lm_search_server')}
-                    className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div className="flex items-center gap-2 p-2 border-b border-white/[0.06]">
                   <button
                     type="button"
                     onClick={() => setSelectedInstances([])}
-                    className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded"
+                    className="text-xs text-slate-400 hover:text-slate-300 px-2 py-1 rounded-sm"
                   >
                     {t('lm_clear_all')}
                   </button>
@@ -1086,7 +1086,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
                         .map((s) => s.instance)
                       setSelectedInstances([...new Set(filtered)].slice(0, MAX_SELECTED_INSTANCES))
                     }}
-                    className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded"
+                    className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded-sm"
                   >
                     {t('lm_select_filter', { n: MAX_SELECTED_INSTANCES })}
                   </button>
@@ -1122,16 +1122,16 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
                               return [...prev, s.instance]
                             })
                           }}
-                          className="h-4 w-4 text-blue-500 rounded border-slate-600 bg-cyber-card focus:ring-blue-500"
+                          className="h-4 w-4 text-blue-500 rounded-sm border-slate-600 bg-cyber-card focus:ring-blue-500"
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.live ? 'bg-green-400' : 'bg-orange-400'}`} />
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.live ? 'bg-green-400' : 'bg-orange-400'}`} />
                             <span className={`text-sm font-medium truncate ${s.live ? 'text-white' : 'text-slate-400'}`}>
                               {s.name}
                             </span>
                             {!s.live && (
-                              <span className="text-xs text-orange-400/70 flex-shrink-0">{t('lm_no_scrape')}</span>
+                              <span className="text-xs text-orange-400/70 shrink-0">{t('lm_no_scrape')}</span>
                             )}
                           </div>
                           <div className="text-xs text-slate-500 font-mono truncate">{s.instance}</div>
@@ -1148,7 +1148,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
               placeholder={t('lm_host_filter')}
               value={hostFilter}
               onChange={(e) => setHostFilter(e.target.value)}
-              className="w-48 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-48 bg-cyber-card border border-white/[0.06] rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
             />
           )}
 
@@ -1159,7 +1159,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
                 value={realTimeRefetchMs}
                 onChange={(e) => setRealTimeRefetchMs(Number(e.target.value))}
                 style={{ colorScheme: 'dark' }}
-                className="bg-cyber-card border border-white/[0.06] rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="bg-cyber-card border border-white/[0.06] rounded-lg px-2 py-1.5 text-white text-xs focus:outline-hidden focus:ring-2 focus:ring-blue-500"
               >
                 {REAL_TIME_REFETCH_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">{opt.labelKey ? t(opt.labelKey) : opt.label}</option>
@@ -1179,7 +1179,7 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
       {/* Down sunucu uyarısı */}
       {selectedInstances.length > 0 && selectedInstances.some(i => instanceUpStatus[i] === false) && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-start gap-3">
-          <span className="text-[10px] font-bold text-amber-400 mt-0.5 bg-amber-500/15 border border-amber-500/30 px-1 rounded leading-4 self-start">!</span>
+          <span className="text-[10px] font-bold text-amber-400 mt-0.5 bg-amber-500/15 border border-amber-500/30 px-1 rounded-sm leading-4 self-start">!</span>
           <div>
             <p className="text-amber-300 text-sm font-medium">{t('lm_no_data_selected')}</p>
             <p className="text-amber-400/70 text-xs mt-0.5">
@@ -1252,14 +1252,14 @@ const LiveMetrics: React.FC<{ embedded?: boolean; platform?: 'linux' | 'windows'
                 <label className="text-xs font-medium text-slate-400 whitespace-nowrap">
                   {t('lm_chart_metric', { n: slotIndex + 1 })}
                 </label>
-                <button type="button" onClick={() => setFullscreenSlot(slotIndex)} className="text-slate-400 hover:text-white p-1 rounded hover:bg-white/[0.06] transition-colors" title={t('lm_fullscreen')}>
+                <button type="button" onClick={() => setFullscreenSlot(slotIndex)} className="text-slate-400 hover:text-white p-1 rounded-sm hover:bg-white/[0.06] transition-colors" title={t('lm_fullscreen')}>
                   <Maximize2 size={14} />
                 </button>
                 <select
                   value={chartSlots[slotIndex] ?? DEFAULT_CHART_METRICS[slotIndex]}
                   onChange={(e) => setChartSlot(slotIndex, e.target.value)}
                   style={{ colorScheme: 'dark' }}
-                  className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[220px]"
+                  className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500 min-w-[220px]"
                 >
                     <optgroup label={t('lm_presets')} className="bg-slate-900 text-white">
                     {activePresets.map((p) => (

@@ -41,6 +41,15 @@ def _stale(ts: Optional[datetime], max_age_sec: int) -> bool:
     return age > max_age_sec
 
 
+def _hv_breakdown(db: Session, grp) -> List[Dict[str, Any]]:
+    """[(hypervisor_id, adet)] → [{hypervisor, count}] (adet azalan)."""
+    ids = {h for h, _c in grp if h}
+    names = {h.id: h.name for h in db.query(Hypervisor).filter(Hypervisor.id.in_(ids)).all()} if ids else {}
+    out = [{"hypervisor": names.get(h) or "(hypervisor yok)", "count": int(c)} for h, c in grp]
+    out.sort(key=lambda x: -x["count"])
+    return out
+
+
 def list_vms_db(
     db: Session,
     *,
@@ -107,7 +116,16 @@ def list_vms_db(
     if name_filter:
         q = q.filter(Server.vm_name.ilike(f"%{name_filter.strip()}%"))
 
-    rows = q.order_by(Server.name.asc()).limit(max(1, min(limit, 500))).all()
+    row_cap = max(1, min(limit, 500))
+    # Kesilme dürüstlüğü: filtreye uyan GERÇEK toplam + hypervisor dağılımı (liste ad sırasıyla row_cap'e kesilir;
+    # önceden «Toplam: 500 VM» yazılıp kalan VM'ler sessizce düşüyordu).
+    from sqlalchemy import func as _fn
+    _grp = (
+        q.with_entities(Server.hypervisor_id, _fn.count(Server.id))
+        .group_by(Server.hypervisor_id).all()
+    )
+    total_matching = int(sum(c for _h, c in _grp))
+    rows = q.order_by(Server.name.asc()).limit(row_cap).all()
     hv_map = {
         h.id: h.name
         for h in db.query(Hypervisor).filter(
@@ -186,6 +204,9 @@ def list_vms_db(
         "ok": True,
         "source": "db",
         "count": len(items),
+        "total_matching": total_matching,
+        "truncated": total_matching > len(items),
+        "hypervisor_breakdown": _hv_breakdown(db, _grp) if total_matching > len(items) else [],
         "disk_null_count": null_disk,
         "as_of": oldest_sync.isoformat() if oldest_sync else None,
         "stale": _stale(oldest_sync, 12 * 3600),
@@ -197,6 +218,12 @@ def list_vms_db(
             "disk_gb dolu satıra 'toplanmadı' yazma; null ise sync enrichment gerekir. "
             "TERİM: hypervisor/vcenter = vCenter kaydı adı (örn. Office); "
             "host/esxi_host = ESXi compute host (örn. 192.168.1.101). Karıştırma."
+            + (
+                f" UYARI: liste KESİLDİ — filtreye uyan toplam {total_matching} VM, yalnız ilk {len(items)} (ad sırası) döndü; "
+                "toplam olarak SADECE total_matching'i söyle, listelenenlerin sayısını toplam diye sunma; "
+                "hypervisor_breakdown tam dağılımdır."
+                if total_matching > len(items) else ""
+            )
         ),
     }
 
@@ -403,6 +430,8 @@ def list_esx_hosts_db(
         .order_by(HypervisorHostMetric.host_name.asc())
         .all()
     )
+    from app.services.host_freshness import fresh_hosts
+    rows = fresh_hosts(rows)
     hv_ids = {r.hypervisor_id for r in rows}
     hv_map = {
         h.id: h.name

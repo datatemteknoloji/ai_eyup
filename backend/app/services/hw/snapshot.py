@@ -98,6 +98,9 @@ class FirmwareRec:
     name: str = ""
     component_type: Optional[str] = None
     version: Optional[str] = None
+    status: Optional[str] = None           # Installed | Available
+    component_id: Optional[str] = None
+    location: Optional[str] = None         # HPE: componentLocation (aynı adlı bileşenleri ayırır)
 
 
 @dataclass
@@ -109,6 +112,8 @@ class HwSnapshot:
     alerts: List[AlertRec] = field(default_factory=list)
     warranties: List[WarrantyRec] = field(default_factory=list)
     firmware: List[FirmwareRec] = field(default_factory=list)
+    firmware_cursors: Dict[str, int] = field(default_factory=dict)     # yönetim noktası → sonraki turun başlangıç sırası
+    firmware_progress: Dict[str, Dict[str, int]] = field(default_factory=dict)   # yönetim noktası → {"read": n, "total": m}
     warnings: List[str] = field(default_factory=list)
     not_measurable: List[str] = field(default_factory=list)   # "alan: neden" (kartta gösterilir)
     complete_managers: Set[str] = field(default_factory=set)  # envanteri TAM okunabilen yönetim noktaları

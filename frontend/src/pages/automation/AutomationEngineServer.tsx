@@ -26,7 +26,7 @@ export default function AutomationEngineServer() {
 
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-300"><Server size={18} /></div>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-300"><Server size={18} /></div>
           <div className="min-w-0">
             <h1 className="font-mono text-lg font-semibold text-white break-all">{ip}</h1>
             <p className="text-xs text-slate-500">{server?.node ? `${server.node} · ` : ''}{d ? d.system : '…'} · engine sunucusu</p>

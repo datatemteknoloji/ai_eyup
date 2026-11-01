@@ -10,6 +10,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,7 @@ def ingest_syslog_message(
         sev = _SEV_MAP.get(severity_num, "warning")
         title = _clean_title_for_storage(message)[:200] or message[:200]
         norm = _normalize_for_dedup(message)[:120]
-        now = datetime.utcnow()
+        now = utc_now()
 
         # Son 24s aynı normalize key → occurrence artır
         since = now - timedelta(hours=24)

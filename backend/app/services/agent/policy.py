@@ -77,12 +77,104 @@ DESTRUCTIVE_PATTERNS: List[re.Pattern] = [
     re.compile(r"\bvgreduce\b", re.I),
 ]
 
-# Komut zincirleme / enjeksiyon karakterleri (mutating sayılır, ham komutta).
-_CHAINING = re.compile(r"[;&|`]|\$\(|\&\&|\|\|")
+# Komut zincirleme / enjeksiyon / yönlendirme karakterleri (mutating sayılır, ham komutta).
+# `>`/`<` (dosya yazma/okuma yönlendirmesi), satır sonu ve `${` genişletmesi dahil.
+_CHAINING = re.compile(r"[;&|`<>\n\r]|\$\(|\$\{|\&\&|\|\|")
+# Zararsız stderr atma kalıbı chaining sayılmaz.
+_STDERR_NULL = re.compile(r"\s2>\s*/dev/null\b")
 
 
 def _first_tokens(command: str) -> List[str]:
     return [t for t in command.strip().split() if t]
+
+
+# ── Binary'ye özgü argüman doğrulaması (yalnız READ_ONLY_COMMANDS içindekiler) ──────
+_IP_RO_OBJECTS = {
+    "addr", "a", "address", "link", "l", "route", "r", "neigh", "n", "neighbor",
+    "neighbour", "rule", "maddr", "maddress", "tunnel", "tuntap", "netconf",
+    "mroute", "mrule", "vrf",
+}
+_IP_MUTATING_VERBS = {
+    "add", "del", "delete", "set", "flush", "change", "replace", "append", "prepend",
+    "exec", "save", "restore", "test",
+}
+# ip seçenekleri: -b/-batch dosyadan komut çalıştırır, -n/-netns ad alanı değiştirir
+_IP_FORBIDDEN_OPTS = {"-b", "-batch", "-force", "-n", "-netns", "-rc", "-rcvbuf"}
+_FIND_FORBIDDEN = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0",
+                   "-fprintf", "-fls"}
+_HOSTNAME_FLAGS = {"-f", "-i", "-I", "-s", "-d", "-A", "-a", "-y", "--fqdn", "--ip-address",
+                   "--all-ip-addresses", "--short", "--domain", "--alias", "--long", "--all-fqdns"}
+_FS_TYPE = re.compile(r"^[A-Za-z0-9_,.+-]+$")
+_IFACE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+
+
+def _short_cluster_has(arg: str, ch: str) -> bool:
+    """`-tK` gibi kısa bayrak kümesinde ch var mı (`--uzun` bayraklar hariç)."""
+    return arg.startswith("-") and not arg.startswith("--") and ch in arg[1:]
+
+
+def _ip_ok(args: List[str]) -> bool:
+    low = [a.lower() for a in args]
+    i = 0
+    while i < len(low) and low[i].startswith("-"):
+        if low[i] in _IP_FORBIDDEN_OPTS:
+            return False
+        i += 1
+    if i >= len(low) or low[i] not in _IP_RO_OBJECTS:
+        return False
+    return not any(a in _IP_MUTATING_VERBS for a in low[i + 1:])
+
+
+def _readonly_args_ok(binary: str, args: List[str]) -> bool:
+    """READ_ONLY_COMMANDS içindeki binary'nin argümanları gerçekten salt-okunur mu."""
+    low = [a.lower() for a in args]
+    if binary == "ss":
+        return not any(a == "--kill" or _short_cluster_has(a, "K") for a in args)
+    if binary == "ip":
+        return _ip_ok(args)
+    if binary == "sar":
+        return not any(a == "-o" or (a.startswith("-o") and not a.startswith("--")) for a in args)
+    if binary == "find":
+        return not any(a in _FIND_FORBIDDEN or a.startswith("-fprint") for a in low)
+    if binary == "route":
+        return all(a in {"-n", "-e", "-ee", "-v", "-c", "-f", "-4", "-6"} for a in low)
+    if binary == "arp":
+        return all(a in {"-a", "-n", "-e", "-v", "--all", "--numeric"} for a in low)
+    if binary == "ifconfig":
+        if not args:
+            return True
+        if all(a in {"-a", "-s", "-v"} for a in low):
+            return True
+        return len(args) == 1 and not args[0].startswith("-") and bool(_IFACE.match(args[0]))
+    if binary == "date":
+        return not any(a == "-s" or a.startswith("--set") or (a.startswith("-s") and not a.startswith("--"))
+                       for a in low)
+    if binary == "hostname":
+        return all(a in _HOSTNAME_FLAGS for a in args)
+    if binary == "env":
+        return not args
+    if binary == "mount":
+        k = 0
+        while k < len(low):
+            if low[k] in ("-l", "--show-labels"):
+                k += 1
+            elif low[k] == "-t" and k + 1 < len(args) and _FS_TYPE.match(args[k + 1]):
+                k += 2
+            else:
+                return False
+        return True
+    if binary == "dmesg":
+        return not any(a in {"-c", "-C", "--clear", "--read-clear"} or _short_cluster_has(a, "c") or
+                       _short_cluster_has(a, "C") for a in args)
+    if binary == "journalctl":
+        bad = ("--vacuum", "--rotate", "--flush", "--sync", "--relinquish", "--smart-relinquish",
+               "--setup-keys", "--update-catalog")
+        return not any(a.startswith(bad) for a in low)
+    if binary == "ping":
+        return not any(_short_cluster_has(a, "f") for a in args)
+    if binary in ("dnf", "yum") and low[:1] == ["history"]:
+        return len(low) == 1 or low[1] in {"list", "info", "summary", "userinstalled"}
+    return True
 
 
 def is_destructive(command: str) -> bool:
@@ -118,10 +210,15 @@ def classify_command(command: str) -> RiskLevel:
         return RiskLevel.MUTATING if not is_destructive(cmd) else RiskLevel.DENIED
 
     # Komut zincirleme varsa read-only sayma (enjeksiyon riski) → MUTATING
-    if _CHAINING.search(cmd):
+    if _CHAINING.search(_STDERR_NULL.sub("", cmd)):
         return RiskLevel.MUTATING
 
     if binary in READ_ONLY_COMMANDS:
+        # Binary'ye özgü tehlikeli bayrak/alt komutlar (ör. ss -K, ip ... flush, find -delete)
+        if not _readonly_args_ok(binary, tokens[1:]):
+            return RiskLevel.MUTATING
+        if binary == "ip":
+            return RiskLevel.READ_ONLY
         # Alt komut kısıtlaması olan binary'ler
         if binary in SUBCOMMAND_READONLY:
             allowed = SUBCOMMAND_READONLY[binary]

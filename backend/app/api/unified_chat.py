@@ -9,17 +9,25 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, delete
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from app.services.chat_text_norm import normalize_user_text
 from typing import Optional, List
 from datetime import datetime, timezone
 import asyncio as _asyncio
+import time as _time_mod
 import json as _json
 import logging
 import httpx
 
-from app.services.chat_rules import NUMBER_RULE_TR
+from app.services import runtime_settings as runtime_settings_mod
+
+from app.core.chat_executor import run_chat_io
+from app.services.chat_quality import trace as _cq_trace
+from app.services.chat_rules import (
+    NUMBER_RULE_TR, ADVICE_RULE_TR, HONESTY_RULE_TR, USER_LANGUAGE_RULE_TR, OC_RULE_TR,
+)
 from app.core.auth import get_current_user, get_current_user_optional
-from app.core.database import get_db
+from app.core.database import get_db, release_txn
 from app.core.config import settings, get_active_model
 from app.models.server import Server
 from app.models.chat_session import ChatSession, ChatMessage
@@ -81,6 +89,19 @@ def _sse(obj: dict) -> str:
     return "data: " + _json.dumps(obj) + "\n\n"
 
 
+# Adım 17: Adım 14 yardımcıları ortak modüle taşındı (Windows / Linux·OpenShift / Sanallaştırma da kullanır);
+# adlar geriye dönük uyumluluk için burada korunur.
+from app.services.chat_live_final import (  # noqa: E402
+    SINGLE_PASS_RULES as _SINGLE_PASS_RULES,
+    PACE_TOTAL_S as _PACE_TOTAL_S,
+    PACE_MAX_CHUNKS as _PACE_MAX_CHUNKS,
+    paced_plan,
+    paced_chunks as _paced_chunks,
+    thinking_allowed,
+    final_think_level,
+)
+
+
 # ── Sunucu envanteri yardımcıları ────────────────────────────────────────────
 def _linux_ai_ready_servers(db: Session) -> List[Server]:
     return [s for s in db.query(Server).filter(Server.ai_ready == True).all() if not is_windows_server(s)]
@@ -99,10 +120,19 @@ def _infra_overview(db: Session) -> str:
 # ── İstek/yanıt modelleri ─────────────────────────────────────────────────────
 class UnifiedChatRequest(BaseModel):
     message: str
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def _normalize_message(cls, v):
+        # Adım 19: modelin yazdığı kırılmaz tire (U+2011) vb. kopyalanıp sorulunca ad eşleşmesi bozulmasın
+        return normalize_user_text(v) if isinstance(v, str) else v
     session_id: Optional[int] = None
     model: Optional[str] = None
     use_rag: Optional[bool] = True
     skip_server_context: Optional[bool] = False
+    # Admin/bench: iç tur izi (varsayılan KAPALI; admin değilse yok sayılır)
+    debug_trace: Optional[bool] = False
+    now_override: Optional[str] = None
 
 
 _CHAT_MODULE_MAP = {
@@ -273,6 +303,7 @@ def _build_prompt(
     collection_summary: str,
     history_block: str = "",
     output_directive: Optional[str] = None,
+    wants_openshift: bool = False,
 ) -> str:
     NL = "\n"
     identity = NL.join([
@@ -367,9 +398,10 @@ def _build_prompt(
         "   gerektiren bir konuysa somut kanıt, olası neden ve risk uyarısı ekleyerek genişlet.",
         "   HER cevaba aynı sabit şablonu (kök neden → tanı komutu → numaralı adım → risk)",
         "   zorla uygulama.",
-        "7. TOPLAMA DURUMU / tool JSON data_status: SUCCESS=alındı, SUCCESS_EMPTY=sorgu "
-        "   ok ama kayıt yok, FAILED=hata, TIMEOUT=zaman aşımı, NOT_QUERIED=sorulmadı, "
-        "   STALE=eski. NOT_QUERIED/TIMEOUT için 'ortamda canlı veri yok' DEME.",
+        "7. TOPLAMA DURUMU / tool JSON data_status (ham kodu cevaba YAZMA; kullanıcı diliyle söyle): "
+        "   SUCCESS=alındı; SUCCESS_EMPTY=sorgu ok ama bu aralıkta kayıt yok; FAILED=veri alınamadı (hata); "
+        "   TIMEOUT=zaman aşımı oldu; NOT_QUERIED=bu kaynak bu turda sorgulanmadı; STALE=veri eski. "
+        "   NOT_QUERIED/TIMEOUT için 'ortamda canlı veri yok' DEME.",
     ])
 
     from app.services.chat_output_directives import directive_system_addendum
@@ -378,9 +410,17 @@ def _build_prompt(
     system_block = "\n\n".join(
         [identity]
         + (["TOPLAMA DURUMU:\n" + collection_summary] if collection_summary else [])
-        + [rules, NUMBER_RULE_TR]
+        + [rules, NUMBER_RULE_TR, ADVICE_RULE_TR, HONESTY_RULE_TR, USER_LANGUAGE_RULE_TR]
+        + ([OC_RULE_TR] if wants_openshift else [])
     )
     tail_parts = ["KULLANICI SORUSU: " + message]
+    try:
+        from app.services.chat_quality.unavailable_info import hint as _ua_hint
+        _h = _ua_hint(message)
+        if _h:
+            tail_parts.append(_h)
+    except Exception:
+        pass
     if _dir_add:
         tail_parts.append(_dir_add.strip())
     tail_parts.append("YANIT (Markdown, Türkçe):")
@@ -424,6 +464,9 @@ async def unified_chat_stream(
 
         async def event_generator():
             try:
+                # Sohbet LLM çağrıları arka plan işlerinden önceliklidir (llm_scheduler; genel varsayılan değişmez)
+                from app.services import llm_scheduler as _llm_sched
+                _llm_sched.mark_chat()
                 raw_message = request.message.strip()
                 if not raw_message:
                     yield _sse({"error": "Mesaj boş"})
@@ -476,8 +519,8 @@ async def unified_chat_stream(
                     clarify = _fs.get("clarification") or ""
                     yield _sse({"phase": "answering"})
                     yield _sse({"needs_confirmation": True, "intent": "full_scan_clarify"})
-                    for i in range(0, len(clarify), 8):
-                        yield _sse({"token": clarify[i:i + 8]})
+                    async for _pc in _paced_chunks(clarify):
+                        yield _pc
                     db.add(ChatMessage(
                         session_id=session_id, role="assistant", content=clarify,
                         meta={"intents": ["full_scan_clarify"]},
@@ -488,8 +531,8 @@ async def unified_chat_stream(
                 if _fs.get("action") == "decline":
                     decline = _fs.get("decline_text") or "İptal edildi."
                     yield _sse({"phase": "answering"})
-                    for i in range(0, len(decline), 8):
-                        yield _sse({"token": decline[i:i + 8]})
+                    async for _pc in _paced_chunks(decline):
+                        yield _pc
                     db.add(ChatMessage(
                         session_id=session_id, role="assistant", content=decline,
                         meta={"intents": ["full_scan_declined"]},
@@ -501,22 +544,66 @@ async def unified_chat_stream(
                 from app.services.chat_chitchat_policy import canned_chitchat_answer
                 _pending_fs = get_full_scan_pending(session_id, platform="unified")
                 _cc = None if (_fs.get("full_scan") or _pending_fs) else canned_chitchat_answer(
-                    message, platform="unified",
+                    message, platform="unified", allowed_modules=_chat_allowed_modules(_auth_user, db),
+                    session_id=session_id,
                 )
                 if _cc:
                     yield _sse({"phase": "answering"})
                     yield _sse({"intent": "chitchat"})
                     _timing.note_ttft()
-                    for i in range(0, len(_cc), 8):
-                        yield _sse({"token": _cc[i:i + 8]})
+                    async for _pc in _paced_chunks(_cc):
+                        yield _pc
+                    from app.services.chat_quality.count_followup import pop_context as _pop_cc
+                    _cc_ctx = _pop_cc()
                     db.add(ChatMessage(
                         session_id=session_id, role="assistant", content=_cc,
-                        meta={"intents": ["chitchat"]},
+                        meta={"intents": ["chitchat"], **({"count_context": _cc_ctx} if _cc_ctx else {})},
                     ))
                     db.commit()
                     _timing.finish(cache_hit=False, extra={"path": "chitchat"})
                     yield _sse({"done": True, "session_id": session_id})
                     return
+
+                # ── Adım 21: «Rapor soruları» — OpenShift / Yönetici hazır raporu (LLM'siz, motor özeti) ──
+                _rep = None
+                if not (_fs.get("full_scan") or _pending_fs):
+                    try:
+                        from app.services.chat_quality import report_rules as _rr
+                        from app.core.auth import user_has_module as _uhm
+                        _al_ur = _chat_allowed_modules(_auth_user, db)
+                        _ocp_ok = _al_ur is None or "openshift" in _al_ur
+                        _exec_ok = bool(_auth_user is not None and (
+                            _auth_user.role in ("admin", "superadmin") or _uhm(_auth_user, "executive", db)
+                        ))
+                        _rep = _rr.detect(message, platform="unified", ocp_ok=_ocp_ok, exec_ok=_exec_ok)
+                    except Exception:
+                        logger.debug("report_rules.detect atlandı", exc_info=True)
+                        _rep = None
+                if _rep:
+                    _rres = None
+                    try:
+                        _rr.note_trace(_rep, "unified")
+                        yield _sse({"phase": "collecting"})
+                        yield _sse({"intent": "report"})
+                        _rres = await run_chat_io(_rr.build_answer, _rep)
+                    except Exception:
+                        logger.warning("[ReportRules] rapor üretilemedi; normal akışa düşülüyor", exc_info=True)
+                        _rres = None
+                    if _rres:
+                        _rtxt = _rres["answer"]
+                        yield _sse({"phase": "answering"})
+                        _timing.note_ttft()
+                        async for _pc in _paced_chunks(_rtxt):
+                            yield _pc
+                        db.add(ChatMessage(
+                            session_id=session_id, role="assistant", content=_rtxt,
+                            meta={"intents": ["report", _rres["report_type"]],
+                                  "report_type": _rres["report_type"], "report_title": _rres["report_title"]},
+                        ))
+                        db.commit()
+                        _timing.finish(cache_hit=False, extra={"path": "report_rules"})
+                        yield _sse({"done": True, "session_id": session_id})
+                        return
 
                 message = _fs.get("work_message") or message
                 _fleet_scan_token = None
@@ -532,6 +619,9 @@ async def unified_chat_stream(
                 # Konusma gecmisi — bu takip sorusu mu (session'da onceki mesaj var mi)?
                 from app.services.chat_history import fetch_recent_history, format_history_block, has_prior_messages
                 _is_followup = has_prior_messages(db, session_id)
+                # Adım 9: user mesajı yukarıda kaydedildiği için `_is_followup` hep True; cache için gerçek takip ayrımı
+                from app.services.chat_history import has_real_prior_messages
+                _cache_followup = has_real_prior_messages(db, session_id)
                 history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
 
                 from app.services.chat_output_directives import OutputDirective as _OD
@@ -548,8 +638,8 @@ async def unified_chat_stream(
                     answer = _chart["summary_text"]
                     yield _sse({"phase": "answering"})
                     _timing.note_ttft()
-                    for i in range(0, len(answer), 8):
-                        yield _sse({"token": answer[i:i + 8]})
+                    async for _pc in _paced_chunks(answer):
+                        yield _pc
                     db.add(ChatMessage(
                         session_id=session_id, role="assistant", content=answer,
                         meta={"charts": _chart.get("charts") or [], "intents": _chart.get("intents") or ["chart"]},
@@ -567,16 +657,19 @@ async def unified_chat_stream(
                 # cache'lenmis cevap yanlislikla donmus olur (bkz. chat.py'deki ayni mantik).
                 _has_directive = output_directive != _OD.NONE
                 cache_key_ids: List[int] = []
-                cached = None if (_is_followup or _has_directive) else get_cached_answer(
-                    db, message, cache_key_ids, platform="unified",
+                # Adım 9: anahtar kullanıcının izinli-modül imzasını içerir (RBAC sızıntısı yok); tam eşleşme, yalnız kavramsal.
+                from app.services.chat_cache_service import rbac_signature_for_modules
+                _cache_sig = rbac_signature_for_modules(_chat_allowed_modules(_auth_user, db))
+                cached = None if (_cache_followup or _has_directive) else get_cached_answer(
+                    db, message, cache_key_ids, platform="unified", rbac_sig=_cache_sig,
                 )
                 _timing.mark("cache")
                 if cached:
                     answer = cached["answer"]
                     yield _sse({"phase": "answering"})
                     _timing.note_ttft()
-                    for i in range(0, len(answer), 8):
-                        yield _sse({"token": answer[i:i+8]})
+                    async for _pc in _paced_chunks(answer):
+                        yield _pc
                     from app.services.chat_evidence_badge import (
                         evidence_sse_field,
                         merge_evidence_meta,
@@ -614,7 +707,9 @@ async def unified_chat_stream(
                 )
                 _clarify_pending = has_planning_clarification_pending(session_id, platform="unified")
                 _has_episode = has_session_episode(session_id=session_id, platform="unified")
-                _route = route_unified(
+                # Adım 11: route_unified → yönlendirme ipucu LLM'i (senkron, ≤8 sn) event döngüsünü bloklamasın
+                _route = await run_chat_io(
+                    route_unified,
                     message,
                     hw_allowed=_hw_user_allowed(_auth_user, db),
                     is_followup=_is_followup,
@@ -638,8 +733,8 @@ async def unified_chat_stream(
                         "Erişim için yöneticinizden modül ataması isteyin."
                     )
                     yield _sse({"phase": "answering"})
-                    for i in range(0, len(answer_text), 8):
-                        yield _sse({"token": answer_text[i:i + 8]})
+                    async for _pc in _paced_chunks(answer_text):
+                        yield _pc
                     db.add(ChatMessage(session_id=session_id, role="assistant", content=answer_text))
                     db.commit()
                     yield _sse({"done": True, "session_id": session_id})
@@ -664,8 +759,8 @@ async def unified_chat_stream(
                         "options": clarify["options"],
                     })
                     _timing.note_ttft()
-                    for i in range(0, len(answer_text), 8):
-                        yield _sse({"token": answer_text[i:i + 8]})
+                    async for _pc in _paced_chunks(answer_text):
+                        yield _pc
                     db.add(ChatMessage(session_id=session_id, role="assistant", content=answer_text))
                     s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
                     if s:
@@ -726,8 +821,8 @@ async def unified_chat_stream(
                     )
                     yield _sse({"phase": "answering"})
                     _timing.note_ttft()
-                    for i in range(0, len(answer_text or ""), 8):
-                        yield _sse({"token": answer_text[i:i + 8]})
+                    async for _pc in _paced_chunks(answer_text or ""):
+                        yield _pc
                     db.add(ChatMessage(session_id=session_id, role="assistant", content=answer_text or ""))
                     s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
                     if s:
@@ -858,6 +953,7 @@ async def unified_chat_stream(
                 )
                 _route_linux = "linux" in (_route.modules or ()) or "exadata" in (_route.modules or ())
                 _route_windows = "windows" in (_route.modules or ())
+                _route_automic = "automic" in (_route.modules or ())
                 _route_hw = "hw" in (_route.domains or ())
                 _inv_kind = None
                 _live_resource = False
@@ -895,6 +991,7 @@ async def unified_chat_stream(
                         or _route_virt
                         or _route_linux
                         or _route_windows
+                        or _route_automic
                         or _route_hw
                         or bool(_inv_kind)
                         or _live_resource
@@ -998,13 +1095,16 @@ async def unified_chat_stream(
                     try:
                         from app.services.rag_service import get_rag_context_for_message
                         from app.services.chat_source_planner import plan_sources
-                        _plan = plan_sources(
+                        _plan = await run_chat_io(
+                            plan_sources,
                             message, scope="unified",
                             skip_ctx=bool(request.skip_server_context),
                             use_rag=True,
                         )
+                        from app.services.rag_scope import modules_for_route
                         return await get_rag_context_for_message(
                             message, collections=_plan.rag_collections or None,
+                            modules=modules_for_route(_route.modules, _chat_allowed),
                         )
                     except Exception:
                         return {}
@@ -1018,7 +1118,8 @@ async def unified_chat_stream(
                             if not _route.need_prometheus:
                                 return ""
                         from app.services.chat_source_planner import plan_sources
-                        _plan = plan_sources(
+                        _plan = await run_chat_io(
+                            plan_sources,
                             message, scope="unified",
                             skip_ctx=bool(request.skip_server_context),
                             use_rag=request.use_rag is not False,
@@ -1164,6 +1265,16 @@ async def unified_chat_stream(
                 collection_summary = "\n".join(coll_lines)
                 tool_context_text = ""
                 tools_used_this_turn = []
+                # Adım 14: düşünme akışı bu kullanıcıya açık mı (ikinci üretim de aynı kapıyı kullanır)
+                _think_ok = thinking_allowed(_auth_user, provider)
+                # Adım 14: araç döngüsünün son turu canlı akıtıldıysa ikinci üretim atlanır
+                _use_loop_final = False
+                _loop_final_text = ""
+                _loop_final_streamed = False
+                _loop_final_dr = None
+                _live_text = ""          # araç döngüsünden canlı akan cevap metni (ekranda olan)
+                _live_ttft = False
+                _single_pass = False
 
                 # ── Agentic READ_ONLY tool-calling (Dalga 2 XOR) ──────────────
                 # Ollama, REMOTE_LLM ve anahtarlı Groq/OpenAI/OpenRouter
@@ -1272,6 +1383,18 @@ async def unified_chat_stream(
                         except Exception:
                             _hw_ctx = None
 
+                        # Adım 14: canlı akış (tek geçiş) + düşünme akışı (rol kapılı)
+                        _sf_on = False
+                        _fwd_think = False
+                        try:
+                            _sf_on = bool(
+                                runtime_settings.get_bool("chat_unified_stream_final")
+                                and provider not in ("groq", "openai", "openrouter")
+                            )
+                        except Exception:
+                            pass
+                        _fwd_think = _think_ok
+
                         gen = run_read_only_tool_loop(
                             db, model, agentic_user_message, context_str, tool_server_summary,
                             max_steps=max_tool_steps,
@@ -1283,6 +1406,9 @@ async def unified_chat_stream(
                             planning_depth=_depth,
                             system_addendum=_sys_add or None,
                             output_directive=output_directive,
+                            stream_final=_sf_on,
+                            forward_thinking=_fwd_think,
+                            final_reminder=_SINGLE_PASS_RULES if _sf_on else None,
                         )
 
                         def _next_item(g):
@@ -1295,7 +1421,7 @@ async def unified_chat_stream(
                         deterministic_answer = ""
                         tools_used_this_turn = []
                         while True:
-                            item = await loop.run_in_executor(None, _next_item, gen)
+                            item = await loop.run_in_executor(None, _cq_trace.run_in_trace, _cq_trace.current(), _next_item, gen)
                             if item is None:
                                 break
                             itype = item.get("type")
@@ -1303,10 +1429,30 @@ async def unified_chat_stream(
                                 yield _sse({"type": "tool_call", "tool": item.get("tool"), "label": item.get("label")})
                             elif itype == "tool_result":
                                 yield _sse({"type": "tool_result", "tool": item.get("tool")})
+                            elif itype == "thinking":
+                                if item.get("text"):
+                                    yield _sse({"type": "thinking", "text": item.get("text")})
+                            elif itype == "answer_start":
+                                yield _sse({"phase": "answering"})
+                            elif itype == "token":
+                                _t = item.get("text") or ""
+                                if _t:
+                                    _live_text += _t
+                                    if not _live_ttft:
+                                        _timing.note_ttft()
+                                        _live_ttft = True
+                                    yield _sse({"token": _t})
+                            elif itype == "answer_reset":
+                                if _live_text:
+                                    yield _sse({"replace_answer": True})
+                                    _live_text = ""
                             elif itype == "final":
                                 tool_context_text = item.get("tool_text") or ""
                                 deterministic_answer = item.get("deterministic_answer") or ""
                                 tools_used_this_turn = list(item.get("tools_used") or [])
+                                _loop_final_text = item.get("final_text") or ""
+                                _loop_final_streamed = bool(item.get("final_streamed"))
+                                _loop_final_dr = item.get("final_done_reason")
                                 break
                             elif itype in ("skipped", "error"):
                                 if itype == "error":
@@ -1315,11 +1461,14 @@ async def unified_chat_stream(
 
                         # Virt envanter: SoT tablosu hazırsa LLM'e bırakma (uydurma/eksik yok)
                         if deterministic_answer:
+                            if _live_text:
+                                yield _sse({"replace_answer": True})
+                                _live_text = ""
                             yield _sse({"phase": "answering"})
                             _timing.note_ttft()
                             answer_text = deterministic_answer
-                            for i in range(0, len(answer_text), 24):
-                                yield _sse({"token": answer_text[i:i + 24]})
+                            async for _pc in _paced_chunks(answer_text):
+                                yield _pc
                             from app.services.chat_evidence_badge import (
                                 evidence_sse_field,
                                 merge_evidence_meta,
@@ -1351,6 +1500,28 @@ async def unified_chat_stream(
                     except Exception as e:
                         logger.warning(f"[UnifiedChat] agentic tool loop devre dışı bırakıldı: {e}")
                     _timing.mark("agentic_end")
+                    # Tek geçiş: araç turunun canlı akan son cevabı kullanılabilir mi?
+                    _use_loop_final = bool(
+                        _loop_final_streamed
+                        and _loop_final_text.strip()
+                        and (_loop_final_dr or "") not in ("length", "stream_error")
+                    )
+                    if _loop_final_streamed or _live_text:
+                        logger.info(
+                            "[UnifiedChat] tek geçiş=%s streamed=%s done_reason=%s final_len=%s live_len=%s",
+                            _use_loop_final, _loop_final_streamed, _loop_final_dr,
+                            len(_loop_final_text), len(_live_text),
+                        )
+                    if _live_text and not _use_loop_final:
+                        # canlı akan metin kullanılamaz (kesik/hatalı) → ekrandan sil, ikinci üretim yazsın
+                        yield _sse({"replace_answer": True})
+                        _live_text = ""
+                    elif _use_loop_final and _live_text.strip() != _loop_final_text.strip():
+                        yield _sse({"replace_answer": True})
+                        async for _pc in _paced_chunks(_loop_final_text):
+                            yield _pc
+                        _live_text = _loop_final_text
+                    _single_pass = _use_loop_final
 
                 try:
                     from app.services.episode_memory import save_episode, summarize_live_context
@@ -1381,14 +1552,20 @@ async def unified_chat_stream(
                 except Exception:
                     pass
 
-                prompt = _build_prompt(message, context_str, collection_summary, history_block, output_directive)
+                prompt = _build_prompt(message, context_str, collection_summary, history_block, output_directive,
+                                        wants_openshift=bool(wants_openshift))
 
-                yield _sse({"phase": "answering"})
+                release_txn(db)   # LLM akışı boyunca DB işlemi açık kalmasın (idle in transaction)
+                if not _use_loop_final:
+                    yield _sse({"phase": "answering"})
                 full_response = ""
-                _ttft_sent = False
+                _ttft_sent = _live_ttft
 
                 async with httpx.AsyncClient(timeout=180.0) as client:
-                    if provider == "groq" and settings.GROQ_API_KEY:
+                    if _use_loop_final:
+                        # Adım 14: cevap araç turunda zaten canlı akıtıldı → ikinci üretim YOK
+                        full_response = _loop_final_text
+                    elif provider == "groq" and settings.GROQ_API_KEY:
                         async for token in _stream_external_openai(client, settings.GROQ_API_URL, settings.GROQ_API_KEY, model, prompt):
                             full_response += token
                             if not _ttft_sent and token:
@@ -1414,11 +1591,22 @@ async def unified_chat_stream(
                             yield _sse({"token": token})
                     else:
                         llm_err = None
-                        async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt, timeout=180.0):
+                        _gt_buf, _gt_last = "", _time_mod.monotonic()
+                        async for chunk in llm_gateway.stream_generate(
+                            client, model=model, prompt=prompt, timeout=180.0, think=final_think_level(model),
+                        ):
                             if chunk.get("error"):
                                 llm_err = str(chunk["error"])
                                 yield _sse({"error": llm_err})
                                 break
+                            _gth = chunk.get("thinking")
+                            if _gth and _think_ok and not full_response:
+                                # Adım 14: ikinci üretimde de düşünme sessizce kaybolmasın (cevap başlayınca susar)
+                                _gt_buf += str(_gth)
+                                _gnow = _time_mod.monotonic()
+                                if len(_gt_buf) >= 40 or _gnow - _gt_last >= 0.3:
+                                    yield _sse({"type": "thinking", "text": _gt_buf})
+                                    _gt_buf, _gt_last = "", _gnow
                             token = chunk.get("response", "")
                             if token:
                                 full_response += token
@@ -1446,7 +1634,9 @@ async def unified_chat_stream(
                         windows_ctx=_win_ev,
                     )
                     if _evidence and full_response and not (full_response or "").startswith("(Hata:"):
-                        _fixed, _ev_reason = maybe_fix_no_data_answer(
+                        # Adım 11: «veri var ama yok dedi» LLM yeniden denemesi senkron (≤18 sn+) → event döngüsünü bloklamasın
+                        _fixed, _ev_reason = await run_chat_io(
+                            maybe_fix_no_data_answer,
                             answer=full_response,
                             evidence=_evidence,
                             prompt=prompt,
@@ -1455,8 +1645,8 @@ async def unified_chat_stream(
                         if _ev_reason and _fixed and _fixed != full_response:
                             full_response = _fixed
                             yield _sse({"replace_answer": True})
-                            for i in range(0, len(full_response), 24):
-                                yield _sse({"token": full_response[i:i + 24]})
+                            async for _pc in _paced_chunks(full_response):
+                                yield _pc
                             try:
                                 from app.services.chat_coverage import record_coverage_miss
                                 if _ev_reason == "fallback":
@@ -1509,14 +1699,15 @@ async def unified_chat_stream(
                     s.updated_at = datetime.now(timezone.utc)
                 db.commit()
 
-                if full_response and not linux_ctx and not windows_ctx and not _is_followup and not _has_directive:
-                    try:
-                        from app.services.chat_coverage import looks_like_no_data_answer
-                        _cache_ok = not looks_like_no_data_answer(full_response)
-                    except Exception:
-                        _cache_ok = True
-                    if _cache_ok:
-                        save_to_cache(db, message, full_response, cache_key_ids, platform="unified")
+                _cache_res = "not_attempted"
+                if full_response:
+                    _cache_res = save_to_cache(
+                        db, message, full_response, cache_key_ids, platform="unified", rbac_sig=_cache_sig,
+                        tools_used=tools_used_this_turn,
+                        live_data=bool(linux_ctx or windows_ctx or (tool_context_text or "").strip()),
+                        modified=bool(_ev_reason),
+                        followup=_cache_followup, directive=_has_directive,
+                    )
 
                 _timing.finish(
                     cache_hit=False,
@@ -1527,6 +1718,8 @@ async def unified_chat_stream(
                         "model_tier": locals().get("_model_tier", ""),
                         "L": len(linux_targets),
                         "W": len(windows_targets),
+                        "cache": _cache_res,
+                        "single_pass": _single_pass,
                     },
                 )
                 from app.services.chat_evidence_badge import evidence_sse_field
@@ -1565,8 +1758,9 @@ async def unified_chat_stream(
         finally:
             llm_usage.stop(usage_token)
 
-    from app.services.chat_orchestrator.http_bridge import attach_and_stream
-    return attach_and_stream(
+    from app.services.chat_orchestrator.http_bridge import attach_and_stream_async
+    # Adım 11: create_turn → plan_sources (yönlendirme ipucu LLM'i, senkron, ≤8 sn) event döngüsünü bloklamasın
+    _stream_resp = await attach_and_stream_async(
         platform="unified",
         payload=payload,
         message=payload.get("message") or "",
@@ -1574,3 +1768,5 @@ async def unified_chat_stream(
         pipeline=pipeline,
         user_id=getattr(_auth_user, "id", None),
     )
+    release_txn(db, keep_loaded=True)   # istek oturumu tur boyunca idle in transaction kalmasın
+    return _stream_resp

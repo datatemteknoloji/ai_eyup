@@ -63,10 +63,10 @@ export function formatChartTick(
 
 /** Tooltip / as_of / last_sample. */
 export function formatChartLabel(
-  v: string | number | Date | null | undefined,
+  v: unknown,
   locale?: string,
 ): string {
-  const d = parseApiTime(v)
+  const d = parseApiTime(v as string | number | Date | null | undefined)
   if (!d) return '—'
   return d.toLocaleString(localeTag(locale), {
     day: '2-digit', month: '2-digit', year: 'numeric',

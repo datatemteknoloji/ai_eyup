@@ -375,6 +375,10 @@ def collect_live_rows(cluster: OpenShiftCluster) -> Tuple[List[Dict[str, Any]], 
 
 
 def sync_cluster_metrics(db: Session, cluster: OpenShiftCluster) -> Dict[str, Any]:
+    from app.services.openshift.fake_cluster import is_fake
+    if is_fake(cluster):      # sahte test cluster'ı: canlı metrics.k8s.io yok → son örnek şimdiye çoğaltılır
+        from app.services.fake_refresh import refresh_cluster
+        return refresh_cluster(db, cluster.id)
     rows, metrics_available = collect_live_rows(cluster)
     n = 0
     try:

@@ -208,8 +208,13 @@ def host_address(host: Dict[str, Any]) -> str:
 
 
 def host_canonical_name(host: Dict[str, Any]) -> str:
-    """Dashboard/ESXi ile aynı: mümkünse yönetim IP/FQDN, yoksa kısa ad."""
-    return host_address(host) or str(host.get("name") or "").strip() or "unknown"
+    """Host kaydı adı: oVirt host ADI (ör. `dtkvm01`); ad yoksa yönetim IP/FQDN, o da yoksa `unknown`.
+
+    Eskiden IP/FQDN tercih ediliyordu → aynı fiziksel host için iki kayıt oluştu (`dtkvm01` ve `192.168.1.112`)
+    ve VM'lerin `vm_host_name` (oVirt'ten gelen AD) ile host metrik adı eşleşmedi. IP kaybolmaz: `address`
+    alanında, envanterde `vnics`(mgmt) ve `dns.address` içinde ayrı durur.
+    """
+    return str(host.get("name") or "").strip() or host_address(host) or "unknown"
 
 
 def host_inventory_fields(host: Dict[str, Any]) -> Dict[str, Any]:

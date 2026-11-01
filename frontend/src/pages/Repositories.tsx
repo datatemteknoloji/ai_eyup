@@ -433,7 +433,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                             type="checkbox"
                             checked={selectedChannels.has(ch.key)}
                             onChange={() => toggleChannel(ch.key)}
-                            className="accent-blue-500 w-4 h-4 flex-shrink-0"
+                            className="accent-blue-500 w-4 h-4 shrink-0"
                           />
                           <span className="text-sm text-white font-medium">{ch.label}</span>
                         </label>
@@ -482,7 +482,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                           value={snapshotLabel}
                           onChange={e => { setSnapshotMode('custom'); setSnapshotLabel(e.target.value) }}
                           placeholder="2026-05-12"
-                          className="flex-1 bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+                          className="flex-1 bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500 font-mono"
                         />
                         {snapshotLabel && (
                           <div className="text-xs text-slate-400 whitespace-nowrap">
@@ -519,7 +519,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                             value={credentials.username}
                             onChange={e => setCredentials(p => ({...p, username: e.target.value}))}
                             placeholder="kullanici@example.com"
-                            className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                            className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
                           />
                         </div>
                         <div>
@@ -528,7 +528,7 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                             type="password"
                             value={credentials.password}
                             onChange={e => setCredentials(p => ({...p, password: e.target.value}))}
-                            className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                            className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
                           />
                         </div>
                       </div>
@@ -562,26 +562,26 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   <label className="text-xs text-slate-400 block mb-1">{t('repo_slug')}</label>
                   <input value={customForm.name}
                     onChange={e => setCustomForm(p => ({...p, name: e.target.value.toLowerCase().replace(/\s+/g,'-')}))}
-                    placeholder="custom-repo" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                    placeholder="custom-repo" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                 </div>
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">{t('repo_display_name')}</label>
                   <input value={customForm.display_name}
                     onChange={e => setCustomForm(p => ({...p, display_name: e.target.value}))}
-                    placeholder="Custom Repo" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                    placeholder="Custom Repo" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                 </div>
               </div>
               <div>
                 <label className="text-xs text-slate-400 block mb-1">{t('repo_base_url')}</label>
                 <input value={customForm.base_url}
                   onChange={e => setCustomForm(p => ({...p, base_url: e.target.value}))}
-                  placeholder="https://..." className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                  placeholder="https://..." className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">{t('col_type')}</label>
                   <select value={customForm.repo_type} onChange={e => setCustomForm(p => ({...p, repo_type: e.target.value}))}
-                    className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
+                    className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500">
                     {['oel','rhel','rocky','alma','centos','custom'].map(t => (
                       <option key={t} value={t}>{t.toUpperCase()}</option>
                     ))}
@@ -590,12 +590,12 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">{t('repo_os_ver')}</label>
                   <input value={customForm.os_version} onChange={e => setCustomForm(p => ({...p, os_version: e.target.value}))}
-                    placeholder="9" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                    placeholder="9" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                 </div>
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">{t('repo_auth')}</label>
                   <select value={customForm.auth_type} onChange={e => setCustomForm(p => ({...p, auth_type: e.target.value}))}
-                    className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
+                    className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500">
                     <option value="none">{t('none')}</option>
                     <option value="basic">Basic</option>
                     <option value="ssl_cert">{t('repo_ssl_cert')}</option>
@@ -607,12 +607,12 @@ const AddRepoModal: React.FC<AddRepoModalProps> = ({ products, onClose, onCreate
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">{t('repo_user')}</label>
                     <input value={customForm.username} onChange={e => setCustomForm(p => ({...p, username: e.target.value}))}
-                      className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                      className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                   </div>
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">{t('repo_password')}</label>
                     <input type="password" value={customForm.password} onChange={e => setCustomForm(p => ({...p, password: e.target.value}))}
-                      className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                      className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
                   </div>
                 </div>
               )}
@@ -669,7 +669,7 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] flex-shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] shrink-0">
           <div>
             <h2 className="text-lg font-semibold text-white">{repo.display_name}</h2>
             <p className="text-xs text-slate-400">{t('repo_n_pkgs', { n: total.toLocaleString(dateLoc(locale)) })}</p>
@@ -678,13 +678,13 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
         </div>
 
         {/* Filters */}
-        <div className="px-6 py-3 border-b border-white/[0.06] flex flex-wrap gap-3 flex-shrink-0">
+        <div className="px-6 py-3 border-b border-white/[0.06] flex flex-wrap gap-3 shrink-0">
           <input value={search} onChange={e => { setSearch(e.target.value); setPage(0) }}
-            placeholder={t('repo_search_pkg')} className="flex-1 min-w-[180px] bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+            placeholder={t('repo_search_pkg')} className="flex-1 min-w-[180px] bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
           <input value={arch} onChange={e => { setArch(e.target.value); setPage(0) }}
-            placeholder={t('repo_arch_ph')} className="w-32 bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+            placeholder={t('repo_arch_ph')} className="w-32 bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
           <select value={downloaded} onChange={e => { setDownloaded(e.target.value as any); setPage(0) }}
-            className="bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500">
+            className="bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500">
             <option value="all">{t('filter_all')}</option>
             <option value="yes">{t('repo_downloaded')}</option>
             <option value="no">{t('repo_not_downloaded')}</option>
@@ -734,7 +734,7 @@ const PackageBrowser: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ r
 
         {/* Pagination */}
         {total > limit && (
-          <div className="px-6 py-3 border-t border-white/[0.06] flex items-center justify-between flex-shrink-0">
+          <div className="px-6 py-3 border-t border-white/[0.06] flex items-center justify-between shrink-0">
             <span className="text-xs text-slate-400">{t('repo_page_range', { a: page * limit + 1, b: Math.min((page+1)*limit, total), total })}</span>
             <div className="flex gap-2">
               <button onClick={() => setPage(p => Math.max(0, p-1))} disabled={page === 0}
@@ -803,12 +803,12 @@ const ClientConfigModal: React.FC<{ repo: RepoSource; onClose: () => void }> = (
             <div className="flex-1">
               <label className="text-xs text-slate-400 block mb-1">{t('repo_mgmt_ip')}</label>
               <input value={serverIp} onChange={e => setServerIp(e.target.value)}
-                placeholder="192.168.1.100" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                placeholder="192.168.1.100" className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
             </div>
             <div className="w-24">
               <label className="text-xs text-slate-400 block mb-1">{t('repo_port')}</label>
               <input value={port} onChange={e => setPort(e.target.value)}
-                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500" />
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500" />
             </div>
             <div className="flex items-end">
               <button onClick={generateConfig}
@@ -919,14 +919,14 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card border border-white/[0.06] rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] flex-shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] shrink-0">
           <h2 className="text-lg font-semibold text-white">{t('repo_sync_history', { name: repo.display_name })}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl">×</button>
         </div>
 
         <div className="flex-1 overflow-hidden flex gap-0">
           {/* Job list */}
-          <div className="w-72 border-r border-white/[0.06] overflow-y-auto flex-shrink-0">
+          <div className="w-72 border-r border-white/[0.06] overflow-y-auto shrink-0">
             {loading ? (
               <div className="p-6 text-center"><div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" /></div>
             ) : jobs.length === 0 ? (
@@ -1027,7 +1027,7 @@ const SyncLogModal: React.FC<{ repo: RepoSource; onClose: () => void }> = ({ rep
                     </pre>
                   ) : (selectedJob.status === 'running' || selectedJob.status === 'pending') ? (
                     <div className="bg-cyber-deep border border-white/[0.06] rounded-xl p-4 flex items-center gap-3">
-                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0" />
                       <div>
                         <div className="text-xs text-blue-300">{t('repo_sync_starting')}</div>
                         <div className="text-xs text-slate-500 mt-0.5">{t('repo_log_soon')}</div>
@@ -1157,7 +1157,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
               value={form.rhsm_repo_id}
               onChange={e => setForm(p => ({...p, rhsm_repo_id: e.target.value}))}
               placeholder="rhel-9-for-x86_64-baseos-rpms"
-              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500 font-mono"
             />
           </div>
 
@@ -1169,7 +1169,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
                 value={form.mirror_host}
                 onChange={e => setForm(p => ({...p, mirror_host: e.target.value}))}
                 placeholder="127.0.0.1"
-                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
               />
             </div>
             <div>
@@ -1177,7 +1177,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
               <input
                 value={form.mirror_port}
                 onChange={e => setForm(p => ({...p, mirror_port: e.target.value}))}
-                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
               />
             </div>
           </div>
@@ -1189,7 +1189,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
                 value={form.mirror_username}
                 onChange={e => setForm(p => ({...p, mirror_username: e.target.value}))}
                 placeholder="root"
-                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
               />
             </div>
             <div>
@@ -1199,7 +1199,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
                 value={form.mirror_password}
                 onChange={e => setForm(p => ({...p, mirror_password: e.target.value}))}
                 placeholder={t('repo_ssh_pass_ph')}
-                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500"
               />
             </div>
           </div>
@@ -1213,7 +1213,7 @@ const RhsmSettingsModal: React.FC<{ repo: RepoSource; onClose: () => void; onSav
               value={form.mirror_download_path}
               onChange={e => setForm(p => ({...p, mirror_download_path: e.target.value}))}
               placeholder="/app/repos"
-              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+              className="w-full bg-white/[0.07] text-white text-sm px-3 py-2 rounded-lg border border-slate-600 focus:outline-hidden focus:border-blue-500 font-mono"
             />
           </div>
 
@@ -1301,7 +1301,7 @@ const RepoRow: React.FC<{
       {/* Dağıtım + ad */}
       <td className="px-4 py-3">
         <div className="flex items-center gap-2.5">
-          <span className="text-lg flex-shrink-0">{TYPE_ICON[repo.repo_type] || 'PKG'}</span>
+          <span className="text-lg shrink-0">{TYPE_ICON[repo.repo_type] || 'PKG'}</span>
           <div className="min-w-0">
             <div className="text-sm font-medium text-white truncate max-w-[220px]">{repo.display_name}</div>
             <div className="text-xs text-slate-500 font-mono truncate max-w-[220px]">{repo.name}</div>
@@ -1389,7 +1389,7 @@ const RepoRow: React.FC<{
           {syncing ? (
             <button onClick={() => onCancel(repo.id)}
               className="px-2.5 py-1 text-xs font-semibold bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors flex items-center gap-1">
-              <span className="w-1.5 h-1.5 bg-red-300 rounded-full animate-pulse flex-shrink-0" />
+              <span className="w-1.5 h-1.5 bg-red-300 rounded-full animate-pulse shrink-0" />
               {t('stop')}
             </button>
           ) : repo.sync_method === 'rhsm' ? (

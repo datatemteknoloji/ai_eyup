@@ -59,7 +59,7 @@ def resolve_hypervisor(
         for hv in q.all():
             if (hv.name and hv.name.lower() == name) or (hv.ip_address and hv.ip_address == name):
                 return hv
-    return q.first()
+    return q.order_by(Hypervisor.id).first()
 
 
 def resolve_openshift_cluster(db: Session, args: Dict[str, Any]) -> Optional[OpenShiftCluster]:
@@ -70,7 +70,7 @@ def resolve_openshift_cluster(db: Session, args: Dict[str, Any]) -> Optional[Ope
         for c in q.all():
             if c.name and c.name.lower() == name:
                 return c
-    return q.first()
+    return q.order_by(OpenShiftCluster.id).first()
 
 
 def _build_vcenter_client(hv: Hypervisor):
@@ -976,6 +976,22 @@ def _infra_report_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]
                 "available_types": available,
             }
         data = REPORT_REGISTRY[rtype](db) or {}
+        if rtype == "finance" and data.get("rates_configured") is False:
+            # Adım 8 / K2: birim fiyat yapılandırılmamışken tutar VERİLMEZ (varsayılan örnek oranlar gerçek değil).
+            return {
+                "ok": True,
+                "source": "report_engine",
+                "report_type": rtype,
+                "available_types": available,
+                "rates_configured": False,
+                "is_estimate": True,
+                "scope": data.get("scope"),
+                "answer_policy": (
+                    "Maliyet birim fiyatları ainew'de yapılandırılmamış; TUTAR/TOPLAM VERME. Kullanıcıya şunu söyle: "
+                    "gerçek maliyet/lisans/fatura ainew'de tutulmaz; birim fiyatlar tanımlanınca Finans raporu "
+                    "kaynak tahsisatından TAHMİNİ maliyet hesaplar (tüm açık VM'ler kapsamında, cluster/şirket bazında değil)."
+                ),
+            }
         out: Dict[str, Any] = {
             "ok": True,
             "source": "report_engine",
@@ -1021,8 +1037,11 @@ def _knowledge_search_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, 
         if not isinstance(collections, list) or not collections:
             collections = None
 
+        from app.services.rag_scope import modules_for_domains
+        _mods = modules_for_domains(ctx.get("domains"), ctx.get("platform"))
+
         async def _run():
-            return await get_rag_context_for_message(query, collections=collections)
+            return await get_rag_context_for_message(query, collections=collections, modules=_mods)
 
         try:
             asyncio.get_running_loop()
@@ -1198,7 +1217,9 @@ def _db_list_critical_events_handler(db: Session, args: Dict[str, Any], ctx: Dic
             "hint": (
                 "Bu liste system_events tablosundandır (gerçek, SoT). count=0 ise "
                 "gerçekten belirtilen pencerede/severity'de olay yok demektir — "
-                "uydurma olay/tarih ÜRETME."
+                "uydurma olay/tarih ÜRETME. event_type/source değerleri (vcenter_alarm, "
+                "openshift_collector…) sistem kodudur: cevapta insan diliyle yaz "
+                "(vCenter alarmı, OpenShift toplayıcısı); kodu aynen yazma."
             ),
         }
     except Exception as e:
@@ -1348,6 +1369,7 @@ def _openshift_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
             "pod_count": len(pods),
             "pods_by_status": by_status,
             "problem_pod_count": len(problems),
+            "error_state_count": _error_state_n(pods),
             "problem_pods_sample": problems[:30],
             "question_hint": question or None,
             "hint": (
@@ -1371,7 +1393,51 @@ def _openshift_ask_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
         return {"ok": False, "error": str(e)}
 
 
+def _list_kubevirt_vms_all(hvs: List[Hypervisor]) -> Dict[str, Any]:
+    """Hypervisor verilmedi + birden çok OpenShift Virt: her biri ayrı; ulaşılamayan `unreachable`."""
+    per: List[Dict[str, Any]] = []
+    all_vms: List[Dict[str, Any]] = []
+    unreachable: List[Dict[str, Any]] = []
+    for hv in hvs:
+        try:
+            vms = _build_kubevirt_client(hv).list_vms()
+        except Exception as e:  # bağlantı/kimlik hatası → bu kaynak bilinmiyor (0 DEĞİL)
+            unreachable.append({"hypervisor": hv.name, "error": str(e)[:200]})
+            per.append({"hypervisor": hv.name, "reachable": False, "count": None})
+            continue
+        for v in vms:
+            if isinstance(v, dict):
+                v.setdefault("_hypervisor", hv.name)
+        per.append({"hypervisor": hv.name, "reachable": True, "count": len(vms)})
+        all_vms += list(vms)
+    out: Dict[str, Any] = {
+        "ok": bool(all_vms) or not unreachable,
+        "scope": "all_hypervisors",
+        "per_hypervisor": per,
+        "count": len(all_vms),
+        "vms": all_vms[:100],
+    }
+    if unreachable:
+        out["unreachable_hypervisors"] = unreachable
+        out["unreachable_note"] = (
+            "Ulaşılamayan kaynak(lar): " + ", ".join(u["hypervisor"] for u in unreachable)
+            + " — bunların VM sayısı BİLİNMİYOR (0 değil). count yalnız erişilenleri içerir; "
+            "cevapta erişilen kaynakların sonucunu ve ulaşılamayanları ayrı yaz."
+        )
+    if not all_vms and unreachable:
+        out["error"] = "Hiçbir OpenShift Virtualization kaynağına ulaşılamadı"
+    return out
+
+
 def _list_kubevirt_vms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    _explicit_hv = (args.get("hypervisor") or args.get("server") or "").strip()
+    if not _explicit_hv:
+        _hvs = (
+            db.query(Hypervisor).filter(Hypervisor.hypervisor_type == HypervisorType.OPENSHIFT_VIRT)
+            .order_by(Hypervisor.id).all()
+        )
+        if len(_hvs) > 1:
+            return _list_kubevirt_vms_all(_hvs)
     hv = resolve_hypervisor(db, args, type_filter=HypervisorType.OPENSHIFT_VIRT)
     if not hv:
         return {"ok": False, "error": "Tanımlı OpenShift Virtualization (KubeVirt) hypervisor bulunamadı"}
@@ -1384,13 +1450,37 @@ def _list_kubevirt_vms_handler(db: Session, args: Dict[str, Any], ctx: Dict[str,
         return {"ok": False, "error": str(e)}
 
 
+def _top_restarts(pods: List[Dict[str, Any]], n: int = 10) -> List[Dict[str, Any]]:
+    """Restart sayısına göre azalan ilk n pod (eşitlikte namespace/ad)."""
+    ranked = sorted(
+        (p for p in pods if int(p.get("restart_count") or 0) > 0),
+        key=lambda p: (-int(p.get("restart_count") or 0), p.get("namespace") or "", p.get("name") or ""),
+    )
+    return [
+        {"rank": i, "cluster": p.get("_cluster"), "namespace": p.get("namespace"), "name": p.get("name"),
+         "restart_count": int(p.get("restart_count") or 0), "status": p.get("status"), "reason": p.get("reason") or None}
+        for i, p in enumerate(ranked[:n], 1)
+    ]
+
+
+def _error_state_n(pods) -> int:
+    from app.services.chat_quality import ocp_pod_stats as _pstats
+    return sum(1 for p in pods if _pstats.error_state_of(p.get("status"), p.get("reason")))
+
+
 def _list_ocp_pods_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    namespace = (args.get("namespace") or "").strip() or None
+    explicit = (args.get("cluster") or args.get("hypervisor") or "").strip()
+    if not explicit:
+        clusters = db.query(OpenShiftCluster).order_by(OpenShiftCluster.id).all()
+        if len(clusters) > 1:
+            return _list_ocp_pods_all_clusters(clusters, namespace)
     cluster = resolve_openshift_cluster(db, args)
     if not cluster:
         return {"ok": False, "error": "Tanımlı OpenShift cluster bulunamadı"}
-    namespace = (args.get("namespace") or "").strip() or None
     try:
         from collections import Counter
+        from app.services.chat_quality import ocp_pod_stats as _pstats
         client = _build_ocp_client(cluster)
         pods = client.list_pods(namespace=namespace)
         if client.last_error and not pods:
@@ -1405,21 +1495,9 @@ def _list_ocp_pods_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
                     "canlı API erişim hatası olduğunu açıkça belirt."
                 ),
             }
-        by_status = dict(Counter((p.get("status") or "Unknown") for p in pods))
+        summary = _pstats.summarize(pods)
         by_ns = Counter((p.get("namespace") or "") for p in pods)
-
-        def _is_problem(p: Dict[str, Any]) -> bool:
-            st = (p.get("status") or "").lower()
-            reason = (p.get("reason") or "").lower()
-            if st not in ("running", "succeeded"):
-                return True
-            if reason and reason not in ("completed",):
-                return True
-            if int(p.get("restart_count") or 0) >= 5:
-                return True
-            return False
-
-        problems = [p for p in pods if _is_problem(p)]
+        problems = [p for p in pods if _pstats.is_problem(p.get("status"), p.get("reason"), p.get("restart_count"))]
         problems.sort(key=lambda p: (-int(p.get("restart_count") or 0), p.get("namespace") or "", p.get("name") or ""))
         # Kompakt tek satır — JSON object şişmesini önler
         problem_lines = [
@@ -1435,13 +1513,20 @@ def _list_ocp_pods_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
             "cluster": cluster.name,
             "namespace": namespace,
             "count": len(pods),
-            "by_status": by_status,
+            "by_status": summary["by_status"],
+            "by_reason": summary["by_reason"],
             "by_namespace": [
                 {"namespace": ns, "count": n}
                 for ns, n in by_ns.most_common(60)
             ],
+            "error_state_count": summary["error_state_count"],
+            "error_state_breakdown": summary["error_state_breakdown"],
+            "error_state_definition": summary["error_state_definition"],
             "problem_count": len(problems),
+            "problem_definition": summary["problem_definition"],
             "problem_pods": problem_lines,
+            "top_restarts": _top_restarts(pods),
+            "top_restarts_note": "restart_count'a göre azalan sıralı (araçta hesaplandı); «en çok restart» = rank 1.",
         }
 
         if namespace or len(pods) <= _FULL_LIMIT:
@@ -1466,6 +1551,86 @@ def _list_ocp_pods_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any
     except Exception as e:
         logger.error(f"[Tool] list_ocp_pods hata: {e}", exc_info=True)
         return {"ok": False, "error": str(e)}
+
+
+def _list_ocp_pods_all_clusters(clusters: List[OpenShiftCluster], namespace: Optional[str],
+                                client_factory=None) -> Dict[str, Any]:
+    """Cluster verilmedi + birden çok cluster: her cluster ayrı; ulaşılamayan `unreachable`, toplam erişilenlerden."""
+    from app.services.chat_quality import ocp_pod_stats as _pstats
+    factory = client_factory or _build_ocp_client
+    per: List[Dict[str, Any]] = []
+    all_pods: List[Dict[str, Any]] = []
+    unreachable: List[Dict[str, Any]] = []
+    for c in clusters:
+        try:
+            client = factory(c)
+            pods = client.list_pods(namespace=namespace)
+            err = client.last_error
+        except Exception as e:  # bağlantı/kimlik hatası → bu cluster bilinmiyor
+            pods, err = [], str(e)
+        if err and not pods:
+            unreachable.append({"cluster": c.name, "error": str(err)[:200]})
+            per.append({"cluster": c.name, "reachable": False, "count": None})
+            continue
+        for p in pods:
+            p["_cluster"] = c.name
+        s = _pstats.summarize(pods)
+        per.append({"cluster": c.name, "reachable": True, "count": s["total"], "by_status": s["by_status"],
+                    "by_reason": s["by_reason"], "problem_count": s["problem_count"],
+                    "error_state_count": s["error_state_count"],
+                    **({"partial_warning": str(err)[:200]} if err else {})})
+        all_pods += pods
+    total = _pstats.summarize(all_pods)
+    problems = [p for p in all_pods if _pstats.is_problem(p.get("status"), p.get("reason"), p.get("restart_count"))]
+    problems.sort(key=lambda p: (-int(p.get("restart_count") or 0), p.get("_cluster") or "", p.get("namespace") or ""))
+    result: Dict[str, Any] = {
+        "ok": bool(all_pods) or not unreachable,
+        "scope": "all_clusters",
+        "namespace": namespace,
+        "per_cluster": per,
+        "reachable_total": total["total"],
+        "by_status": total["by_status"],
+        "by_reason": total["by_reason"],
+        "error_state_count": total["error_state_count"],
+        "error_state_breakdown": total["error_state_breakdown"],
+        "error_state_definition": total["error_state_definition"],
+        "problem_count": total["problem_count"],
+        "problem_definition": total["problem_definition"],
+        "problem_pods": [
+            f"{p.get('_cluster')}:{p.get('namespace')}/{p.get('name')} status={p.get('status')} "
+            f"reason={p.get('reason') or '-'} restarts={p.get('restart_count', 0)}"
+            for p in problems[:50]
+        ],
+        "top_restarts": _top_restarts(all_pods),
+        "top_restarts_note": "restart_count'a göre azalan sıralı (araçta hesaplandı); «en çok restart» = rank 1.",
+    }
+    # Adım 20: tek cluster yolu gibi (namespace verildi veya ≤120 pod) pod AYRINTISI de dönmeli —
+    # özetle sınırlı kalınca «huawei-csi pod'ları hangi node'larda?» cevaplanamıyordu.
+    if namespace or len(all_pods) <= 120:
+        result["pods"] = all_pods
+        result["list_complete"] = not unreachable
+    elif all_pods:
+        lines = ["cluster\tnamespace\tname\tstatus\treason\tnode\trestarts\tready"]
+        for p in all_pods:
+            lines.append(
+                f"{p.get('_cluster','')}\t{p.get('namespace','')}\t{p.get('name','')}\t{p.get('status','')}\t"
+                f"{p.get('reason') or ''}\t{p.get('node_name') or ''}\t"
+                f"{p.get('restart_count', 0)}\t{p.get('ready') or ''}"
+            )
+        result["pods_tsv"] = "\n".join(lines)
+        result["pods_listed"] = len(all_pods)
+        result["list_complete"] = not unreachable
+    if unreachable:
+        result["unreachable_clusters"] = unreachable
+        result["unreachable_note"] = (
+            "Ulaşılamayan cluster(lar): " + ", ".join(u["cluster"] for u in unreachable)
+            + " — bu cluster'ların sonucu BİLİNMİYOR (0 değil). reachable_total yalnız erişilen cluster'ları içerir; "
+            "cevapta erişilen cluster sonucunu ve ulaşılamayanları ayrı yaz."
+        )
+    if not all_pods and unreachable:
+        result["live_connection_failed"] = True
+        result["error"] = "Hiçbir OpenShift cluster'ına ulaşılamadı"
+    return result
 
 
 def _db_list_ocp_nodes_handler(db: Session, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -3370,7 +3535,8 @@ TOOLS: Dict[str, Tool] = {
         description=(
             "OpenShift/Kubernetes POD listesi (durum, restart, node). "
             "Linux systemd servisi / process listesi DEĞİL — pod/namespace/CrashLoop sorularında kullan. "
-            "namespace verilirse yalnızca o proje."
+            "namespace verilirse yalnızca o proje. «Error/CrashLoopBackOff/RunContainerError durumundaki pod sayısı» "
+            "için error_state_count alanını kullan (problem_count daha geniştir: restart ≥5 vb. dahil)."
         ),
         parameters={
             "type": "object",

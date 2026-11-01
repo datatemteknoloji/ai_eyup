@@ -183,20 +183,88 @@ def hours_to_range_key(hours: float) -> str:
     return "60d"
 
 
-def parse_chart_intent(message: str, *, explicit: bool = False) -> Optional[Dict[str, Any]]:
-    """Süre + metrik grubu (veya /graph varsayılanları) → hours/groups."""
+# Varsayılan pencere (Adım 8G, K1): süre yazılmamışsa son 6 saat — `/graph` dahil.
+DEFAULT_CHART_HOURS = 6.0
+
+_WORD_NUM = {
+    "bir": 1, "iki": 2, "uc": 3, "üç": 3, "dort": 4, "dört": 4, "bes": 5, "beş": 5,
+    "alti": 6, "altı": 6, "yedi": 7, "sekiz": 8, "dokuz": 9, "on": 10,
+    "on iki": 12, "oniki": 12, "yirmi dort": 24, "yirmi dört": 24,
+}
+_WORD_NUM_RE = re.compile(
+    r"\b(yirmi\s+d[oö]rt|on\s*iki|bir|iki|[uü][cç]|d[oö]rt|be[sş]|alt[ıi]|yedi|sekiz|dokuz|on)\s+"
+    r"(saat\w*|dakika\w*|dk\b|g[uü]n\w*|hafta\w*|ay\b|ayl[ıi]k)",
+    re.IGNORECASE,
+)
+_LAST_UNIT_RE = re.compile(
+    r"\b(?:son|ge[cç]en|last|past)\s+(saat|dakika|g[uü]n|hafta|ay|hour|day|week|month)\b", re.IGNORECASE,
+)
+_EN_UNITS = (
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:hours?|hrs?|h)\b", re.IGNORECASE), "saat"),
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:minutes?|mins?|m)\b", re.IGNORECASE), "dakika"),
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:days?|d)\b", re.IGNORECASE), "gün"),
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:weeks?|w)\b", re.IGNORECASE), "hafta"),
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:months?)\b", re.IGNORECASE), "ay"),
+)
+_HALF_HOUR_RE = re.compile(r"yar[ıi]m\s+saat|half\s+an?\s+hour|30\s*min", re.IGNORECASE)
+_UNIT_CANON = {"hour": "saat", "day": "gün", "week": "hafta", "month": "ay", "gun": "gün", "gün": "gün"}
+
+
+def normalize_duration_text(message: str) -> str:
+    """Doğal dil süre ifadelerini `_DURATION_RE`nin anladığı biçime çevirir.
+
+    «son bir saat» → «son 1 saat», «yarım saat» → «30 dakika», «son hafta» → «son 1 hafta»,
+    «last 2 hours» / «6h» → «… saat». Başka metne dokunmaz.
+    """
     ml = (message or "").lower()
+    ml = _HALF_HOUR_RE.sub("30 dakika", ml)
+
+    def _w(m: "re.Match[str]") -> str:
+        key = re.sub(r"\s+", " ", m.group(1).lower())
+        n = _WORD_NUM.get(key) or _WORD_NUM.get(key.replace(" ", ""))
+        return f"{n} {m.group(2)}" if n else m.group(0)
+
+    ml = _WORD_NUM_RE.sub(_w, ml)
+    for rx, unit in _EN_UNITS:
+        ml = rx.sub(lambda m, u=unit: f"{m.group(1)} {u}", ml)
+    if not _DURATION_RE.search(ml):
+        m = _LAST_UNIT_RE.search(ml)
+        if m:
+            unit = m.group(1).lower()
+            unit = _UNIT_CANON.get(unit, unit)
+            ml = ml[:m.start()] + f"son 1 {unit}" + ml[m.end():]
+    return ml
+
+
+def _kw_in(kw: str, ml: str) -> bool:
+    """Anahtar sözcük eşleşmesi. Kısa anahtarlar (≤3: «ağ», «ram», «cpu») sözcük BAŞINDA aranır:
+    «kaynağı»/«dağılım»/«program» içindeki «ağ»/«ram» ağ/bellek grafiği tetiklemesin."""
+    if len(kw.strip()) <= 3:
+        return re.search(r"(?<!\w)" + re.escape(kw), ml) is not None
+    return kw in ml
+
+
+def parse_chart_intent(message: str, *, explicit: bool = False) -> Optional[Dict[str, Any]]:
+    """Süre + metrik grubu (veya /graph varsayılanları) → hours/groups.
+
+    `explicit` (slash ya da örtük «grafikte göster»): süre yoksa son 6 saat, metrik yoksa cpu+bellek.
+    `clamped`: istenen süre üst sınırı (30 gün) aştı.
+    """
+    ml = normalize_duration_text(message)
     hours: Optional[float] = None
+    clamped = False
     dur_match = _DURATION_RE.search(ml)
     if dur_match:
         amount = float(dur_match.group(1).replace(",", "."))
         unit = dur_match.group(2).lower()
         hours = amount * _UNIT_TO_HOURS.get(unit, 1.0)
+        clamped = hours > MAX_HOURS
         hours = max(0.25, min(hours, MAX_HOURS))
 
     groups: List[str] = []
+    ml_kw = re.sub(r"\bvcpu", "cpu", ml)          # «vCPU» = CPU
     for group, keywords in list(_GROUP_KEYWORDS.items()) + list(_EXTRA_GROUP_KEYWORDS.items()):
-        if any(kw in ml for kw in keywords) and group not in groups:
+        if any(_kw_in(kw, ml_kw) for kw in keywords) and group not in groups:
             groups.append(group)
     # "I/O" / "IO" → disk_io (disk kullanım % değil; okuma/yazma)
     if re.search(r"(?<![a-z0-9])i/?o(?![a-z0-9])", ml) and "disk_io" not in groups:
@@ -204,9 +272,10 @@ def parse_chart_intent(message: str, *, explicit: bool = False) -> Optional[Dict
 
     if hours is None and not groups and not explicit:
         return None
+    defaulted = False
     if hours is None:
-        # /grafik ve süre yoksa Monitoring ile aynı varsayılan: son 24 saat
-        hours = 24.0 if explicit else None
+        hours = DEFAULT_CHART_HOURS if explicit else None
+        defaulted = hours is not None
     if not groups:
         if explicit:
             groups = ["cpu", "memory"]
@@ -214,7 +283,79 @@ def parse_chart_intent(message: str, *, explicit: bool = False) -> Optional[Dict
             return None
     if hours is None:
         return None
-    return {"hours": hours, "groups": groups, "explicit": explicit}
+    out: Dict[str, Any] = {"hours": hours, "groups": groups, "explicit": explicit}
+    if clamped:
+        out["clamped"] = True
+    if defaulted:
+        out["hours_defaulted"] = True
+    return out
+
+
+# ── Örtük grafik isteği (Adım 8G): «… grafikte göster» /graph yazmadan gerçek grafik ──────────────────
+_FOLD_TR = str.maketrans({"ı": "i", "İ": "i", "ş": "s", "Ş": "s", "ğ": "g", "Ğ": "g",
+                          "ü": "u", "Ü": "u", "ö": "o", "Ö": "o", "ç": "c", "Ç": "c"})
+
+
+def _fold_tr(text_: str) -> str:
+    return (text_ or "").translate(_FOLD_TR).lower()
+
+
+_GRAPH_NOUN = re.compile(r"(?<![a-z0-9/])(graf(?:ik|ig)\w*|chart\w*|graphs?\b|plot\w*)")
+_GRAPH_VERB = re.compile(
+    r"(goster\w*|ciz\w*|olustur\w*|hazirla\w*|\bver\b|\bverir\w*|gorsellestir\w*|goruntule\w*|"
+    r"\bdraw\w*|\bplot\w*|\bshow\w*|\bdisplay\w*|\bcreate\b|\bmake\b|\bgenerate\b|\bvisuali[sz]e\w*)"
+)
+_GRAPH_SKIP = re.compile(
+    r"(/graf|/chart|/diagram|/table|/json|/brief|diyagram|mermaid|topoloji|topology|aciklar|aciklay|nedir|"
+    r"ne\s+demek|nasil\s+(okun|yorum|anla)|neden|what\s+is|how\s+(to|do)|explain|\bmean)"
+)
+# Zaman serisi OLMAYAN grafik türleri / konular → sabit dürüst cümle (K3).
+_GRAPH_NON_SERIES_TYPE = re.compile(r"(pasta|\bpie\b|donut|halka|cubuk|\bbar\b|sutun|histogram|isi\s+haritasi|heatmap)")
+_GRAPH_NON_SERIES_SUBJECT = re.compile(
+    r"(restart|yeniden\s+basl|\bsayi(si|lari|sini)?\b|\badet\b|\bkac\b|\bcount\b|number\s+of|dagilim|distribution|\boran(i|lari)?\b)"
+)
+
+
+def graph_request_kind(message: str) -> Optional[str]:
+    """«grafikte göster» türü açık istek: None (değil) | 'chart' (zaman serisi çizilir) | 'unsupported'.
+
+    Slash komutlu mesajlar (`/graph`) burada DEĞİL — onları `OutputDirective.GRAPH` karşılar.
+    """
+    raw = (message or "").strip()
+    if not raw or len(raw) > 240 or "\n" in raw:
+        return None
+    f = _fold_tr(raw)
+    if _GRAPH_SKIP.search(f) or not _GRAPH_NOUN.search(f) or not _GRAPH_VERB.search(f):
+        return None
+    has_metric = bool(parse_chart_intent(raw, explicit=False))
+    if _GRAPH_NON_SERIES_TYPE.search(f):
+        return "unsupported"
+    if _GRAPH_NON_SERIES_SUBJECT.search(f) and not has_metric:
+        return "unsupported"
+    return "chart"
+
+
+_SCOPE_NOUN = re.compile(
+    r"(?<![a-z0-9])(vm(?!ware)|vms|sanal|sunucu\w*|server\w*|host\w*|esxi|node\w*|pod\w*|datastore\w*|depolama|"
+    r"makine\w*|machine\w*|worker\w*)"
+)
+
+
+def _has_scope_noun(message: str) -> bool:
+    return bool(_SCOPE_NOUN.search(_fold_tr(message)))
+
+
+# Hedef/sıra yazılmamış ama kapsam adı var («vmleri grafikte göster») → en yüksek 5 (Adım 8G, G3).
+_DEFAULT_RANK: Dict[str, Any] = {"top_n": 5, "order": "highest"}
+_DEFAULT_RANK_NOTE = "_Hedef belirtmediğiniz için en yüksek 5 gösterildi; ad yazarak değiştirebilirsiniz._"
+
+
+# «vmleri / vm'leri / VM'ler / vms» — eski `" vm "` ipucu ekli biçimleri kaçırıyordu (Linux yoluna düşüyordu).
+_VM_WORD = re.compile(r"(?<![a-z0-9])vm(?:s|ler\w*|lar\w*|['’]\w+)?(?![a-z0-9])", re.IGNORECASE)
+
+
+def has_vm_word(message: str) -> bool:
+    return bool(_VM_WORD.search(message or ""))
 
 
 _RANK_HIGHEST_RE = re.compile(
@@ -304,6 +445,11 @@ def _rank_virt_names(
 
     metric = _rank_metric_virt(kind, groups)
     days = max(0.05, min(float(hours) / 24.0, 30.0))
+    try:
+        from app.services.synthetic_scope import synthetic_hypervisor_ids
+        synthetic_hv = sorted(synthetic_hypervisor_ids(db))
+    except Exception:
+        synthetic_hv = []
     out = run_metric_trend(
         db,
         entity_type=kind,
@@ -312,10 +458,11 @@ def _rank_virt_names(
         top_n=top_n,
         order=order if order in ("highest", "lowest") else "highest",
         value_basis="last",
+        exclude_hypervisor_ids=synthetic_hv,
     )
     names = [str(i["name"]) for i in (out.get("items") or []) if i.get("name")]
     label = "en düşük" if order == "lowest" else "en yüksek"
-    note = f"_Top-{len(names)} ({label} {metric}, son {days:g}g): {', '.join(names)}_"
+    note = f"_Top-{len(names)} ({label} {metric}, son {_format_duration_label(hours)}): {', '.join(names)}_"
     return names[:top_n], note
 
 
@@ -332,6 +479,12 @@ def _rank_linux_hosts(
     if not pool:
         return [], ""
     metric = _rank_metric_linux(groups)
+    try:
+        from app.services.synthetic_scope import synthetic_server_ids
+        synthetic = synthetic_server_ids(db)
+    except Exception:
+        synthetic = set()
+    pool = [s for s in pool if getattr(s, "id", None) not in synthetic]
     ids = [int(s.id) for s in pool if getattr(s, "id", None) is not None]
     if not ids:
         return [], ""
@@ -396,6 +549,15 @@ def _rank_ocp_refs(
         top_n=top_n,
         order=order if order in ("highest", "lowest") else "highest",
     )
+    try:
+        from app.services.chat_quality import trace as cq_trace
+        cq_trace.note_tool(
+            "ocp_monitoring_query",
+            {"mode": "top", "cluster_id": cluster_id, "kind": kind, "metric": metric, "top_n": top_n, "order": order},
+            out, source="chart_rank",
+        )
+    except Exception:
+        pass
     refs: List[str] = []
     displays: List[str] = []
     for it in out.get("items") or []:
@@ -645,7 +807,12 @@ def _ocp_resolve_cluster(db: Session, message: str = ""):
     for c in clusters:
         if c.name and c.name.lower() in ml:
             return c
-    return clusters[0]
+    try:  # ad verilmediyse gerçek cluster tercih edilir (sahte cluster varsayılan olmasın)
+        from app.services.synthetic_scope import cluster_is_synthetic
+        real = [c for c in clusters if not cluster_is_synthetic(c)]
+        return (real or clusters)[0]
+    except Exception:
+        return clusters[0]
 
 
 def _ocp_inventory_refs(db: Session, kind: str, *, cluster_id: Optional[int] = None) -> List[tuple]:
@@ -1008,10 +1175,12 @@ def _build_virt_charts(
     hours_label = _format_duration_label(hours)
     charts: List[Dict[str, Any]] = []
     multi = len(names) > 1
+    any_expanded = False
     for group in groups:
         metrics = (_VIRT_GROUP_METRICS.get(group) or {}).get(kind) or []
         if not metrics:
             continue
+        group_expanded = False
         # Aynı birimdeki metrikleri tek grafikte topla (RX+TX, IOPS).
         by_unit: Dict[str, List[Dict[str, Any]]] = {}
         unit_of: Dict[str, str] = {}
@@ -1026,6 +1195,7 @@ def _build_virt_charts(
                         db, kind=kind, names=names, metric=metric,
                         range_key="24h", window_minutes=1440,
                     )
+                    group_expanded = True
             unit = raw.get("unit") or ""
             unit_of[metric] = unit
             mlabel = _VIRT_METRIC_LABEL.get(metric, metric)
@@ -1048,7 +1218,10 @@ def _build_virt_charts(
             if not series:
                 continue
             gtitle = _OS_GROUP_TITLE.get(group) or _VIRT_METRIC_LABEL.get(metrics[0], group)
-            title = f"{gtitle} — Son {hours_label}"
+            # Dürüst başlık (8G, G7): pencere genişletildiyse başlık gerçek pencereyi söyler.
+            eff_label = _format_duration_label(24.0) if group_expanded else hours_label
+            any_expanded = any_expanded or group_expanded
+            title = f"{gtitle} — Son {eff_label}"
             if multi:
                 title = f"{title} ({len(names)} nesne)"
             charts.append({
@@ -1057,7 +1230,10 @@ def _build_virt_charts(
                 "unit": unit,
                 "series": series,
             })
-    return charts, (["vcenter"] if charts else [])
+    srcs = ["vcenter"] if charts else []
+    if any_expanded:
+        srcs.append("expanded_24h")
+    return charts, srcs
 
 
 def _summary_text(
@@ -1068,9 +1244,12 @@ def _summary_text(
     sources: Sequence[str],
     missing: Sequence[str],
     notes: Sequence[str],
+    lead: str = "",
 ) -> str:
     hours_label = _format_duration_label(hours)
     lines = [f"### {title} — Son {hours_label}\n"]
+    if lead:
+        lines += [lead, ""]
     if charts:
         for chart in charts:
             lines.append(f"**{chart['title'].split(' — ')[0]}**")
@@ -1091,6 +1270,7 @@ def _summary_text(
             "timescale_expanded": "Timescale (pencere genişletildi — son örnek istenen aralığın dışında)",
             "prometheus": "Prometheus query_range",
             "vcenter": "vCenter / Timescale",
+            "ocp_resource_metrics": "OpenShift metrics.k8s.io (Timescale)",   # Adım 20: iç tablo adı kullanıcıya sızmasın
         }
         lines.append("_Kaynak: " + ", ".join(src_map.get(s, s) for s in sources) + "._")
     if missing:
@@ -1098,6 +1278,31 @@ def _summary_text(
     for n in notes:
         lines.append(n)
     return "\n".join(lines)
+
+
+def rank_leader_line(charts: Sequence[Dict[str, Any]], order: Optional[str], hours: float) -> str:
+    """Top-N grafikte lider: ilk grafiğin (sıralama metriği) serileri pencere ortalamasıyla sıralanır (kodda)."""
+    if not charts:
+        return ""
+    chart = charts[0]
+    unit = chart.get("unit") or ""
+    scored = []
+    for s in chart.get("series") or []:
+        vals = [p.get("v") for p in (s.get("points") or []) if p.get("v") is not None]
+        if vals:
+            scored.append((sum(vals) / len(vals), s.get("label") or ""))
+    if not scored:
+        return ""
+    lowest = (order or "").lower() == "lowest"
+    scored.sort(key=lambda x: (x[0], x[1]) if lowest else (-x[0], x[1]))
+    avg, label = scored[0]
+    label = label.split(" — ")[0]
+    metric = str(chart.get("title") or "").split(" — ")[0] or "metrik"
+    word = "En düşük" if lowest else "En yüksek"
+    suffix = f" {unit}" if unit else ""
+    num = f"{avg:.3f}" if abs(avg) < 1 else (f"{avg:.2f}" if abs(avg) < 10 else f"{avg:.1f}")
+    return (f"**{word} {metric} (son {_format_duration_label(hours)} ortalaması): {label} — {num}{suffix}**  \n"
+            f"_Sıralama kodda: Top-{len(scored)} aday pencere ortalamasına göre sıralandı._")
 
 
 def try_build_chat_charts(
@@ -1116,6 +1321,13 @@ def try_build_chat_charts(
     explicit (/graph) her zaman bir cevap döner (veri yoksa açıklama).
     """
     plat = (platform or "linux").strip().lower()
+    if not explicit:
+        # Adım 8G: «… grafikte göster» /graph yazmadan da gerçek grafik (K8 kararı kullanıcıca değiştirildi).
+        req_kind = graph_request_kind(message)
+        if req_kind == "unsupported":
+            return None          # sabit dürüst cümleyi sohbet kapısı (unavailable_info) verir
+        if req_kind == "chart":
+            explicit = True
     intent = parse_chart_intent(message, explicit=explicit)
     if not intent:
         return None
@@ -1123,6 +1335,14 @@ def try_build_chat_charts(
     hours = float(intent["hours"])
     groups = list(intent["groups"])
     notes: List[str] = []
+    if intent.get("clamped"):
+        notes.append(f"_İstenen süre üst sınırı aştığı için son {_format_duration_label(MAX_HOURS)} gösteriliyor._")
+    if intent.get("hours_defaulted"):
+        notes.append(
+            f"_Süre belirtilmediği için son {_format_duration_label(hours)} gösteriliyor; "
+            "örn. «son 2 saat» / «son 3 gün» yazarak değiştirebilirsiniz._"
+        )
+    rank_order: Optional[str] = None
     charts: List[Dict[str, Any]] = []
     sources: List[str] = []
     missing: List[str] = []
@@ -1130,10 +1350,25 @@ def try_build_chat_charts(
 
     virt_like = plat in ("virt", "vcenter", "hypervisor")
     if plat == "unified":
-        virt_like = detect_virt_kind(message) != "vm" or any(
-            h in f" {(message or '').lower()} "
-            for h in (" vcenter", " esxi", " datastore", " sanal makine", " vm ")
+        virt_like = (
+            detect_virt_kind(message) != "vm"
+            or has_vm_word(message)
+            or any(
+                h in f" {(message or '').lower()} "
+                for h in (" vcenter", " esxi", " datastore", " sanal makine", " sanal sunucu", " vm ")
+            )
         )
+        if virt_like and not parse_rank_intent(message):
+            # «web01 vm'i cpu» gibi: adı yalnız Linux envanterinde geçiyorsa Linux yolu (virt'te ad bulunamaz).
+            try:
+                virt_named = any(
+                    match_named_entities(message, _virt_inventory_names(db, k))
+                    for k in ("vm", "host", "datastore")
+                )
+                if not virt_named and resolve_linux_chart_hosts(message, selected=None, pool=pool):
+                    virt_like = False
+            except Exception as exc:
+                logger.debug("chat_charts unified route check: %s", exc)
 
     if virt_like or plat == "virt":
         kind = detect_virt_kind(message)
@@ -1200,8 +1435,9 @@ def try_build_chat_charts(
 
         rank = parse_rank_intent(message) if not names else None
         # İsim yok + kapsam var → Top-N (varsayılan 5) kapsam içinde
-        if not names and not rank and (scope_candidates is not None) and explicit:
-            rank = {"top_n": min(5, MAX_CHART_OBJECTS), "order": "highest"}
+        if not names and not rank and explicit and (scope_candidates is not None or _has_scope_noun(message)):
+            rank = dict(_DEFAULT_RANK)
+            notes.append(_DEFAULT_RANK_NOTE)
         if rank and not names:
             ranked_names, rank_note = _rank_virt_names(
                 db,
@@ -1219,6 +1455,7 @@ def try_build_chat_charts(
             names = ranked_names
             if rank_note:
                 notes.append(rank_note)
+            rank_order = str(rank["order"])
         refs = [ref for n, ref in inventory_refs if n in set(names)]
         names = refs or names
         if not names:
@@ -1245,6 +1482,11 @@ def try_build_chat_charts(
         title = titled
         if not charts:
             missing = list(names)
+        if "expanded_24h" in sources:
+            sources = [x for x in sources if x != "expanded_24h"]
+            notes.append(
+                f"_Son {_format_duration_label(hours)} içinde yeterli örnek yok; grafik son 1 gün penceresiyle çizildi._"
+            )
         notes.append("_Hipervizör metrikleri vCenter sync; guest OS / Prometheus karışmaz._")
     elif plat in ("openshift", "ocp", "kubernetes", "k8s"):
         cluster = _ocp_resolve_cluster(db, message)
@@ -1272,6 +1514,9 @@ def try_build_chat_charts(
                     kind, names, inventory_refs = alt, alt_names, alt_refs
                     break
         rank = parse_rank_intent(message) if not names else None
+        if not names and not rank and explicit and _has_scope_noun(message):
+            rank = dict(_DEFAULT_RANK)
+            notes.append(_DEFAULT_RANK_NOTE)
         # display ad → ref
         name_set = set(names)
         refs = []
@@ -1295,6 +1540,7 @@ def try_build_chat_charts(
             )
             if rank_note:
                 notes.append(rank_note)
+            rank_order = str(rank["order"])
         if not chart_names:
             if explicit:
                 return {
@@ -1336,6 +1582,9 @@ def try_build_chat_charts(
                 pool=pool,
             )
             rank = parse_rank_intent(message) if not hosts else None
+            if not hosts and not rank and explicit and _has_scope_noun(message):
+                rank = dict(_DEFAULT_RANK)
+                notes.append(_DEFAULT_RANK_NOTE)
             if rank and not hosts:
                 ranked_pool = list(servers or []) or list(pool or [])
                 hosts, rank_note = _rank_linux_hosts(
@@ -1371,6 +1620,9 @@ def try_build_chat_charts(
         else:
             targets = resolve_os_targets(message, selected=servers, pool=pool)
             rank = parse_rank_intent(message) if not targets else None
+            if not targets and not rank and explicit and _has_scope_noun(message):
+                rank = dict(_DEFAULT_RANK)
+                notes.append(_DEFAULT_RANK_NOTE)
             if rank and not targets:
                 ranked_pool = list(servers or []) or list(pool or [])
                 ranked_hosts, rank_note = _rank_linux_hosts(
@@ -1415,6 +1667,7 @@ def try_build_chat_charts(
             sources=sources,
             missing=missing,
             notes=notes,
+            lead=rank_leader_line(charts, rank_order, hours) if rank_order else "",
         ),
         "charts": list(charts),
         "intents": ["chart", plat if plat != "hypervisor" else "virt"],

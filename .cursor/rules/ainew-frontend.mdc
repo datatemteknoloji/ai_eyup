@@ -6,7 +6,16 @@ alwaysApply: false
 
 # Frontend conventions
 
-React 18 + Vite + TypeScript + Tailwind + TanStack Query + react-router-dom v6.
+React 19 + Vite 8 + TypeScript 6 + Tailwind 4 + TanStack Query + react-router-dom v7.
+
+## Tailwind 4 / bağımlılık notları (kritik)
+
+- Yardımcı sınıflar `@layer utilities` içindedir; **katmansız** CSS her zaman katmanlıyı yener. `index.css`'te düşük özgüllüklü genel kurallar (`*`, `code`, `body` sıfırlamaları) `@layer base` içinde olmalı — yoksa `p-*`, `mt-*`, `mx-auto` gibi TÜM yardımcılar ezilir (login düzeni bozulur). Yeni genel reset/element kuralı eklerken `@layer base` kullan.
+- Yapılandırma: `index.css` → `@config '../tailwind.config.js'` + `@plugin '@tailwindcss/typography'`; PostCSS eklentisi `@tailwindcss/postcss`.
+- v3→v4 ad değişimleri kodda uygulandı: `shadow-sm→shadow-xs`, `shadow→shadow-sm`, `rounded-sm→rounded-xs`, `rounded→rounded-sm`, `backdrop-blur-sm→xs`, `outline-none→outline-hidden`. Yeni kodda v4 adlarını kullan.
+- `@tanstack/react-table` v9: `src/dropt/pages/ServersPage.tsx` v8 uyumlu `@tanstack/react-table/legacy` katmanını kullanır (tam v9 API'sine geçiş bekliyor).
+- `typescript` 6.0.x'te tutulur (typescript-eslint henüz TS 7'yi desteklemiyor). ESLint yapılandırması yoktur; `lint` betiği kaldırıldı.
+- `xlsx` npm'den değil SheetJS CDN'den (`xlsx-0.20.3`); `overrides.postcss-selector-parser` typography'nin eski bağımlılığını yükseltir.
 
 ## Yapı
 
@@ -21,6 +30,8 @@ React 18 + Vite + TypeScript + Tailwind + TanStack Query + react-router-dom v6.
 - Girdi: textarea `value` ile auto-grow (Shift+Enter satır; tek `rows={1}` yetmez)
 - Tablo: `table-auto` + hücre `break-words`; yatay kaydırma yedek
 - Unified / Linux / Windows / Hypervisor aynı sınıfları kullanır
+- Akış: `lib/chatStreamStore.ts` SSE'yi ayrıştırır; `progress` olayı (`{step,text,elapsed_s}`) ilk token'a kadar `snapshot.progress` (token/`replace_answer`/bitişte temizlenir). UI `progress?.text ?? thinkingLabel` gösterir (Unified/Windows/Chat `thinkingPhase`, Hypervisor `TypingIndicator`); yeni sohbet sayfası eklersen aynı kalıp. `thinking` olayları `ThinkingTrace` ile (Chat/WindowsChat/HypervisorChat/Unified; cevap metnine KATILMAZ); `replace_answer` biriken metni atar (kanıt guard'ı/ikinci üretim)
+- Bilinmeyen SSE `type` değerleri yok sayılır (geriye uyum); `from_cache`, `suggestions`, `needs_confirmation` `done` ile gelir
 
 ## Canlı Metrikler
 
@@ -33,3 +44,5 @@ React 18 + Vite + TypeScript + Tailwind + TanStack Query + react-router-dom v6.
 - vCenter sync overlay süresi: sunucu `started_at`, `Date.now()` değil
 - DESIGN.md: mor/neon yok; accent blue-600; DM Sans/Mono
 - Bu host’ta FE baked: rebuild + recreate; HMR yok
+- Sohbet yazı boyutu (Adım 16): NL sohbet metni (varsayılan 12 px; seçici 11/12/13/15, Adım 18) tek merkezden `--chat-fs` (`index.css`, `<html data-chat-size>`, `lib/chatFontSize.ts`); asistan cevabı `chatResponseBody` (`chat-msg-body`), balonlar `chat-user-text`/`chat-assistant-text`; seçici `NlFontSizeSelect` (NlModelSelect içinde). Yeni sohbet sayfası bu sınıfları kullanmalı; Tailwind `text-sm`/`prose-sm` tek başına boyutu belirlemez.
+- Genel ölçek (Adım 18): `index.css` `html { font-size: 90% }` — Tailwind rem tabanlı olduğundan login dahil tüm UI %90; geri almak için bu satırı sil. Yeni sohbet sayfası kök bileşeni `NlChatRoot` (`flex-1 min-h-0`; sabit `calc(100vh-3.5rem)` KULLANMA — DEMO bandı açıkken alt kısım kırpılır). Sohbet çevresi sıkı tutulur: `NlTopBar` `py-1.5`, geçmiş çubuğu `w-56`, istatistik şeridi `py-1`, mesaj sütunu `max-w-[96rem]`. Yeni px sabit yazı (`text-[Npx]`) genel ölçekten etkilenmez; ≥ 9 px kalmalı.

@@ -77,16 +77,16 @@ export function LogCollectPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("wizard_logs")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">
         Salt okuma · son N saatin kayıtlarını zip olarak indir
       </p>
 
       <form
         onSubmit={onSubmit}
-        className="mt-6 max-w-xl space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
+        className="mt-6 max-w-xl space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-5"
       >
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Talep ID</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">Talep ID</label>
           <Input
             value={talepId}
             onChange={(e) => setTalepId(e.target.value)}
@@ -104,7 +104,7 @@ export function LogCollectPage() {
         />
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">
             Ne kadar geriye bakılsın?
           </label>
           <Select value={hours} onValueChange={setHours}>
@@ -120,7 +120,7 @@ export function LogCollectPage() {
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">
             Uygulama / sistem şablonu
           </label>
           <Select value={template} onValueChange={setTemplate}>
@@ -136,7 +136,7 @@ export function LogCollectPage() {
             </SelectContent>
           </Select>
           {selectedTemplate ? (
-            <p className="mt-2 text-xs text-[var(--color-muted-foreground)]">
+            <p className="mt-2 text-xs text-(--color-muted-foreground)">
               Kaynaklar:{" "}
               {[
                 selectedTemplate.include_journal ? "journalctl" : null,
@@ -149,7 +149,7 @@ export function LogCollectPage() {
           ) : null}
         </div>
 
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
 
         <Button type="submit" disabled={busy}>
           {busy ? "Önizleme hazırlanıyor…" : "Paketi hazırla (önizle)"}

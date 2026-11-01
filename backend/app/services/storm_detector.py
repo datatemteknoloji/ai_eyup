@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Dict, List, Optional, Any
 
 from sqlalchemy import func
@@ -230,7 +231,7 @@ def auto_resolve_by_ttl(db: Session) -> int:
     last_seen'i TTL_HOURS'dan eski ve hâlâ açık olanları çözer.
     """
     resolved_count = 0
-    now = datetime.utcnow()
+    now = utc_now()
 
     for severity, hours in TTL_HOURS.items():
         cutoff = now - timedelta(hours=hours)

@@ -41,6 +41,17 @@ def has_prior_messages(db: Session, session_id: Optional[int]) -> bool:
     return db.query(ChatMessage.id).filter(ChatMessage.session_id == session_id).first() is not None
 
 
+def has_real_prior_messages(db: Session, session_id: Optional[int]) -> bool:
+    """Adım 9: GERÇEK takip sorusu mu? Sohbet hatları kullanıcı mesajını `has_prior_messages`'tan ÖNCE kaydeder; bu yüzden
+    `has_prior_messages` her turda True döner (cache'in 0 yazma kök nedeni). Burada güncel kullanıcı mesajı sayılmaz
+    (oturumda ≥ 2 mesaj = önceki tur var)."""
+    if not session_id:
+        return False
+    from app.models.chat_session import ChatMessage
+
+    return db.query(ChatMessage.id).filter(ChatMessage.session_id == session_id).limit(2).count() >= 2
+
+
 def format_history_block(
     history: List[Dict[str, str]], max_turns: int = 6, max_chars_per_msg: int = 700
 ) -> str:

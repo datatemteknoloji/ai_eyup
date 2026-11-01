@@ -140,29 +140,63 @@ def search_and_sync_vm_details(server: Server, db: Session) -> Dict:
     if not server.hypervisor_id:
         return {"found": False, "message": "Sunucuya bağlı hypervisor yok"}
 
+    # Ağ çağrılarından ÖNCE gereken her şeyi düz değerlere kopyala (ORM nesnesi
+    # commit sonrası expire olur; ağ boyunca açık işlem tutmamak için).
+    srv_id = server.id
+    srv_name = server.name or ""
+    srv_hostname = server.hostname or ""
+    srv_ip = server.ip_address or ""
+    known_vm_id = server.hypervisor_vm_id
+
     hypervisor = db.query(Hypervisor).filter_by(id=server.hypervisor_id).first()
     if not hypervisor:
         return {"found": False, "message": "Hypervisor kaydı bulunamadı"}
 
+    from types import SimpleNamespace
+    hv = SimpleNamespace(
+        id=hypervisor.id,
+        name=hypervisor.name,
+        hypervisor_type=hypervisor.hypervisor_type,
+        hostname=hypervisor.hostname,
+        ip_address=hypervisor.ip_address,
+        port=hypervisor.port,
+        username=hypervisor.username,
+        password=hypervisor.password,
+        connection_config=dict(hypervisor.connection_config or {}),
+    )
+
+    # Hypervisor'a (10 sn'ye varan zaman aşımlı) dış çağrı öncesi okuma işlemini kapat:
+    # açık kalırsa TimescaleDB retention (AccessExclusive) arkasında tüm okumalar kuyruğa
+    # girer ve uygulama kilitlenir (bkz. docs/chat-quality/plan.md «VM-sync kilidi»).
+    from app.core.database import release_txn
+    release_txn(db)
+
     client = None
     try:
-        client, platform = get_vm_client(hypervisor)
+        try:
+            client, platform = get_vm_client(hv)
+        except Exception as exc:
+            # Hypervisor'a ulaşılamıyor / oturum açılamıyor: çağıran (toplu sync) bu hypervisor'ı
+            # tur boyunca atlayabilsin diye ayırt edilebilir işaret döndür.
+            logger.warning("search_and_sync_vm_details #%s: hypervisor erişilemiyor (%s): %s",
+                           srv_id, hv.name, exc)
+            return {"found": False, "unreachable": True, "message": str(exc)}
 
         # 1) VM ID bul
-        vm_id = server.hypervisor_vm_id
+        vm_id = known_vm_id
         if not vm_id:
             if hasattr(client, "find_vm_by_name_or_ip"):
                 vm_id = client.find_vm_by_name_or_ip(
-                    name=server.name or server.hostname or "",
-                    ip=server.ip_address or "",
+                    name=srv_name or srv_hostname,
+                    ip=srv_ip,
                 )
 
         if not vm_id:
             return {
                 "found": False,
                 "message": (
-                    f"VM bulunamadı — {hypervisor.name} üzerinde "
-                    f"'{server.name}' / '{server.ip_address}' ile eşleşme yok"
+                    f"VM bulunamadı — {hv.name} üzerinde "
+                    f"'{srv_name}' / '{srv_ip}' ile eşleşme yok"
                 ),
             }
 
@@ -172,16 +206,16 @@ def search_and_sync_vm_details(server: Server, db: Session) -> Dict:
             import inspect as _inspect
             _sig = _inspect.signature(client.get_vm_full_details)
             if "name" in _sig.parameters:
-                details = client.get_vm_full_details(vm_id, name=server.name or "")
+                details = client.get_vm_full_details(vm_id, name=srv_name)
             else:
                 details = client.get_vm_full_details(vm_id)
         if not details:
             # Minimal bilgi — en azından VM ID'yi kaydet
-            details = {"vm_id": vm_id, "vm_name": server.name}
+            details = {"vm_id": vm_id, "vm_name": srv_name}
 
         details["vm_id"] = vm_id
 
-        # 3) Server kaydına yaz
+        # 3) Server kaydına yaz (ağ bitti; kısa işlem + commit)
         _apply_vm_details_to_server(server, details, db)
 
         return {
@@ -194,7 +228,11 @@ def search_and_sync_vm_details(server: Server, db: Session) -> Dict:
         }
 
     except Exception as exc:
-        logger.error(f"search_and_sync_vm_details #{server.id}: {exc}", exc_info=True)
+        logger.error(f"search_and_sync_vm_details #{srv_id}: {exc}", exc_info=True)
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return {"found": False, "message": str(exc)}
     finally:
         if client and hasattr(client, "logout"):

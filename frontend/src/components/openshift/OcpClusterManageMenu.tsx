@@ -253,7 +253,7 @@ export default function OcpClusterManageMenu({ cluster, onCreated, onDeleted }: 
       )}
 
       {modal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-cyber-card rounded-2xl border border-white/[0.06] w-full max-w-md shadow-2xl">
             <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between">
               <h2 className="text-sm font-semibold text-white">

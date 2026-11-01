@@ -105,5 +105,7 @@ def test_guard_needs_enough_anchors_to_judge():
 def test_fallback_truncates_long_evidence():
     long_q = EVIDENCE + "x" * 20000
     out = _render_tool_evidence_fallback(long_q, max_chars=500)
-    assert "kısaltıldı" in out
+    # Adım 8d: kesik/okunamayan JSON ham basılmaz; Adım 15: başlık «model yazamadı; kısa döküm»
+    assert "kısa dökümü" in out
+    assert '"ok"' not in out and "{" not in out
     assert len(out) < 1200

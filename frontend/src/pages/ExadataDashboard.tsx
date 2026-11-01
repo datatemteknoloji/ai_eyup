@@ -50,10 +50,10 @@ function NodeTile({ node, variant }: { node: ExadataNode; variant: 'compute' | '
   const accent = variant === 'compute' ? 'border-cyan-500/25 bg-cyan-500/5' : 'border-orange-500/25 bg-orange-500/5'
   const Icon = variant === 'compute' ? Cpu : HardDrive
   return (
-    <div className={`rounded-lg border p-3 ${accent} hover:border-opacity-60 transition-colors`}>
+    <div className={`rounded-lg border p-3 ${accent} transition-colors`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <Icon size={14} className={variant === 'compute' ? 'text-cyan-400 flex-shrink-0' : 'text-orange-400 flex-shrink-0'} />
+          <Icon size={14} className={variant === 'compute' ? 'text-cyan-400 shrink-0' : 'text-orange-400 shrink-0'} />
           <div className="min-w-0">
             <div className="text-sm font-medium text-white truncate">{node.name}</div>
             <div className="text-[10px] text-slate-500 truncate">{node.ip_address || node.hostname || '—'}</div>
@@ -316,7 +316,7 @@ export default function ExadataDashboard({ allowInventoryEdit = false }: { allow
       )}
 
       {allowInventoryEdit && showAddRack && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-white font-semibold">{t('exa_new_rack')}</h3>
@@ -350,7 +350,7 @@ export default function ExadataDashboard({ allowInventoryEdit = false }: { allow
       )}
 
       {allowInventoryEdit && addNodeRackId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-white font-semibold">{t('exa_add_node_title')}</h3>

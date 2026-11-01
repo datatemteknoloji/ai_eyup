@@ -2,21 +2,28 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt  # PyJWT (python-jose bakımsız ve açıklı olduğu için değiştirildi)
+from jwt import PyJWTError as JWTError
 
 from app.core.config import get_settings
 
 settings = get_settings()
 
 
+def _pw_bytes(password: str) -> bytes:
+    # bcrypt 72 bayt sınırı: bcrypt 4.x fazlasını sessizce kesiyordu, 5.x ValueError veriyor.
+    # Davranış (ve mevcut hash'lerin doğrulanması) değişmesin diye açıkça kesilir.
+    return (password or "").encode("utf-8")[:72]
+
+
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    return bcrypt.hashpw(_pw_bytes(password), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         return bcrypt.checkpw(
-            plain_password.encode("utf-8"),
+            _pw_bytes(plain_password),
             hashed_password.encode("utf-8"),
         )
     except ValueError:

@@ -143,7 +143,10 @@ def _apply_inventory(db: Session, row: IntegrationInstance, snap: HwSnapshot, mg
         for f in ("os_hostname", "model", "serial", "uuid", "virtual_serial", "virtual_uuid", "bmc_ip", "bmc_type",
                   "bmc_version", "bios_version", "form_factor", "enclosure_ref", "enclosure_name", "bay", "raw_status",
                   "power_state", "connected", "cpu_count", "memory_gb", "web_url"):
-            setattr(o, f, getattr(r, f))
+            v = getattr(r, f)
+            if f == "bios_version" and v is None and o.bios_version and r.vendor == "dell":
+                continue            # Dell BIOS yalnız firmware envanteri okunan turda gelir; okunmayan turda önceki değer korunur
+            setattr(o, f, v)
         o.health = r.health
         o.extra_json = json.dumps(r.extra, default=str) if r.extra else None
         o.collected_at = now
@@ -183,9 +186,16 @@ def _apply_inventory(db: Session, row: IntegrationInstance, snap: HwSnapshot, mg
         for f in snap.firmware:
             if f.server_ref in ids:
                 db.add(HwFirmware(server_id=ids[f.server_ref], name=(f.name or "")[:255],
-                                  component_type=f.component_type, version=f.version, collected_at=now))
+                                  component_type=f.component_type, version=f.version,
+                                  status=(f.status or None) and str(f.status)[:16],
+                                  component_id=(f.component_id or None) and str(f.component_id)[:64],
+                                  location=(f.location or None) and str(f.location)[:255], collected_at=now))
     db.flush()
-    return {"servers": len(snap.servers), "removed": removed, "enclosures": len(snap.enclosures)}
+    out = {"servers": len(snap.servers), "removed": removed, "enclosures": len(snap.enclosures)}
+    if snap.firmware_progress:
+        out["firmware_read"] = sum(p.get("read", 0) for p in snap.firmware_progress.values())
+        out["firmware_total"] = sum(p.get("total", 0) for p in snap.firmware_progress.values())
+    return out
 
 
 def _apply_alerts(db: Session, row: IntegrationInstance, snap: HwSnapshot, mgrs: Dict[str, HwManager],
@@ -331,6 +341,10 @@ def sync_instance(db: Session, row: IntegrationInstance, *, force: bool = False,
             meta["parts_at"] = at
             if PART_ALERTS in snap.parts:
                 meta["last_alert_ts"] = now.isoformat()
+            if snap.firmware_cursors:                               # sınırlı firmware turu: kalan cihazlar sonraki turda
+                cur = dict(meta.get("firmware_cursors") or {})
+                cur.update(snap.firmware_cursors)
+                meta["firmware_cursors"] = cur
             meta["consecutive_failures"] = 0
             meta.pop("breaker_until", None)
             meta["warnings"] = snap.warnings[:20]
@@ -355,6 +369,12 @@ def sync_instance(db: Session, row: IntegrationInstance, *, force: bool = False,
     except Exception:  # noqa: BLE001
         db.rollback()
         logger.exception("HW eşleştirme hata")
+    try:   # durum → SystemEvent → Incident (gerçek sağlayıcı; DEMO üretmez)
+        from app.services.hw.events import sync_hw_events
+        sync_hw_events(db)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("HW olay üretimi hata")
     return {"ok": True, "parts": sorted(snap.parts), "counts": counts, "warnings": snap.warnings}
 
 

@@ -2,11 +2,14 @@
 Kimlik doğrulama API — login (local/AD + MFA), profil ve kullanıcı yönetimi.
 """
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials as _Creds
 from fastapi.security import HTTPBearer as _HTTPBearer
 from pydantic import BaseModel
@@ -22,7 +25,7 @@ from app.core.security import (
     verify_password,
 )
 from app.models.user import User
-from app.services import ad_sync, lockout, mfa_totp, user_sessions
+from app.services import ad_sync, lockout, mfa_totp, sso_oidc, user_sessions
 from app.services.ad_auth import authenticate_ad
 from app.services.audit import record_audit
 from app.services.identity_store import get_or_create_identity
@@ -289,6 +292,95 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         }
 
     return _issue_login(db, user, request, auth_source=auth_source)
+
+
+def _sso_login_redirect(cfg, *, code: Optional[str] = None, error: Optional[str] = None) -> RedirectResponse:
+    """Arayüzün /login sayfasına döndür. URL'de yalnızca kısa ömürlü tek kullanımlık kod / hata metni olur."""
+    base = (getattr(cfg, "sso_frontend_redirect", None) or "/").strip()
+    if not (base.startswith("/") or base.startswith(("http://", "https://"))):
+        base = "/"
+    base = base.rstrip("/")
+    if code:
+        qs = f"sso_code={quote(code)}"
+    else:
+        qs = f"sso_error={quote((error or 'SSO oturumu açılamadı')[:200])}"
+    return RedirectResponse(url=f"{base}/login?{qs}", status_code=302)
+
+
+@router.get("/sso/start")
+def sso_start(request: Request, db: Session = Depends(get_db)):
+    """OIDC yetkilendirme isteğini başlat (tarayıcı gezintisi → IdP'ye yönlendirir)."""
+    cfg = get_or_create_identity(db)
+    try:
+        url = sso_oidc.build_authorize_url(cfg)
+    except sso_oidc.SsoError as exc:
+        record_audit(
+            db, category="auth", action="auth.login.sso", status="failure",
+            actor="sso", summary=f"SSO başlatılamadı: {exc}", ip_address=client_ip(request),
+        )
+        return _sso_login_redirect(cfg, error=str(exc))
+    return RedirectResponse(url=url, status_code=302)
+
+
+@router.get("/sso/callback")
+def sso_callback(
+    request: Request,
+    db: Session = Depends(get_db),
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+):
+    """IdP dönüşü: kodu doğrula, kullanıcıyı eşle, tek kullanımlık giriş kodu ver."""
+    cfg = get_or_create_identity(db)
+    ip = client_ip(request)
+    if error:
+        safe = re.sub(r"[^a-z_]", "", (error or "").lower())[:40] or "unknown"
+        record_audit(
+            db, category="auth", action="auth.login.sso", status="failure",
+            actor="sso", summary=f"SSO sağlayıcısı hata döndürdü: {safe}", ip_address=ip,
+        )
+        return _sso_login_redirect(cfg, error=f"SSO sağlayıcısı hata döndürdü ({safe})")
+    if not code or not state:
+        return _sso_login_redirect(cfg, error="SSO yanıtı eksik (code/state)")
+    try:
+        ident = sso_oidc.handle_callback(cfg, code=code, state=state)
+        user = sso_oidc.provision_user(db, ident)
+        login_code = sso_oidc.create_login_code(user.id)
+    except sso_oidc.SsoError as exc:
+        record_audit(
+            db, category="auth", action="auth.login.sso", status="failure",
+            actor="sso", summary=f"SSO girişi reddedildi: {exc}", ip_address=ip,
+        )
+        return _sso_login_redirect(cfg, error=str(exc))
+    except Exception:  # noqa: BLE001
+        logger.exception("SSO callback beklenmeyen hata")
+        record_audit(
+            db, category="auth", action="auth.login.sso", status="failure",
+            actor="sso", summary="SSO girişi beklenmeyen hata", ip_address=ip,
+        )
+        return _sso_login_redirect(cfg, error="SSO oturumu açılamadı")
+    return _sso_login_redirect(cfg, code=login_code)
+
+
+class SsoExchangeRequest(BaseModel):
+    code: str
+
+
+@router.post("/sso/exchange")
+def sso_exchange(req: SsoExchangeRequest, request: Request, db: Session = Depends(get_db)):
+    """Tek kullanımlık SSO kodunu oturum token'ına çevir (MFA'yı IdP yapar; ainew MFA'sı atlanır)."""
+    try:
+        uid = sso_oidc.consume_login_code(req.code)
+    except sso_oidc.SsoError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    user = db.query(User).filter(User.id == uid).first() if uid else None
+    if not user or not user.is_active:
+        record_audit(
+            db, category="auth", action="auth.login.sso", status="failure",
+            actor="sso", summary="Geçersiz veya süresi dolmuş SSO kodu", ip_address=client_ip(request),
+        )
+        raise HTTPException(401, "SSO kodu geçersiz veya süresi dolmuş")
+    return _issue_login(db, user, request, auth_source="sso")
 
 
 @router.post("/mfa/verify")

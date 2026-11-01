@@ -371,12 +371,12 @@ export function SettingsPage() {
   }
 
   const panelClass =
-    "space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm";
+    "space-y-4 rounded-2xl border border-(--color-border) bg-(--color-card) p-6 shadow-xs";
 
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("settings_title")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("settings_subtitle")}</p>
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">{t("settings_subtitle")}</p>
 
       <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
         <nav
@@ -391,8 +391,8 @@ export function SettingsPage() {
               className={cn(
                 "whitespace-nowrap rounded-xl px-3 py-2 text-left text-sm transition-colors",
                 tab === item.id
-                  ? "bg-[var(--color-accent)] font-medium text-[var(--color-accent-foreground)]"
-                  : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]/40 hover:text-[var(--color-foreground)]",
+                  ? "bg-(--color-accent) font-medium text-(--color-accent-foreground)"
+                  : "text-(--color-muted-foreground) hover:bg-(--color-muted)/40 hover:text-(--color-foreground)",
               )}
             >
               {item.label}
@@ -405,10 +405,10 @@ export function SettingsPage() {
             <form onSubmit={onSaveGeneral} className={panelClass}>
               <h3 className="text-sm font-medium">{t("settings_section_general")}</h3>
               <div>
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("app_name")}</label>
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("app_name")}</label>
                 <Input value={appName} onChange={(e) => setAppName(e.target.value)} required />
               </div>
-              {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+              {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
               {msg ? <p className="text-sm text-emerald-300">{msg}</p> : null}
               <Button type="submit">{t("save")}</Button>
             </form>
@@ -418,7 +418,7 @@ export function SettingsPage() {
             <form onSubmit={onSaveAutomation} className={panelClass}>
               <h3 className="text-sm font-medium">{t("settings_section_automation")}</h3>
               <div>
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                   {t("automation_user_kind")}
                 </label>
                 <Select
@@ -439,12 +439,12 @@ export function SettingsPage() {
                     <SelectItem value="ad">{t("automation_user_kind_ad")}</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+                <p className="mt-1 text-xs text-(--color-muted-foreground)">
                   {t("automation_user_kind_help")}
                 </p>
               </div>
               <div>
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                   {t("automation_user")}
                 </label>
                 <Input
@@ -460,7 +460,7 @@ export function SettingsPage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                   {t("automation_password")} {passwordSet ? t("password_keep") : ""}
                 </label>
                 <Input
@@ -470,11 +470,11 @@ export function SettingsPage() {
                   onChange={(e) => setAutomationPassword(e.target.value)}
                   placeholder={passwordSet ? "••••••••" : t("automation_password_hint")}
                 />
-                <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+                <p className="mt-1 text-xs text-(--color-muted-foreground)">
                   {t("automation_password_help")}
                 </p>
               </div>
-              {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+              {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
               {msg ? <p className="text-sm text-emerald-300">{msg}</p> : null}
               <Button type="submit">{t("save")}</Button>
             </form>
@@ -483,9 +483,9 @@ export function SettingsPage() {
           {isAdmin && tab === "mail" ? (
             <form onSubmit={onSaveMail} className={panelClass}>
               <h3 className="text-sm font-medium">{t("settings_section_mail")}</h3>
-              <p className="text-xs text-[var(--color-muted-foreground)]">{t("settings_mail_help")}</p>
+              <p className="text-xs text-(--color-muted-foreground)">{t("settings_mail_help")}</p>
               <div>
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("smtp_host")}</label>
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("smtp_host")}</label>
                 <Input
                   className="font-mono"
                   value={smtpHost}
@@ -494,7 +494,7 @@ export function SettingsPage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                   {t("smtp_test_mail")}
                 </label>
                 <Input
@@ -505,7 +505,7 @@ export function SettingsPage() {
                   placeholder="ops@domain.local"
                 />
               </div>
-              {mailError ? <p className="text-sm text-[var(--color-destructive)]">{mailError}</p> : null}
+              {mailError ? <p className="text-sm text-(--color-destructive)">{mailError}</p> : null}
               {mailMsg ? <p className="text-sm text-emerald-300">{mailMsg}</p> : null}
               <Button type="submit">{t("save")}</Button>
             </form>
@@ -514,7 +514,7 @@ export function SettingsPage() {
           {isAdmin && tab === "assistant" ? (
             <form onSubmit={onSaveAssistant} className={panelClass}>
               <h3 className="text-sm font-medium">{t("settings_section_assistant")}</h3>
-              <p className="text-xs text-[var(--color-muted-foreground)]">{t("settings_assistant_help")}</p>
+              <p className="text-xs text-(--color-muted-foreground)">{t("settings_assistant_help")}</p>
 
               <label className="flex items-center gap-2 text-sm">
                 <input
@@ -526,7 +526,7 @@ export function SettingsPage() {
               </label>
 
               <div>
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                   {t("assistant_ollama_mode")}
                 </label>
                 <Select
@@ -546,7 +546,7 @@ export function SettingsPage() {
               {ollamaMode === "gateway" ? (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                    <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                       {t("assistant_gateway_url")}
                     </label>
                     <Input
@@ -557,7 +557,7 @@ export function SettingsPage() {
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                    <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                       {t("assistant_gateway_api_key")} {gatewayKeySet ? t("password_keep") : ""}
                     </label>
                     <Input
@@ -573,7 +573,7 @@ export function SettingsPage() {
               ) : (
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                    <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                       {t("assistant_direct_host")}
                     </label>
                     <Input
@@ -584,7 +584,7 @@ export function SettingsPage() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                    <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                       {t("assistant_direct_port")}
                     </label>
                     <Input
@@ -598,7 +598,7 @@ export function SettingsPage() {
               )}
 
               <div>
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                   {t("assistant_model")}
                 </label>
                 {modelOptions.length ? (
@@ -624,7 +624,7 @@ export function SettingsPage() {
                 )}
               </div>
 
-              {asstError ? <p className="text-sm text-[var(--color-destructive)]">{asstError}</p> : null}
+              {asstError ? <p className="text-sm text-(--color-destructive)">{asstError}</p> : null}
               {asstMsg ? <p className="text-sm text-emerald-300">{asstMsg}</p> : null}
               <div className="flex flex-wrap gap-2">
                 <Button type="submit" disabled={asstBusy}>
@@ -663,8 +663,8 @@ export function SettingsPage() {
                     className={cn(
                       "whitespace-nowrap rounded-xl px-3 py-2 text-left text-sm transition-colors",
                       securitySubTab === key
-                        ? "bg-[var(--color-accent)] font-medium text-[var(--color-accent-foreground)]"
-                        : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]/40 hover:text-[var(--color-foreground)]",
+                        ? "bg-(--color-accent) font-medium text-(--color-accent-foreground)"
+                        : "text-(--color-muted-foreground) hover:bg-(--color-muted)/40 hover:text-(--color-foreground)",
                     )}
                   >
                     {label}
@@ -685,10 +685,10 @@ export function SettingsPage() {
             user.auth_source === "local" ? (
               <form onSubmit={onChangePortalPassword} className={panelClass}>
                 <h3 className="text-sm font-medium">{t("portal_password_change")}</h3>
-                <p className="text-xs text-[var(--color-muted-foreground)]">{t("portal_password_help")}</p>
+                <p className="text-xs text-(--color-muted-foreground)">{t("portal_password_help")}</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                    <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                       {t("current_password")}
                     </label>
                     <Input
@@ -700,7 +700,7 @@ export function SettingsPage() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                    <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                       {t("new_password")}
                     </label>
                     <Input
@@ -713,13 +713,13 @@ export function SettingsPage() {
                     />
                   </div>
                 </div>
-                {passError ? <p className="text-sm text-[var(--color-destructive)]">{passError}</p> : null}
+                {passError ? <p className="text-sm text-(--color-destructive)">{passError}</p> : null}
                 {passMsg ? <p className="text-sm text-emerald-300">{passMsg}</p> : null}
                 <Button type="submit">{t("update")}</Button>
               </form>
             ) : (
               <div className={panelClass}>
-                <p className="text-sm text-[var(--color-muted-foreground)]">{t("portal_password_ad_hint")}</p>
+                <p className="text-sm text-(--color-muted-foreground)">{t("portal_password_ad_hint")}</p>
               </div>
             )
           ) : null}
@@ -728,7 +728,7 @@ export function SettingsPage() {
             <div className="space-y-5">
               <div className={panelClass}>
                 <h3 className="text-sm font-medium">{t("backup_settings_title")}</h3>
-                <p className="text-xs text-[var(--color-muted-foreground)]">{t("backup_settings_help")}</p>
+                <p className="text-xs text-(--color-muted-foreground)">{t("backup_settings_help")}</p>
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -761,7 +761,7 @@ export function SettingsPage() {
 
               <div className={panelClass}>
                 <h3 className="text-sm font-medium">{t("backup_db_title")}</h3>
-                <p className="text-xs text-[var(--color-muted-foreground)]">{t("backup_db_help")}</p>
+                <p className="text-xs text-(--color-muted-foreground)">{t("backup_db_help")}</p>
                 <p className="text-xs text-amber-600 dark:text-amber-300">{t("backup_db_warning")}</p>
                 <label className="flex items-center gap-2 text-sm">
                   <input
@@ -794,7 +794,7 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              {backupError ? <p className="text-sm text-[var(--color-destructive)]">{backupError}</p> : null}
+              {backupError ? <p className="text-sm text-(--color-destructive)">{backupError}</p> : null}
               {backupMsg ? <p className="text-sm text-emerald-300">{backupMsg}</p> : null}
             </div>
           ) : null}

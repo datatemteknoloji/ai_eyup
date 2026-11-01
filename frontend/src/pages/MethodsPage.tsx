@@ -61,14 +61,14 @@ function AreaTable({ area, list, cat, en }: { area: string; list: Row[]; cat: Ca
               const formula = en ? m.formula_en : m.formula_tr
               return (
                 <tr key={m.id} className="border-b border-white/[0.04] align-top" data-method-row={m.id}>
-                  <td className="px-3 py-2"><span className={`text-[10px] leading-none px-1.5 py-[3px] rounded border font-medium whitespace-nowrap ${CLASS_STYLE[m.cls]}`}>{lbl(c)}</span></td>
+                  <td className="px-3 py-2"><span className={`text-[10px] leading-none px-1.5 py-[3px] rounded-sm border font-medium whitespace-nowrap ${CLASS_STYLE[m.cls]}`}>{lbl(c)}</span></td>
                   <td className="px-3 py-2 font-mono text-[11px] text-slate-300 break-all">{m.id}</td>
                   <td className="px-3 py-2 text-xs text-slate-200 min-w-[16rem]">
                     {en ? m.method_en : m.method_tr}
                     {formula && (
                       <details className="mt-1">
                         <summary className="cursor-pointer text-blue-300 text-[11px]">{t('method_formula')}</summary>
-                        <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px] text-slate-400 bg-black/30 rounded p-2">{formula}</pre>
+                        <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px] text-slate-400 bg-black/30 rounded-sm p-2">{formula}</pre>
                       </details>
                     )}
                   </td>
@@ -120,7 +120,7 @@ export default function MethodsPage() {
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-300">
               {cat.classes.map(c => (
                 <div key={c.id} className="flex gap-2 items-start">
-                  <span className={`text-[10px] leading-none px-1.5 py-[3px] rounded border font-medium whitespace-nowrap mt-0.5 ${CLASS_STYLE[c.id]}`}>{lbl(c)}</span>
+                  <span className={`text-[10px] leading-none px-1.5 py-[3px] rounded-sm border font-medium whitespace-nowrap mt-0.5 ${CLASS_STYLE[c.id]}`}>{lbl(c)}</span>
                   <span>{en ? c.desc_en : c.desc_tr}</span>
                 </div>
               ))}

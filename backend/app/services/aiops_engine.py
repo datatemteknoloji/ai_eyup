@@ -13,10 +13,12 @@ Bu modül arka plan thread'lerinden çağrılır; tüm DB işlemleri verilen
 Session üzerinden yapılır, AI çağrıları senkron `requests` ile yapılır.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from app.core.timeutil import utc_now
 from typing import List, Dict, Any, Optional
 
 import requests
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings, get_active_model
@@ -36,6 +38,10 @@ ACTIVE_EVENT_WINDOW_HOURS = 6
 AUTO_RESOLVE_AFTER_HOURS = 2
 # Tek RCA turunda analiz edilecek maksimum incident sayısı (Ollama yükünü sınırla).
 MAX_RCA_PER_RUN = 3
+# Otomatik açılmış incident'ta bu kadar saattir yeni olay/tekrar yoksa sorun kendiliğinden geçmiş sayılır → kapatılır.
+AUTO_INCIDENT_CLOSE_AFTER_HOURS = 24
+# Otomatik RCA yalnız taze incident'lara çalışır (eski birikmiş kayıtlara LLM zamanı harcanmaz).
+AUTO_RCA_MAX_AGE_HOURS = 24
 # Tek AIOps turunda SystemEvent'e yazılacak maksimum anomali (persist maliyeti).
 MAX_ANOMALIES_PERSIST = 200
 METRIC_ANOMALY_TYPE = "metric_anomaly"
@@ -62,7 +68,7 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
     created = 0
     updated = 0
     incidents_touched = set()
-    now = datetime.utcnow()
+    now = utc_now()
 
     _platform_cache: Dict[int, str] = {}
     from app.services.platform_scope import get_exadata_server_id_set
@@ -348,16 +354,53 @@ Lütfen şu formatta analiz yap:
         return False
 
 
+def auto_close_quiet_incidents(db: Session, now: Optional[datetime] = None) -> int:
+    """`AUTO_INCIDENT_CLOSE_AFTER_HOURS` saattir güncellenmeyen, sahiplenilmemiş otomatik incident'ları kapatır.
+
+    Yalnız `auto_*` kaynaklı ve `open` durumundaki kayıtlar; `investigating` veya birine atanmış
+    (`assigned_to`) incident'a dokunulmaz. Silme yok — durum `resolved` olur, açıklama yazılır.
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=AUTO_INCIDENT_CLOSE_AFTER_HOURS)
+    quiet = (
+        db.query(Incident)
+        .filter(
+            Incident.status == "open",
+            Incident.source.ilike("auto_%"),
+            or_(Incident.assigned_to.is_(None), Incident.assigned_to == ""),
+            func.coalesce(Incident.updated_at, Incident.created_at) < cutoff,
+        )
+        .all()
+    )
+    for inc in quiet:
+        inc.status = "resolved"
+        inc.resolved_at = now
+        inc.resolution = (inc.resolution or "") or (
+            f"Otomatik kapatıldı: {AUTO_INCIDENT_CLOSE_AFTER_HOURS} saattir yeni olay/tekrar yok."
+        )
+    if quiet:
+        db.commit()
+        logger.info("[AIOps] %d sessiz otomatik incident kapatıldı", len(quiet))
+    return len(quiet)
+
+
 def auto_rca_pending_incidents(db: Session) -> int:
     """
-    Otomatik açılmış, henüz RCA'sı olmayan açık incident'lar için RCA çalıştırır.
-    Tur başına en fazla MAX_RCA_PER_RUN incident işler.
+    Otomatik açılmış, henüz RCA'sı olmayan TAZE açık incident'lar için RCA çalıştırır.
+    Tur başına en fazla MAX_RCA_PER_RUN incident işler. Önce sessiz kalan incident'lar kapatılır.
     """
+    try:
+        auto_close_quiet_incidents(db)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("[AIOps] sessiz incident kapatma başarısız: %s", exc)
+    fresh_after = datetime.now(timezone.utc) - timedelta(hours=AUTO_RCA_MAX_AGE_HOURS)
     candidates = (
         db.query(Incident)
         .filter(
             Incident.status.in_(["open", "investigating"]),
             Incident.source.ilike("auto_%"),
+            Incident.created_at >= fresh_after,
         )
         .order_by(Incident.created_at.desc())
         .limit(20)

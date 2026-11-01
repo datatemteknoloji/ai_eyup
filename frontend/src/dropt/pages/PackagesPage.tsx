@@ -169,7 +169,7 @@ export function PackagesPage() {
     <div className={cn("flex min-h-0 flex-col", embedded ? "px-3 py-2" : "px-6 py-6")}>
       <div className="mb-3 shrink-0">
         <h2 className="text-lg font-semibold">{t("wizard_packages")}</h2>
-        <p className="text-xs text-[var(--color-muted-foreground)]">
+        <p className="text-xs text-(--color-muted-foreground)">
           Genel dnf · NFS / Portal RPM / Subscription keyword ·{" "}
           {ctx?.os?.pretty || "OS ?"}
           {ctx ? (ctx.subscription_key_set ? " · activation key var" : " · key yok (mevcut sub)") : ""}
@@ -185,17 +185,17 @@ export function PackagesPage() {
 
       <form
         onSubmit={onSubmit}
-        className="flex min-h-0 flex-1 flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4"
+        className="flex min-h-0 flex-1 flex-col gap-3 rounded-xl border border-(--color-border) bg-(--color-card) p-4"
       >
         <div className="flex flex-wrap gap-1.5">
           <button
             type="button"
             onClick={() => setMode("general")}
             className={cn(
-              "rounded border px-2 py-0.5 text-[11px]",
+              "rounded-sm border px-2 py-0.5 text-[11px]",
               mode === "general"
                 ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-100"
-                : "border-[var(--color-border)] text-[var(--color-muted-foreground)]",
+                : "border-(--color-border) text-(--color-muted-foreground)",
             )}
           >
             Genel
@@ -206,10 +206,10 @@ export function PackagesPage() {
               type="button"
               onClick={() => setMode(k.keyword)}
               className={cn(
-                "rounded border px-2 py-0.5 font-mono text-[11px]",
+                "rounded-sm border px-2 py-0.5 font-mono text-[11px]",
                 mode === k.keyword
                   ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-100"
-                  : "border-[var(--color-border)] text-[var(--color-muted-foreground)]",
+                  : "border-(--color-border) text-(--color-muted-foreground)",
               )}
               title={
                 k.source_type === "portal_files"
@@ -236,14 +236,14 @@ export function PackagesPage() {
             disabled={!serverId}
             required
           />
-          <span className="self-center font-mono text-[11px] text-[var(--color-muted-foreground)]">
+          <span className="self-center font-mono text-[11px] text-(--color-muted-foreground)">
             {hostname || "—"}
           </span>
         </div>
 
         {activeRepo?.needs_data_mount ? (
           <div>
-            <label className="mb-0.5 block text-[10px] text-[var(--color-muted-foreground)]">
+            <label className="mb-0.5 block text-[10px] text-(--color-muted-foreground)">
               Data dizini (FS mount)
             </label>
             <Select value={dataMount || undefined} onValueChange={setDataMount}>
@@ -265,7 +265,7 @@ export function PackagesPage() {
         {showVersionPicker ? (
           <div className="flex flex-wrap items-end gap-2">
             <div className="min-w-[10rem] flex-1">
-              <label className="mb-0.5 block text-[10px] text-[var(--color-muted-foreground)]">
+              <label className="mb-0.5 block text-[10px] text-(--color-muted-foreground)">
                 Docker sürümü (opsiyonel · default Latest)
               </label>
               <Select value={packageVersion} onValueChange={setPackageVersion}>
@@ -296,26 +296,26 @@ export function PackagesPage() {
         ) : null}
 
         {activeRepo?.source_type === "portal_files" ? (
-          <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--theme-surface-deep)] p-3">
-            <p className="text-[11px] text-[var(--color-muted-foreground)]">
+          <div className="space-y-2 rounded-lg border border-(--color-border) bg-(--theme-surface-deep) p-3">
+            <p className="text-[11px] text-(--color-muted-foreground)">
               Portal RPM keyword <span className="font-mono text-emerald-200">{mode}</span>
             </p>
-            <p className="font-mono text-[10px] text-[var(--color-foreground)]">
+            <p className="font-mono text-[10px] text-(--color-foreground)">
               {activeRepo.portal_path}/{activeRepo.file_glob || "*.rpm"}
             </p>
-            <p className="text-[10px] text-[var(--color-muted-foreground)]">
+            <p className="text-[10px] text-(--color-muted-foreground)">
               Dosyalar hedefte /tmp dizinine kopyalanıp <span className="font-mono">dnf localinstall</span>{" "}
               ile kurulur; ardından /tmp temizlenir.
             </p>
             {activeRepo.post_commands ? (
-              <pre className="max-h-32 overflow-auto rounded border border-[var(--color-border)] p-2 font-mono text-[9px] text-[var(--color-muted-foreground)]">
+              <pre className="max-h-32 overflow-auto rounded-sm border border-(--color-border) p-2 font-mono text-[9px] text-(--color-muted-foreground)">
                 {activeRepo.post_commands.slice(0, 1200)}
               </pre>
             ) : null}
           </div>
         ) : activeRepo?.source_type === "subscription" ? (
-          <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--theme-surface-deep)] p-3">
-            <p className="text-[11px] text-[var(--color-muted-foreground)]">
+          <div className="space-y-2 rounded-lg border border-(--color-border) bg-(--theme-surface-deep) p-3">
+            <p className="text-[11px] text-(--color-muted-foreground)">
               Subscription keyword <span className="font-mono text-emerald-200">{mode}</span> — Satellite/dnf
               + tanımlı post komutlar. İsteğe bağlı ekstra paket:
             </p>
@@ -335,7 +335,7 @@ export function PackagesPage() {
               }
             />
             {activeRepo.post_commands ? (
-              <pre className="max-h-32 overflow-auto rounded border border-[var(--color-border)] p-2 font-mono text-[9px] text-[var(--color-muted-foreground)]">
+              <pre className="max-h-32 overflow-auto rounded-sm border border-(--color-border) p-2 font-mono text-[9px] text-(--color-muted-foreground)">
                 {activeRepo.post_commands.slice(0, 1200)}
               </pre>
             ) : (
@@ -371,11 +371,11 @@ export function PackagesPage() {
                 {searching ? "…" : "Ara"}
               </Button>
             </div>
-            <div className="min-h-0 max-h-48 flex-1 overflow-y-auto rounded-lg border border-[var(--color-border)]">
+            <div className="min-h-0 max-h-48 flex-1 overflow-y-auto rounded-lg border border-(--color-border)">
               {hits.length === 0 ? (
-                <p className="p-3 text-xs text-[var(--color-muted-foreground)]">Arama sonuçları</p>
+                <p className="p-3 text-xs text-(--color-muted-foreground)">Arama sonuçları</p>
               ) : (
-                <ul className="divide-y divide-[var(--color-border)]/60 text-xs">
+                <ul className="divide-y divide-(--color-border)/60 text-xs">
                   {hits.map((h) => {
                     const on = selected.has(h.name);
                     return (
@@ -384,12 +384,12 @@ export function PackagesPage() {
                           type="button"
                           onClick={() => togglePkg(h.name)}
                           className={cn(
-                            "flex w-full gap-2 px-3 py-1.5 text-left hover:bg-[var(--color-accent)]",
+                            "flex w-full gap-2 px-3 py-1.5 text-left hover:bg-(--color-accent)",
                             on && "bg-emerald-500/10",
                           )}
                         >
-                          <span className="font-mono text-[var(--theme-link)]">{h.name}</span>
-                          <span className="text-[var(--color-muted-foreground)]">{h.summary}</span>
+                          <span className="font-mono text-(--theme-link)">{h.name}</span>
+                          <span className="text-(--color-muted-foreground)">{h.summary}</span>
                         </button>
                       </li>
                     );
@@ -398,14 +398,14 @@ export function PackagesPage() {
               )}
             </div>
             {selected.size > 0 ? (
-              <p className="text-[10px] text-[var(--color-muted-foreground)]">
+              <p className="text-[10px] text-(--color-muted-foreground)">
                 Seçili: {Array.from(selected).join(", ")}
               </p>
             ) : null}
           </>
         ) : (
           <div className="space-y-2">
-            <p className="text-[11px] text-[var(--color-muted-foreground)]">
+            <p className="text-[11px] text-(--color-muted-foreground)">
               Keyword <span className="font-mono text-emerald-200">{mode}</span> — local NFS + tanımlı
               post komutlar çalışacak. İsteğe bağlı paket:
             </p>
@@ -424,13 +424,13 @@ export function PackagesPage() {
                 )
               }
             />
-            <pre className="max-h-32 overflow-auto rounded border border-[var(--color-border)] p-2 font-mono text-[9px] text-[var(--color-muted-foreground)]">
+            <pre className="max-h-32 overflow-auto rounded-sm border border-(--color-border) p-2 font-mono text-[9px] text-(--color-muted-foreground)">
               {activeRepo.post_commands.slice(0, 1200)}
             </pre>
           </div>
         )}
 
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
 
         <Button type="submit" size="sm" disabled={busy || !previewReady}>
           {busy ? "…" : t("preview")}

@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -34,6 +35,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.event import SystemEvent, Incident
 from app.models.server import Server
+from app.services.chat_quality import power_state as _ps_canon
 from app.services.platform_scope import (
     apply_platform_filter,
     get_linux_module_server_ids,
@@ -258,7 +260,7 @@ async def command_center(
       - health_score: altyapı sağlık skoru
       - green_count: bastırılan / çözülen sayısı
     """
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    since = utc_now() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     smap = _server_map(db)
     if platform == "windows":
         win_ids = set(get_windows_server_ids(db))
@@ -426,7 +428,7 @@ async def handled_events(
     Son 24 saatte işlenen (onaylanan / bilinen / çözülen) eventler.
     Komuta Merkezi'nden düşen alarmların kaybolmaması için.
     """
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    since = utc_now() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     smap = _server_map(db)
 
     q = db.query(SystemEvent).filter(
@@ -531,7 +533,7 @@ async def ops_summary(
         if hit and hit[0] > now:
             return hit[1]
 
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    since = utc_now() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     events = unique_events(_active_events(db, since, platform=platform))
     critical = sum(1 for e in events if e.severity in ("critical", "emergency"))
     warning = sum(1 for e in events if e.severity == "warning")
@@ -608,7 +610,7 @@ async def snooze_events(req: SnoozeRequest, db: Session = Depends(get_db)):
 @router.get("/health-score")
 async def health_score(db: Session = Depends(get_db)):
     """Anlık altyapı sağlık skoru."""
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    since = utc_now() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     smap = _server_map(db)
     events = unique_events(_active_events(db, since))
     return _calc_health_score(events, len(smap))
@@ -644,7 +646,7 @@ async def executive_summary(db: Session = Depends(get_db)):
         get_linux_module_server_ids, get_windows_server_ids, vm_filter_condition,
     )
 
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    since = utc_now() - timedelta(hours=ACTIVE_WINDOW_HOURS)
 
     linux_ids = set(get_linux_module_server_ids(db))
     windows_ids = set(get_windows_server_ids(db))
@@ -695,7 +697,7 @@ async def executive_summary(db: Session = Depends(get_db)):
     hypervisor_count = db.query(Hypervisor).count()
     vm_q = db.query(Server).filter(vm_filter_condition())
     vm_count = vm_q.count()
-    vm_running_count = vm_q.filter(sa_func.lower(Server.vm_power_state).in_(["poweredon", "up", "running"])).count()
+    vm_running_count = vm_q.filter(_ps_canon.sqla_is_on(Server.vm_power_state)).count()
 
     from app.services.synthetic_scope import synthetic_cluster_ids
     ocp_clusters = db.query(OpenShiftCluster).all()
@@ -1021,7 +1023,7 @@ def _exadata_report_block(db: Session) -> Dict[str, Any]:
     """Yönetici raporu için Exadata özeti (rack/düğüm envanteri + aktif olaylar)."""
     from app.models.exadata import ExadataNode, ExadataRack
 
-    since = datetime.utcnow() - timedelta(hours=ACTIVE_WINDOW_HOURS)
+    since = utc_now() - timedelta(hours=ACTIVE_WINDOW_HOURS)
     racks = db.query(ExadataRack).all()
     node_count = db.query(ExadataNode).count()
     ok = {"online", "healthy", "ok", "connected", "active", "ready"}

@@ -5,6 +5,7 @@ Sentetik hypervisor, küme ve sunucu sayaç, skor, trend ve riske girmez.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -65,6 +66,9 @@ def _percentile(values: Sequence[float], p: float) -> Optional[float]:
     return ordered[lo] * (hi - k) + ordered[hi] * (k - lo)
 
 
+_EXT_KEY_HV = re.compile(r"^(res|host)-(\d+)-")
+
+
 def _exclude_event(ev: SystemEvent, servers: set, clusters: set, hypervisors: set) -> bool:
     if ev.server_id and ev.server_id in servers:
         return True
@@ -75,7 +79,13 @@ def _exclude_event(ev: SystemEvent, servers: set, clusters: set, hypervisors: se
         if raw.get("hypervisor_id") is not None and int(raw["hypervisor_id"]) in hypervisors:
             return True
     except (TypeError, ValueError):
-        return False
+        pass
+    # Eski/yan kayıtlarda hypervisor_id boş kalabilir; kalıcı anahtar `res-<id>-…` / `host-<id>-…` biçimindedir
+    # (exec_catalog_reports.Ctx ile aynı kural).
+    if hypervisors:
+        m = _EXT_KEY_HV.match(str(raw.get("external_key") or ""))
+        if m and int(m.group(2)) in hypervisors:
+            return True
     return False
 
 

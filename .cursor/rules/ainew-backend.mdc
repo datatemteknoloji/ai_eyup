@@ -38,3 +38,30 @@ alwaysApply: false
 - vCenter silince Dropt prune: `best_effort_delete_dropt_hosts` (ayrı DB; sync upsert-only)
 - Blocking I/O: executor; `network_mode: host` varsayımını bozma
 - Secrets loglama / `.env` commit yok
+
+## Event döngüsü (sohbet SSE'si buna bağlı)
+
+- `async def` içinde senkron LLM/SQL/Redis SCAN/HTTP YOK; tüm akışlar donar (Adım 11'de 12–23 sn tıkanma bulundu)
+- Sohbet yolu: `from app.core.chat_executor import run_chat_io` → `await run_chat_io(fn, *a, **kw)` (96 işçili AYRI havuz; bağlam değişkenleri kopyalanır). Varsayılan `_SSH_EXECUTOR` (150) arka plan işleriyle dolabilir; sohbet isteği başlatma/SSE onu BEKLEMEMELİ
+- Arka plan (periyodik) görevlerde `asyncio.to_thread`
+- `create_turn` iş parçacığından çağrılırsa `loop=` ver (`http_bridge.attach_and_stream_async` yapar); aksi halde `run_turn` sessizce başlamaz
+- Tanı: `core/loop_watchdog.py` (`[LoopWatchdog]` yığın + CPU iş parçacığı; `LOOP_WATCHDOG=0`), `[SSELag]` (`subscribe_sse`)
+- ORM ile «tüm satırı yükle, Python'da ara» YASAK (GIL tutar): tekilleştirme/arama SQL tarafında — `services/event_dedupe.py` (`ExternalKeyIndex`, `find_existing_event`)
+
+## Sohbet kalite katmanı
+
+- Kapı sırası ve iz: `chat_orchestrator/service.py` `run_turn` + `chat_quality/trace.py` (`TurnTrace`, `debug_trace` yalnız admin + bayrak)
+- Her kapı/özellik kapatma anahtarlı: `chat_entity_gate_enabled`, `chat_count_rules_enabled`, `chat_grounding_mode` (off|shadow|enforce), `chat_cache_enabled`, `chat_progress_enabled`, `rag_min_relevance_enabled`, `llm_timeout_dynamic` (Gelişmiş Ayarlar → `runtime_settings.ADVANCED_SCHEMA`; env eşleri `docs/deployment.md`)
+- Cache: yalnız kavramsal + tam eşleşme, anahtar `platform:ids_hash:rbac_sig`, TTL 24 sa; `/chat/feedback` kimlik ister
+- Progress: `chat_orchestrator/progress.py` metni sabit şablon + araç etiketi; kullanıcı verisi/argüman/sonuç YOK
+
+## Oturum / iş parçacığı / sorgu hijyeni (Adım 20 dersleri)
+
+- SQLAlchemy `Session` iş parçacıkları arası PAYLAŞILMAZ. Orkestratör döngüsü (`run_turn`: `row`, `commit`, `release_txn`) pipeline'ın `db`'sini kullanır; pipeline içinde ayrı iş parçacığında çalışan işe (ör. `ask_hypervisor_question`) KENDİ `SessionLocal()` ver ve bitince kapat. Yoksa canlı akış döngüyü uyandırınca `concurrent operations are not permitted` / `rollback() … commit() already in progress` ile tur çöker. `async for` içinde `await run_chat_io(...)` ile SIRALI beklenen iş (araç döngüsü) bu riske girmez.
+- `TurnTrace.note_path(kind, **detail)`: `detail` içinde `kind=` anahtarı KULLANMA (TypeError turu çökertir) → `violation_kind=` gibi ad ver.
+- `db.query(...).first()` mutlaka `order_by(Model.id)` ile (sırasız `.first()` fixture/yeni kayıt gelince rastgele kaynak seçer; ZZ-FAKE satırları bu yüzden «0 VM» dedirtti).
+- Hedef (cluster/hypervisor/sunucu) verilmezse ve birden çok kaynak varsa araçlar TÜM kaynakları ayrı ayrı sorgular, ulaşılamayanı `unreachable_*` ile işaretler (asla «0» sayma): örnek `_list_ocp_pods_all_clusters`, `_list_kubevirt_vms_all`. Tek kaynak yolu ile aynı ayrıntı alanlarını (`pods`/`pods_tsv`, `vms`) döndür.
+- Niyet/envanter regex'lerinde kısa sözcükler (`ver`, `ip`, `ad`) için kelime sınırı (`\b`) kullan; sunucu adları (`mtv-testserver`, `script`) alt dizge eşleşmesi tetiklememeli. Yeni kalıp eklerken ad içeren bir negatif test yaz.
+- Mesajda sunucu ADI geçen «X nedir?» soruları tanım sorusu değildir: `chat_path_policy.resolve_live_path(has_named_target=…)` canlı yola gitmeli. `knowledge_only` kararını yalnız mesaj metnine bırakma.
+- Kullanıcıya giden metinde iç tablo/araç adı (`ocp_resource_metrics`, `NOT_QUERIED` …) YOK; kaynak etiketi eşlemesine ekle (`chat_charts._summary_text` `src_map`).
+- Yeni sohbet isteği modeli (Pydantic) girdiyi `chat_text_norm.normalize_user_text` ile normalize etmeli (`field_validator(..., mode="before")`); model çıktısı için `normalize_hyphens` (en/em dash'e dokunma).

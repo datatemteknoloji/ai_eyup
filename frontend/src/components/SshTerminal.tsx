@@ -130,7 +130,7 @@ const SshTerminalModal: React.FC<Props> = ({ serverId, serverName, serverIp, onC
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/85" onClick={e => e.stopPropagation()}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-800 border-b border-slate-700 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-800 border-b border-slate-700 shrink-0">
         <div className="flex items-center gap-3">
           {/* Trafik ışıkları */}
           <div className="flex items-center gap-1.5">
@@ -147,13 +147,13 @@ const SshTerminalModal: React.FC<Props> = ({ serverId, serverName, serverIp, onC
         <div className="flex items-center gap-2">
           <button
             onClick={() => { termRef.current?.clear() }}
-            className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-slate-700 rounded transition-colors"
+            className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-slate-700 rounded-sm transition-colors"
           >
             Temizle
           </button>
           <button
             onClick={() => { wsRef.current?.close(); connect() }}
-            className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-slate-700 rounded transition-colors"
+            className="text-xs text-slate-400 hover:text-white px-2 py-1 hover:bg-slate-700 rounded-sm transition-colors"
           >
             Yeniden Bağlan
           </button>

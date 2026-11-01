@@ -16,7 +16,7 @@ import {
 type Tab = 'automation' | 'mail' | 'repos' | 'centrify'
 
 const inputClass =
-  'w-full bg-[var(--bg-deep,#080d16)] border border-white/[0.08] rounded-lg px-3.5 py-2.5 text-sm text-[var(--text-primary,#e8edf5)] placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/50 transition-colors'
+  'w-full bg-(--bg-deep,#080d16) border border-white/[0.08] rounded-lg px-3.5 py-2.5 text-sm text-(--text-primary,#e8edf5) placeholder:text-slate-600 focus:outline-hidden focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/50 transition-colors'
 const labelClass = 'block text-xs font-medium text-slate-400 mb-1.5 tracking-wide'
 const panelClass =
   'rounded-xl border border-white/[0.06] bg-[color-mix(in_srgb,var(--bg-deep,#080d16)_55%,transparent)] p-5'

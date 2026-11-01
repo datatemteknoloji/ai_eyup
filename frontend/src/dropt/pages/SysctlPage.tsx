@@ -171,14 +171,14 @@ export function SysctlPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("wizard_sysctl")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">
         Hazır parametre ve/veya custom · 99-dropt-portal.conf · çakışan /etc satırları # · sysctl -p
       </p>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
         <form
           onSubmit={onSubmit}
-          className="space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
+          className="space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-5"
         >
           <Input placeholder={t("talep_id")} value={talepId} onChange={(e) => setTalepId(e.target.value)} required />
 
@@ -190,18 +190,18 @@ export function SysctlPage() {
           />
 
           <div>
-            <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Hazır parametre</label>
-            <div className="max-h-52 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-card)]">
+            <label className="mb-1 block text-xs text-(--color-muted-foreground)">Hazır parametre</label>
+            <div className="max-h-52 overflow-y-auto rounded-md border border-(--color-border) bg-(--color-card)">
               <button
                 type="button"
                 onClick={() => {
                   setPresetKey(NONE);
                   setPresetValue("");
                 }}
-                className={`block w-full border-b border-[var(--color-border)] px-3 py-2 text-left text-sm ${
+                className={`block w-full border-b border-(--color-border) px-3 py-2 text-left text-sm ${
                   presetKey === NONE
-                    ? "bg-[var(--color-primary)]/15 text-[var(--color-foreground)]"
-                    : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]"
+                    ? "bg-(--color-primary)/15 text-(--color-foreground)"
+                    : "text-(--color-muted-foreground) hover:bg-(--color-accent)"
                 }`}
               >
                 — Seçme —
@@ -215,16 +215,16 @@ export function SysctlPage() {
                     const cur = current[k];
                     if (cur) setPresetValue(cur);
                   }}
-                  className={`block w-full border-b border-[var(--color-border)] px-3 py-2 text-left font-mono text-[12px] last:border-b-0 ${
+                  className={`block w-full border-b border-(--color-border) px-3 py-2 text-left font-mono text-[12px] last:border-b-0 ${
                     presetKey === k
-                      ? "bg-[var(--color-primary)]/15 text-[var(--color-foreground)]"
-                      : "text-[var(--color-foreground)] hover:bg-[var(--color-accent)]"
+                      ? "bg-(--color-primary)/15 text-(--color-foreground)"
+                      : "text-(--color-foreground) hover:bg-(--color-accent)"
                   }`}
                   title={k}
                 >
                   <span className="break-all">{k}</span>
                   {current[k] ? (
-                    <span className="mt-0.5 block truncate text-[10px] text-[var(--color-muted-foreground)]">
+                    <span className="mt-0.5 block truncate text-[10px] text-(--color-muted-foreground)">
                       şu an: {current[k]}
                     </span>
                   ) : null}
@@ -233,7 +233,7 @@ export function SysctlPage() {
             </div>
             {presetKey !== NONE ? (
               <div className="mt-2">
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                   Değer <span className="font-mono">({presetKey})</span>
                 </label>
                 <Input
@@ -249,11 +249,11 @@ export function SysctlPage() {
                   onChange={(e) => setPresetValue(e.target.value)}
                 />
                 {presetValue.trim() && !VALUE_RE.test(presetValue.trim()) ? (
-                  <p className="mt-1 text-xs text-[var(--color-destructive)]">
+                  <p className="mt-1 text-xs text-(--color-destructive)">
                     Değer sayı veya boşlukla ayrılmış sayılar olmalı
                   </p>
                 ) : (
-                  <p className="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+                  <p className="mt-1 text-[10px] text-(--color-muted-foreground)">
                     Tek sayı veya boşlukla çoklu (örn. 250 32000 100 200)
                   </p>
                 )}
@@ -262,36 +262,36 @@ export function SysctlPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+            <label className="mb-1 block text-xs text-(--color-muted-foreground)">
               Custom parametreler (tekli / çoklu)
             </label>
             <textarea
-              className="min-h-[110px] w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+              className="min-h-[110px] w-full rounded-md border border-(--color-border) bg-transparent px-3 py-2 font-mono text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-(--color-ring)"
               placeholder={"kernel.panic = 10\nkernel.sem = 250 32000 100 200\nfs.file-max = 6815744"}
               value={custom}
               onChange={(e) => setCustom(e.target.value)}
               spellCheck={false}
             />
             {customError ? (
-              <p className="mt-1 text-xs text-[var(--color-destructive)]">{customError}</p>
+              <p className="mt-1 text-xs text-(--color-destructive)">{customError}</p>
             ) : (
-              <p className="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+              <p className="mt-1 text-[10px] text-(--color-muted-foreground)">
                 Her satır: parametre = değer · önizlemede sunucuda sysctl -n ile doğrulanır
               </p>
             )}
           </div>
 
-          {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+          {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
           <Button type="submit" disabled={busy || !formComplete}>
             {busy ? "…" : t("preview")}
           </Button>
         </form>
 
-        <aside className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <aside className="rounded-xl border border-(--color-border) bg-(--color-card) p-5">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
               <h3 className="text-sm font-medium">Mevcut değerler</h3>
-              <p className="text-[10px] text-[var(--color-muted-foreground)]">
+              <p className="text-[10px] text-(--color-muted-foreground)">
                 Hedef sunucu · sysctl -n · çift tıkla → forma aktar
               </p>
             </div>
@@ -306,17 +306,17 @@ export function SysctlPage() {
             </Button>
           </div>
           {currentCached && !currentLoading ? (
-            <p className="mb-2 text-[10px] text-[var(--color-muted-foreground)]">
+            <p className="mb-2 text-[10px] text-(--color-muted-foreground)">
               Cache’den gösteriliyor{currentRefreshing ? " · arka planda yenileniyor…" : ""}
             </p>
           ) : null}
           {currentError ? (
-            <p className="text-sm text-[var(--color-destructive)]">{currentError}</p>
+            <p className="text-sm text-(--color-destructive)">{currentError}</p>
           ) : null}
-          <div className="max-h-[28rem] overflow-y-auto rounded-md border border-[var(--color-border)]">
+          <div className="max-h-[28rem] overflow-y-auto rounded-md border border-(--color-border)">
             <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 bg-[var(--color-card)] text-[var(--color-muted-foreground)]">
-                <tr className="border-b border-[var(--color-border)]">
+              <thead className="sticky top-0 bg-(--color-card) text-(--color-muted-foreground)">
+                <tr className="border-b border-(--color-border)">
                   <th className="px-2 py-2 font-medium">Parametre</th>
                   <th className="px-2 py-2 font-medium">Değer</th>
                 </tr>
@@ -324,7 +324,7 @@ export function SysctlPage() {
               <tbody>
                 {currentLoading && !currentRows.some((r) => r.value) ? (
                   <tr>
-                    <td colSpan={2} className="px-2 py-3 text-[var(--color-muted-foreground)]">
+                    <td colSpan={2} className="px-2 py-3 text-(--color-muted-foreground)">
                       Yükleniyor…
                     </td>
                   </tr>
@@ -334,12 +334,12 @@ export function SysctlPage() {
                       key={r.key}
                       title="Çift tıkla: forma aktar"
                       onDoubleClick={() => applyRowToForm(r.key, r.value)}
-                      className={`cursor-pointer border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-accent)] ${
-                        presetKey === r.key ? "bg-[var(--color-primary)]/10" : ""
+                      className={`cursor-pointer border-b border-(--color-border) last:border-0 hover:bg-(--color-accent) ${
+                        presetKey === r.key ? "bg-(--color-primary)/10" : ""
                       }`}
                     >
                       <td className="max-w-[12rem] break-all px-2 py-1.5 font-mono text-[11px]">{r.key}</td>
-                      <td className="px-2 py-1.5 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+                      <td className="px-2 py-1.5 font-mono text-[11px] text-(--color-muted-foreground)">
                         {r.value || "—"}
                       </td>
                     </tr>

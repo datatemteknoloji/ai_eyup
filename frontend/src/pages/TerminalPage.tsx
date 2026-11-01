@@ -135,7 +135,7 @@ const TerminalPage: React.FC = () => {
   return (
     <div className="flex flex-col h-screen bg-[#0d1117] select-none">
       {/* Title bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-[#161b22] border-b border-slate-800 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-2 bg-[#161b22] border-b border-slate-800 shrink-0">
         <div className="flex items-center gap-3">
           {/* macOS dots */}
           <div className="flex gap-1.5">
@@ -156,7 +156,7 @@ const TerminalPage: React.FC = () => {
           </span>
           <button
             onClick={connect}
-            className="text-xs text-slate-500 hover:text-white px-2 py-1 hover:bg-white/[0.07] rounded transition-colors"
+            className="text-xs text-slate-500 hover:text-white px-2 py-1 hover:bg-white/[0.07] rounded-sm transition-colors"
             title="Yeniden bağlan"
           >
             ↻ Yeniden Bağlan

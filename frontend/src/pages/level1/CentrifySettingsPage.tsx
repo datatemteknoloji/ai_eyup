@@ -143,7 +143,7 @@ export default function CentrifySettingsPage() {
         <div>
           <label className="block text-xs text-slate-400 mb-1">{t('cz_int_host')}</label>
           <input
-            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-hidden"
             placeholder="192.168.1.100"
             value={form.winrm_host}
             onChange={e => setForm({ ...form, winrm_host: e.target.value })}
@@ -153,7 +153,7 @@ export default function CentrifySettingsPage() {
           <div>
             <label className="block text-xs text-slate-400 mb-1">{t('cz_int_port')}</label>
             <input
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-hidden"
               value={form.winrm_port}
               onChange={e => setForm({ ...form, winrm_port: e.target.value })}
             />
@@ -161,7 +161,7 @@ export default function CentrifySettingsPage() {
           <div>
             <label className="block text-xs text-slate-400 mb-1">{t('cz_int_user')}</label>
             <input
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-hidden"
               value={form.service_account}
               onChange={e => setForm({ ...form, service_account: e.target.value })}
             />
@@ -174,7 +174,7 @@ export default function CentrifySettingsPage() {
           </label>
           <input
             type="password"
-            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-hidden"
             placeholder="••••••••"
             value={form.password}
             onChange={e => setForm({ ...form, password: e.target.value })}

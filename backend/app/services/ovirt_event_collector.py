@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from app.core.timeutil import utc_now
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.event import SystemEvent
 from app.models.hypervisor import Hypervisor, HypervisorType
+from app.services.event_dedupe import ExternalKeyIndex, find_existing_event
 from app.services.hypervisor_credentials import hv_password
 from app.services.incident_auto import auto_create_or_link_incident
 from app.services.vcenter_event_collector import _resolve_server_id
@@ -39,23 +41,18 @@ def _raw(hypervisor: Hypervisor, item: Dict[str, Any], ext_key: str) -> dict:
     }
 
 
-def _upsert(db: Session, hypervisor: Hypervisor, item: Dict[str, Any], now: datetime) -> bool:
+def _upsert(db: Session, hypervisor: Hypervisor, item: Dict[str, Any], now: datetime,
+            index: Optional[ExternalKeyIndex] = None) -> bool:
     ext_key = f"ovirt-hv{hypervisor.id}-{item.get('id') or item.get('event_key')}"
-    since = datetime.utcnow() - timedelta(days=7)
-    existing_rows = (
-        db.query(SystemEvent)
-        .filter(SystemEvent.source == OVIRT_SOURCE, SystemEvent.created_at >= since)
-        .all()
-    )
-    for ev in existing_rows:
-        if (ev.raw_data or {}).get("external_key") == ext_key:
-            ev.last_seen = now
-            ev.occurrence_count = (ev.occurrence_count or 1) + 1
-            return False
+    ev = find_existing_event(db, OVIRT_SOURCE, ext_key, index)  # Adım 11: tüm satırları yükleme yok
+    if ev is not None:
+        ev.last_seen = now
+        ev.occurrence_count = (ev.occurrence_count or 1) + 1
+        return False
     server_id = _resolve_server_id(
         db, hypervisor.id, item.get("vm_ref"), item.get("host_ref"), item.get("entity_name"),
     )
-    db.add(SystemEvent(
+    new_ev = SystemEvent(
         server_id=server_id,
         event_type="ovirt_event",
         severity=item.get("severity") or "info",
@@ -67,7 +64,10 @@ def _upsert(db: Session, hypervisor: Hypervisor, item: Dict[str, Any], now: date
         resolved=False,
         last_seen=now,
         occurrence_count=1,
-    ))
+    )
+    db.add(new_ev)
+    if index is not None:
+        index.add(OVIRT_SOURCE, ext_key, new_ev)
     return True
 
 
@@ -89,14 +89,15 @@ def sync_ovirt_events_for_hypervisor(db: Session, hypervisor: Hypervisor, hours:
     except OVirtError as exc:
         return {"success": False, "errors": [str(exc)], "hypervisor": hypervisor.name}
 
-    now = datetime.utcnow()
+    now = utc_now()
     saved = 0
+    index = ExternalKeyIndex(db)
     for ev in payload.get("events") or []:
-        if _upsert(db, hypervisor, ev, now):
+        if _upsert(db, hypervisor, ev, now, index):
             saved += 1
     db.commit()
     if saved:
-        since = datetime.utcnow() - timedelta(seconds=5)
+        since = utc_now() - timedelta(seconds=5)
         for ev in db.query(SystemEvent).filter(
             SystemEvent.source == OVIRT_SOURCE,
             SystemEvent.created_at >= since,

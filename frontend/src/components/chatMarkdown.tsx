@@ -33,7 +33,7 @@ function fenceLangAndSource(children: ReactNode): { lang: string; source: string
 
 export const chatMarkdownComponents: Components = {
   table: ({ children }) => (
-    <div className="chat-md-table-wrap my-3 max-w-full overflow-x-auto rounded-lg border border-slate-500/80 shadow-sm">
+    <div className="chat-md-table-wrap my-3 max-w-full overflow-x-auto rounded-lg border border-slate-500/80 shadow-xs">
       <table className="w-full table-auto text-left text-sm border-collapse">{children}</table>
     </div>
   ),
@@ -42,7 +42,7 @@ export const chatMarkdownComponents: Components = {
     <th className="chat-md-th px-3 py-2 font-semibold text-slate-100 border-b border-slate-500 whitespace-nowrap">{children}</th>
   ),
   td: ({ children }) => (
-    <td className="chat-md-td px-3 py-2 text-slate-200 border-b border-white/[0.06] align-top break-words">{children}</td>
+    <td className="chat-md-td px-3 py-2 text-slate-200 border-b border-white/[0.06] align-top wrap-break-word">{children}</td>
   ),
   tr: ({ children, ...props }) => (
     <tr className="even:bg-white/[0.02] hover:bg-white/[0.04] transition-colors" {...props}>{children}</tr>
@@ -51,7 +51,7 @@ export const chatMarkdownComponents: Components = {
     className
       ? <code className={className}>{children}</code>
       : (
-        <code className="chat-md-inline-code bg-white/[0.08] px-1.5 py-0.5 rounded text-xs text-amber-200">
+        <code className="chat-md-inline-code bg-white/[0.08] px-1.5 py-0.5 rounded-sm text-xs text-amber-200">
           {children}
         </code>
       ),
@@ -80,4 +80,4 @@ export const chatBubbleShell =
   'min-w-0 w-full max-w-full overflow-hidden rounded-3xl px-5 py-4 shadow-lg'
 
 export const chatResponseBody =
-  'chat-response-content min-w-0 max-w-none overflow-x-hidden text-sm leading-relaxed prose prose-invert prose-sm prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5'
+  'chat-response-content chat-msg-body min-w-0 max-w-none overflow-x-hidden text-sm leading-relaxed prose prose-invert prose-sm prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5'

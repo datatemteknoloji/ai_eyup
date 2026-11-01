@@ -53,7 +53,7 @@ export default function AutomationAgent() {
       </Link>
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-300"><Server size={18} /></div>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-300"><Server size={18} /></div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-semibold text-white break-all">{agent}</h1>
@@ -214,7 +214,7 @@ function Timeline({ points }: { points: { at: string; status: string }[] }) {
   return (
     <div className="mt-3 border-t border-white/[0.06] pt-2">
       <div className="mb-1 text-[11px] text-slate-500">Zaman çizelgesi (son {recent.length} örnek)</div>
-      <div className="flex h-4 gap-px overflow-hidden rounded">
+      <div className="flex h-4 gap-px overflow-hidden rounded-sm">
         {recent.map((p, i) => (
           <div key={i} title={`${fmtDateTime(p.at, true)} — ${p.status}`} className={`flex-1 ${color(p.status)}`} />
         ))}

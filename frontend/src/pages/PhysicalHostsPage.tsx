@@ -5,6 +5,7 @@ import { Server, ArrowLeft, RefreshCw, Plus, X } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { inventoryHeaders } from '../lib/inventoryApi'
 import { useT } from '../i18n/LocaleProvider'
+import { useAuth } from '../auth/AuthContext'
 
 interface AddHostForm {
   name: string
@@ -16,6 +17,9 @@ interface AddHostForm {
   ssh_port: string
   sudo_password: string
   private_key: string
+  bmc_ip: string
+  bmc_username: string
+  bmc_password: string
 }
 
 const EMPTY_FORM: AddHostForm = {
@@ -28,25 +32,32 @@ const EMPTY_FORM: AddHostForm = {
   ssh_port: '22',
   sudo_password: '',
   private_key: '',
+  bmc_ip: '',
+  bmc_username: '',
+  bmc_password: '',
 }
 
-function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
+function AddPhysicalHostModal({ onClose, onCreate, isPending, error, canBmc }: {
   onClose: () => void
   onCreate: (data: AddHostForm) => void
   isPending: boolean
   error: string | null
+  canBmc: boolean
 }) {
   const t = useT()
   const [form, setForm] = useState<AddHostForm>(EMPTY_FORM)
+  const [localErr, setLocalErr] = useState<string | null>(null)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.name.trim() || !form.ip_address.trim()) return
+    if (canBmc && !!form.bmc_username.trim() !== !!form.bmc_password) { setLocalErr(t('ph_bmc_pair')); return }
+    setLocalErr(null)
     onCreate(form)
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
       <div className="bg-cyber-card rounded-xl border border-white/[0.06] p-6 w-full max-w-md shadow-2xl">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-semibold text-white">{t('ph_add_title')}</h2>
@@ -60,7 +71,7 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
             <input
               type="text" required value={form.name}
               onChange={e => setForm({ ...form, name: e.target.value })}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
               placeholder={t('ph_example_name')}
             />
           </div>
@@ -69,7 +80,7 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
             <input
               type="text" value={form.hostname}
               onChange={e => setForm({ ...form, hostname: e.target.value })}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
               placeholder={t('ph_example_hn')}
             />
           </div>
@@ -80,7 +91,7 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
             <input
               type="text" required value={form.ip_address}
               onChange={e => setForm({ ...form, ip_address: e.target.value })}
-              className={`w-full bg-cyber-deep border rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${!form.ip_address ? 'border-red-500/50' : 'border-white/[0.06]'}`}
+              className={`w-full bg-cyber-deep border rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500 ${!form.ip_address ? 'border-red-500/50' : 'border-white/[0.06]'}`}
               placeholder={t('ph_example_ip')}
             />
             {!form.ip_address && <p className="text-red-400 text-xs mt-1">{t('ph_ip_required')}</p>}
@@ -90,7 +101,7 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
             <select
               value={form.os_type}
               onChange={e => setForm({ ...form, os_type: e.target.value })}
-              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
             >
               <option value="linux">Linux</option>
               <option value="windows">Windows</option>
@@ -105,7 +116,7 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
                 <input
                   type="text" value={form.ssh_username}
                   onChange={e => setForm({ ...form, ssh_username: e.target.value })}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                   placeholder={t('ph_user_ph')}
                 />
               </div>
@@ -114,7 +125,7 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
                 <input
                   type="number" value={form.ssh_port}
                   onChange={e => setForm({ ...form, ssh_port: e.target.value })}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                   placeholder="22"
                 />
               </div>
@@ -125,7 +136,7 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
                 <input
                   type="password" value={form.ssh_password}
                   onChange={e => setForm({ ...form, ssh_password: e.target.value })}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                   placeholder={t('ph_ssh_pw')}
                 />
               </div>
@@ -134,7 +145,7 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
                 <input
                   type="password" value={form.sudo_password}
                   onChange={e => setForm({ ...form, sudo_password: e.target.value })}
-                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                   placeholder={t('optional')}
                 />
               </div>
@@ -144,26 +155,59 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
               <textarea
                 value={form.private_key}
                 onChange={e => setForm({ ...form, private_key: e.target.value })}
-                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                 placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                 rows={3}
               />
             </div>
           </div>
+          {canBmc && (
+            <div className="border-t border-white/[0.06] pt-4" data-testid="ph-bmc">
+              <h3 className="text-sm font-semibold text-slate-200">{t('ph_bmc_section')}</h3>
+              <p className="text-xs text-slate-500 mt-1 mb-3">{t('ph_bmc_help')}</p>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">{t('ph_bmc_ip')}</label>
+                <input
+                  type="text" value={form.bmc_ip} data-testid="ph-bmc-ip"
+                  onChange={e => setForm({ ...form, bmc_ip: e.target.value })}
+                  className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                  placeholder="10.0.0.50"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4 mt-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">{t('ph_bmc_user')}</label>
+                  <input
+                    type="text" autoComplete="off" value={form.bmc_username} data-testid="ph-bmc-user"
+                    onChange={e => setForm({ ...form, bmc_username: e.target.value })}
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">{t('ph_bmc_pass')}</label>
+                  <input
+                    type="password" autoComplete="new-password" value={form.bmc_password} data-testid="ph-bmc-pass"
+                    onChange={e => setForm({ ...form, bmc_password: e.target.value })}
+                    className="w-full bg-cyber-deep border border-white/[0.06] rounded-lg px-4 py-2 text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           <div className="flex justify-end space-x-3 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 bg-white/[0.07] text-white rounded-lg hover:bg-slate-600 transition-colors">
               {t('cancel')}
             </button>
             <button
               type="submit" disabled={isPending}
-              className="px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 transition-all disabled:opacity-50"
+              className="px-4 py-2 bg-linear-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-500 hover:to-green-600 transition-all disabled:opacity-50"
             >
               {isPending ? t('ph_adding') : t('add')}
             </button>
           </div>
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-              <p className="text-red-400 text-sm">{error}</p>
+          {(error || localErr) && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3" role="alert">
+              <p className="text-red-400 text-sm">{localErr || error}</p>
             </div>
           )}
         </form>
@@ -174,6 +218,9 @@ function AddPhysicalHostModal({ onClose, onCreate, isPending, error }: {
 
 export default function PhysicalHostsPage() {
   const t = useT()
+  const auth = useAuth() as any
+  const isAdmin = auth?.user?.role === 'admin'
+  const [bmcWarn, setBmcWarn] = useState<string | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   const queryClient = useQueryClient()
 
@@ -214,7 +261,26 @@ export default function PhysicalHostsPage() {
         const err = await r.json().catch(() => ({}))
         throw new Error(err.detail || t('ph_add_fail'))
       }
-      return r.json()
+      const created = await r.json()
+      // İsteğe bağlı BMC IP + hesap: sunucu ZATEN oluştu; BMC kaydı başarısızsa sunucu geri alınmaz, uyarı gösterilir.
+      setBmcWarn(null)
+      if (isAdmin && (form.bmc_ip.trim() || form.bmc_username.trim() || form.bmc_password)) {
+        try {
+          const br = await fetch(`${API_BASE_URL}/hw/bmc/server-account`, {
+            method: 'POST',
+            headers: inventoryHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+              server_id: created.id, bmc_ip: form.bmc_ip.trim() || null,
+              username: form.bmc_username.trim(), password: form.bmc_password || null,
+            }),
+          })
+          if (!br.ok) {
+            const be = await br.json().catch(() => ({}))
+            setBmcWarn(typeof be.detail === 'string' ? be.detail : `HTTP ${br.status}`)
+          }
+        } catch (e: any) { setBmcWarn(e?.message || String(e)) }
+      }
+      return created
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['integrations-physical-hosts'] })
@@ -230,6 +296,7 @@ export default function PhysicalHostsPage() {
           onClose={() => setShowAddModal(false)}
           onCreate={data => createMutation.mutate(data)}
           isPending={createMutation.isPending}
+          canBmc={isAdmin}
           error={createMutation.isError ? (createMutation.error instanceof Error ? createMutation.error.message : String(createMutation.error)) : null}
         />
       )}
@@ -252,12 +319,18 @@ export default function PhysicalHostsPage() {
           </button>
           <button
             onClick={() => setShowAddModal(true)}
-            className="text-xs px-3 py-2 rounded-lg bg-gradient-to-r from-green-600 to-green-700 text-white flex items-center gap-1.5 font-medium hover:from-green-500 hover:to-green-600 transition-all"
+            className="text-xs px-3 py-2 rounded-lg bg-linear-to-r from-green-600 to-green-700 text-white flex items-center gap-1.5 font-medium hover:from-green-500 hover:to-green-600 transition-all"
           >
             <Plus size={14} /> {t('ph_new_host')}
           </button>
         </div>
       </div>
+
+      {bmcWarn && (
+        <div role="alert" data-testid="ph-bmc-warn" className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-sm text-amber-300">
+          {t('ph_bmc_warn')} {bmcWarn}
+        </div>
+      )}
 
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl overflow-hidden">
         <table className="w-full text-sm">

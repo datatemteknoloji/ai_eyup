@@ -133,14 +133,14 @@ export function LocalUsersPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("wizard_local_users")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("local_users_sub")}</p>
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">{t("local_users_sub")}</p>
 
       <form
         onSubmit={onSubmit}
-        className="mt-6 max-w-2xl space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
+        className="mt-6 max-w-2xl space-y-4 rounded-xl border border-(--color-border) bg-(--color-card) p-5"
       >
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("local_users_action")}</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("local_users_action")}</label>
           <Select value={action} onValueChange={(v) => setAction(v as WizardAction)}>
             <SelectTrigger>
               <SelectValue />
@@ -157,7 +157,7 @@ export function LocalUsersPage() {
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("talep_id")}</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("talep_id")}</label>
           <Input
             value={talepId}
             onChange={(e) => setTalepId(e.target.value)}
@@ -173,10 +173,10 @@ export function LocalUsersPage() {
           multiple
           label={t("local_users_targets")}
         />
-        <p className="-mt-2 text-xs text-[var(--color-muted-foreground)]">{t("local_users_multi_hint")}</p>
+        <p className="-mt-2 text-xs text-(--color-muted-foreground)">{t("local_users_multi_hint")}</p>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">
             {t("local_users_username")}
           </label>
           <Input
@@ -190,7 +190,7 @@ export function LocalUsersPage() {
         {action === "create" || action === "password_reset" ? (
           <>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("password")}</label>
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("password")}</label>
               <Input
                 type="password"
                 value={password}
@@ -201,7 +201,7 @@ export function LocalUsersPage() {
             </div>
             {action === "create" ? (
               <div>
-                <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                   {t("local_users_groups")}
                 </label>
                 <Input value={groups} onChange={(e) => setGroups(e.target.value)} placeholder="wheel,devops" />
@@ -216,7 +216,7 @@ export function LocalUsersPage() {
 
         {action === "set_expire" ? (
           <div>
-            <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+            <label className="mb-1 block text-xs text-(--color-muted-foreground)">
               {t("local_users_expire")}
             </label>
             <Input
@@ -242,7 +242,7 @@ export function LocalUsersPage() {
           </>
         ) : null}
 
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
 
         <Button type="submit" disabled={busy}>
           {busy ? t("local_users_preview_busy") : t("preview")}
@@ -250,15 +250,15 @@ export function LocalUsersPage() {
       </form>
 
       {tableServerId != null ? (
-        <div className="mt-8 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/80">
-          <div className="border-b border-[var(--color-border)] px-4 py-3 text-sm font-medium">
+        <div className="mt-8 overflow-hidden rounded-xl border border-(--color-border) bg-(--color-card)/80">
+          <div className="border-b border-(--color-border) px-4 py-3 text-sm font-medium">
             {t("local_users_list_title")}
           </div>
           {loadingUsers ? (
-            <p className="px-4 py-6 text-sm text-[var(--color-muted-foreground)]">{t("loading")}</p>
+            <p className="px-4 py-6 text-sm text-(--color-muted-foreground)">{t("loading")}</p>
           ) : (
             <table className="w-full text-sm">
-              <thead className="text-[var(--color-muted-foreground)]">
+              <thead className="text-(--color-muted-foreground)">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">{t("local_users_col_user")}</th>
                   <th className="px-3 py-2 text-left font-medium">UID</th>
@@ -270,7 +270,7 @@ export function LocalUsersPage() {
                 {users.map((u) => (
                   <tr
                     key={u.username}
-                    className="cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-accent)]/40"
+                    className="cursor-pointer border-t border-(--color-border) hover:bg-(--color-accent)/40"
                     onClick={() => {
                       if (!u.protected) setUsername(u.username);
                     }}
@@ -284,7 +284,7 @@ export function LocalUsersPage() {
                       ) : null}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs">{u.uid ?? "—"}</td>
-                    <td className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">
+                    <td className="px-3 py-2 text-xs text-(--color-muted-foreground)">
                       {u.groups.join(", ") || "—"}
                     </td>
                     <td className="px-3 py-2">
@@ -297,7 +297,7 @@ export function LocalUsersPage() {
           )}
         </div>
       ) : (
-        <p className="mt-6 text-sm text-[var(--color-muted-foreground)]">{t("local_users_list_hidden")}</p>
+        <p className="mt-6 text-sm text-(--color-muted-foreground)">{t("local_users_list_hidden")}</p>
       )}
     </div>
   );

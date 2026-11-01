@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from jose import jwt
+import jwt  # PyJWT
 
 from app.core.config import get_settings
 from app.models.identity import IdentityConfig
@@ -112,7 +112,7 @@ def exchange_code_and_resolve(
     if id_token:
         # Signature verification against JWKS would be ideal; decode without verify for MVP
         # but still require issuer match when present.
-        claims = jwt.get_unverified_claims(id_token)
+        claims = jwt.decode(id_token, options={"verify_signature": False})
         iss = (claims.get("iss") or "").rstrip("/")
         expected = cfg.sso_issuer.strip().rstrip("/")
         if iss and expected and iss != expected:

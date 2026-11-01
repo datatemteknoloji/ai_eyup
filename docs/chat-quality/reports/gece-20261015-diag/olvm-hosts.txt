@@ -1,0 +1,7 @@
+HTTP 200
+canlı host sayısı: 1
+   {'name': 'dtkvm01', 'status': 'up', 'address': '192.168.1.112'}
+DB host (son metrik):
+   192.168.1.112 2026-10-15 02:00:48.423620+03:00
+   dtkvm01 2026-10-03 14:13:42.659349+03:00
+DB'de olup canlıda olmayan: ['192.168.1.112']

@@ -18,6 +18,7 @@ from app.services.hw.identity import normalize_serial, short_host, uuid_variants
 
 logger = logging.getLogger(__name__)
 
+METHOD_MANUAL = "manual"
 CONF_EXACT = "exact"
 CONF_LOW = "low"
 
@@ -154,10 +155,17 @@ def run_matching(db: Session) -> Dict[str, Any]:
         db.query(HwHostLink).delete(synchronize_session=False)
         db.commit()
         return {"links": 0, "hw_unmatched": 0}
-    res = match_core(hw, load_targets(db))
-    want = {h: (k, t, m, c) for (h, k, t, m, c) in res.links}
     have = {l.hw_server_id: l for l in db.query(HwHostLink).all()}
+    # Elle kurulan eşleşmeler (method="manual") otomatik eşleştirmeden ÖNCE sabittir; yeniden hesapta silinmez/ezilmez.
+    manual = {hid: l for hid, l in have.items() if l.method == METHOD_MANUAL}
+    taken = {(l.target_kind, l.target_id) for l in manual.values()}
+    res = match_core([h for h in hw if h.id not in manual],
+                     [t for t in load_targets(db) if (t.kind, t.id) not in taken])
+    want = {h: (k, t, m, c) for (h, k, t, m, c) in res.links}
     for hid, l in list(have.items()):
+        if hid in manual:
+            have.pop(hid)
+            continue
         w = want.get(hid)
         if w is None or (l.target_kind, l.target_id) != (w[0], w[1]):
             db.delete(l)
@@ -170,5 +178,5 @@ def run_matching(db: Session) -> Dict[str, Any]:
         else:
             l.method, l.confidence = m, c
     db.commit()
-    return {"links": len(want), "hw_unmatched": len(res.hw_unmatched), "ambiguous": len(res.ambiguous),
+    return {"links": len(want) + len(manual), "hw_unmatched": len(res.hw_unmatched), "ambiguous": len(res.ambiguous),
             "target_unmatched": len(res.target_unmatched)}

@@ -27,7 +27,7 @@ export function LimitChip({ code, tone }: { code: string; tone: 'fail' | 'warn' 
   const key = LIMIT_KEYS[code]
   return (
     <span data-testid={`lim-${code}`}
-      className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-medium ${tone === 'fail'
+      className={`inline-block rounded-sm border px-1.5 py-0.5 text-[11px] font-medium ${tone === 'fail'
         ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-200'}`}>
       {key ? t(key as any) : code}
       {key && <TermHint k={`lim_${code}`} />}

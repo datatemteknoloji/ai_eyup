@@ -134,21 +134,21 @@ export function NetworkPage() {
       title: t("network_add_network"),
       hint: t("network_add_network_hint"),
       icon: Cable,
-      tone: "bg-[var(--accent-subtle)] text-[var(--accent)]",
+      tone: "bg-(--accent-subtle) text-(--accent)",
     },
     {
       tab: "vlan" as Tab,
       title: t("network_add_vlan"),
       hint: t("network_add_vlan_hint"),
       icon: Layers,
-      tone: "bg-[var(--info-bg)] text-[var(--info)]",
+      tone: "bg-(--info-bg) text-(--info)",
     },
     {
       tab: "ipchange" as Tab,
       title: t("network_ip_change"),
       hint: t("network_ip_change_hint"),
       icon: ArrowLeftRight,
-      tone: "bg-[var(--warning-bg)] text-[var(--warning)]",
+      tone: "bg-(--warning-bg) text-(--warning)",
     },
   ];
 
@@ -157,10 +157,10 @@ export function NetworkPage() {
       {!embedded ? (
         <>
           <h2 className="text-lg font-semibold tracking-tight">{t("wizard_network")}</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("network_mgmt_sub")}</p>
+          <p className="mt-1 text-sm text-(--color-muted-foreground)">{t("network_mgmt_sub")}</p>
         </>
       ) : (
-        <p className="mb-1 text-sm text-[var(--color-muted-foreground)]">{t("network_mgmt_sub")}</p>
+        <p className="mb-1 text-sm text-(--color-muted-foreground)">{t("network_mgmt_sub")}</p>
       )}
       <div className={`${embedded ? "mt-3" : "mt-4"} grid gap-3 sm:grid-cols-3`}>
         {netChoices.map((c) => {
@@ -170,15 +170,15 @@ export function NetworkPage() {
               key={c.tab}
               type="button"
               onClick={() => go(c.tab)}
-              className="group flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 text-left transition hover:border-[var(--color-primary)]/50 hover:bg-[var(--accent-subtle,var(--color-accent))]"
+              className="group flex flex-col rounded-xl border border-(--color-border) bg-(--color-card) p-4 text-left transition hover:border-(--color-primary)/50 hover:bg-(--accent-subtle,var(--color-accent))"
             >
               <span
                 className={`mb-3 grid h-10 w-10 place-items-center rounded-lg transition group-hover:scale-105 ${c.tone}`}
               >
                 <Icon className="h-5 w-5" />
               </span>
-              <p className="text-sm font-semibold text-[var(--color-foreground)]">{c.title}</p>
-              <p className="mt-1.5 flex-1 text-xs leading-relaxed text-[var(--color-muted-foreground)]">
+              <p className="text-sm font-semibold text-(--color-foreground)">{c.title}</p>
+              <p className="mt-1.5 flex-1 text-xs leading-relaxed text-(--color-muted-foreground)">
                 {c.hint}
               </p>
             </button>
@@ -322,18 +322,18 @@ function AddNetworkForm() {
 
   return (
     <>
-      <h2 className="text-lg font-semibold tracking-tight text-[var(--color-foreground)]">
+      <h2 className="text-lg font-semibold tracking-tight text-(--color-foreground)">
         {t("network_add_network")}
       </h2>
-      <p className="mt-1 rounded-lg border border-[var(--info)]/20 bg-[var(--info-bg,rgba(56,189,248,0.1))] px-3 py-2 text-xs leading-relaxed text-[var(--text-secondary,var(--color-muted-foreground))]">
+      <p className="mt-1 rounded-lg border border-(--info)/20 bg-(--info-bg,rgba(56,189,248,0.1)) px-3 py-2 text-xs leading-relaxed text-(--text-secondary,var(--color-muted-foreground))">
         {accessHint}
       </p>
       <form
         onSubmit={onSubmit}
-        className="mt-3 max-w-xl space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4"
+        className="mt-3 max-w-xl space-y-3 rounded-xl border border-(--color-border) bg-(--color-card) p-4"
       >
         <div>
-          <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">{t("talep_id")}</label>
+          <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">{t("talep_id")}</label>
           <Input
             className="h-9"
             value={talepId}
@@ -352,7 +352,7 @@ function AddNetworkForm() {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Bağlantı tipi</label>
+            <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Bağlantı tipi</label>
             <Select value={connType} onValueChange={(v) => setConnType(v as "ethernet" | "bond")}>
               <SelectTrigger className="h-9">
                 <SelectValue />
@@ -366,9 +366,9 @@ function AddNetworkForm() {
 
           {connType === "ethernet" ? (
             <div>
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Interface</label>
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Interface</label>
               {ifacesLoading ? (
-                <p className="flex h-9 items-center text-xs text-[var(--color-muted-foreground)]">Yükleniyor…</p>
+                <p className="flex h-9 items-center text-xs text-(--color-muted-foreground)">Yükleniyor…</p>
               ) : (
                 <Select value={iface || undefined} onValueChange={setIface} disabled={!ifaces.length}>
                   <SelectTrigger className="h-9">
@@ -386,7 +386,7 @@ function AddNetworkForm() {
             </div>
           ) : (
             <div>
-              <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Bond mode</label>
+              <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Bond mode</label>
               <Select value={bondMode} onValueChange={setBondMode}>
                 <SelectTrigger className="h-9">
                   <SelectValue />
@@ -397,18 +397,18 @@ function AddNetworkForm() {
                   <SelectItem value="6">mode=6 balance-alb</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="mt-1 font-mono text-[11px] text-[var(--color-muted-foreground)]">→ {nextBond}</p>
+              <p className="mt-1 font-mono text-[11px] text-(--color-muted-foreground)">→ {nextBond}</p>
             </div>
           )}
         </div>
 
         {connType === "bond" ? (
           <div>
-            <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Bond slaves</label>
+            <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Bond slaves</label>
             {ifacesLoading ? (
-              <p className="text-xs text-[var(--color-muted-foreground)]">Yükleniyor…</p>
+              <p className="text-xs text-(--color-muted-foreground)">Yükleniyor…</p>
             ) : (
-              <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-[var(--color-border)] p-2">
+              <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-(--color-border) p-2">
                 {ifaces.map((i) => (
                   <label key={i.name} className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-white/[0.04]">
                     <input
@@ -420,7 +420,7 @@ function AddNetworkForm() {
                   </label>
                 ))}
                 {!ifaces.length ? (
-                  <p className="text-xs text-[var(--color-muted-foreground)]">Uygun interface yok</p>
+                  <p className="text-xs text-(--color-muted-foreground)">Uygun interface yok</p>
                 ) : null}
               </div>
             )}
@@ -429,7 +429,7 @@ function AddNetworkForm() {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">
+            <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">
               VLAN ID <span className="font-normal opacity-70">(opsiyonel)</span>
             </label>
             <Input
@@ -443,15 +443,15 @@ function AddNetworkForm() {
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">IP</label>
+            <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">IP</label>
             <Input className="h-9 font-mono" value={ip} onChange={(e) => setIp(e.target.value)} required />
-            {ipError ? <p className="mt-1 text-xs text-[var(--color-destructive)]">{ipError}</p> : null}
+            {ipError ? <p className="mt-1 text-xs text-(--color-destructive)">{ipError}</p> : null}
           </div>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Subnet</label>
+            <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Subnet</label>
             <Select value={subnet} onValueChange={setSubnet}>
               <SelectTrigger className="h-9">
                 <SelectValue />
@@ -466,7 +466,7 @@ function AddNetworkForm() {
             </Select>
           </div>
           <div>
-            <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">Gateway</label>
+            <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">Gateway</label>
             <Input
               className="h-9 font-mono"
               value={gateway}
@@ -474,13 +474,13 @@ function AddNetworkForm() {
               required
             />
             {gatewayError ? (
-              <p className="mt-1 text-xs text-[var(--color-destructive)]">{gatewayError}</p>
+              <p className="mt-1 text-xs text-(--color-destructive)">{gatewayError}</p>
             ) : null}
           </div>
         </div>
 
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
-        <div className="flex justify-end border-t border-[var(--color-border)] pt-3">
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
+        <div className="flex justify-end border-t border-(--color-border) pt-3">
           <Button type="submit" className="h-9 px-4" disabled={busy || !formComplete}>
             {busy ? "…" : t("preview")}
           </Button>
@@ -663,18 +663,18 @@ function IpChangeForm() {
   return (
     <>
       <h2 className="text-lg font-semibold tracking-tight">{t("network_ip_change")}</h2>
-      <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">{t("network_ip_change_sub")}</p>
+      <p className="mt-1 text-xs text-(--color-muted-foreground)">{t("network_ip_change_sub")}</p>
 
-      <div className="mt-2 w-full rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-[var(--color-foreground)]">
+      <div className="mt-2 w-full rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-(--color-foreground)">
         {t("network_ip_change_dns_warn")}
       </div>
 
       <form
         onSubmit={onSubmit}
-        className="mt-3 w-full space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4"
+        className="mt-3 w-full space-y-3 rounded-xl border border-(--color-border) bg-(--color-card) p-4"
       >
         <div>
-          <label className="mb-1.5 block text-xs text-[var(--color-muted-foreground)]">{t("talep_id")}</label>
+          <label className="mb-1.5 block text-xs text-(--color-muted-foreground)">{t("talep_id")}</label>
           <Input
             className="h-9"
             value={talepId}
@@ -692,7 +692,7 @@ function IpChangeForm() {
         />
 
         {inv ? (
-          <p className="text-xs text-[var(--color-muted-foreground)]">
+          <p className="text-xs text-(--color-muted-foreground)">
             FQDN: <span className="font-mono">{inv.fqdn || "—"}</span>
             {" · "}
             default: <span className="font-mono">{inv.default_route?.dev || "—"}</span>
@@ -706,9 +706,9 @@ function IpChangeForm() {
         ) : null}
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Interface</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">Interface</label>
           {loading ? (
-            <p className="text-xs text-[var(--color-muted-foreground)]">Yükleniyor…</p>
+            <p className="text-xs text-(--color-muted-foreground)">Yükleniyor…</p>
           ) : (
             <Select value={iface || undefined} onValueChange={setIface} disabled={!inv?.interfaces.length}>
               <SelectTrigger>
@@ -727,12 +727,12 @@ function IpChangeForm() {
         </div>
 
         {selected?.is_primary ? (
-          <p className="text-xs text-[var(--color-muted-foreground)]">{t("network_ip_change_primary_hint")}</p>
+          <p className="text-xs text-(--color-muted-foreground)">{t("network_ip_change_primary_hint")}</p>
         ) : null}
 
         {selected?.has_vlan ? (
           <div>
-            <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">VLAN ID</label>
+            <label className="mb-1 block text-xs text-(--color-muted-foreground)">VLAN ID</label>
             <Input
               className="font-mono"
               type="number"
@@ -746,12 +746,12 @@ function IpChangeForm() {
         ) : null}
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">IP</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">IP</label>
           <Input className="font-mono" value={ip} onChange={(e) => setIp(e.target.value)} required />
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Subnet</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">Subnet</label>
           <Select value={subnet} onValueChange={setSubnet}>
             <SelectTrigger>
               <SelectValue />
@@ -767,20 +767,20 @@ function IpChangeForm() {
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Gateway</label>
+          <label className="mb-1 block text-xs text-(--color-muted-foreground)">Gateway</label>
           <Input className="font-mono" value={gateway} onChange={(e) => setGateway(e.target.value)} required />
         </div>
 
         {selected?.is_primary ? (
           <>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 DNS <span className="opacity-70">(nameserver, virgül/boşluk)</span>
               </label>
               <Input className="font-mono" value={dns} onChange={(e) => setDns(e.target.value)} required />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 DNS-search <span className="opacity-70">(search)</span>
               </label>
               <Input className="font-mono" value={dnsSearch} onChange={(e) => setDnsSearch(e.target.value)} required />
@@ -789,16 +789,16 @@ function IpChangeForm() {
         ) : null}
 
         {ticketText ? (
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/30 p-3">
-            <p className="text-xs font-medium text-[var(--color-muted-foreground)]">
+          <div className="rounded-lg border border-(--color-border) bg-(--color-muted)/30 p-3">
+            <p className="text-xs font-medium text-(--color-muted-foreground)">
               {t("network_ip_change_ticket_label")}
             </p>
             <p className="mt-1 font-mono text-xs leading-relaxed">{ticketText}</p>
           </div>
         ) : null}
 
-        {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
-        <div className="flex justify-end border-t border-[var(--color-border)] pt-3">
+        {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
+        <div className="flex justify-end border-t border-(--color-border) pt-3">
           <Button type="submit" className="h-9 px-4" disabled={busy || !formComplete}>
             {busy ? "…" : t("preview")}
           </Button>
@@ -806,18 +806,18 @@ function IpChangeForm() {
       </form>
 
       <div className="mt-4 w-full space-y-3">
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--theme-inset)] px-4 py-3 text-xs">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+        <div className="rounded-xl border border-(--color-border) bg-(--theme-inset) px-4 py-3 text-xs">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-(--color-muted-foreground)">
             {t("ops_dns_query_result")}
           </p>
-          <p className="mt-1 font-mono text-sm text-[var(--color-foreground)]">
+          <p className="mt-1 font-mono text-sm text-(--color-foreground)">
             {t("ops_dns_query_hostname")}:{" "}
             <span className="font-semibold">{dnsQueryHost || "—"}</span>
             {" · "}
             {t("ops_dns_query_ip")}: <span className="font-semibold">{dnsQueryIp || "—"}</span>
           </p>
           {selected ? (
-            <p className="mt-1 text-[10px] text-[var(--color-muted-foreground)]">
+            <p className="mt-1 text-[10px] text-(--color-muted-foreground)">
               {t("ops_selected_iface")}:{" "}
               <span className="font-mono">{selected.name}</span>
               {selected.is_primary
@@ -826,14 +826,14 @@ function IpChangeForm() {
             </p>
           ) : null}
         </div>
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/60 p-4 text-sm text-[var(--color-muted-foreground)]">
-          <p className="font-medium text-[var(--color-foreground)]">{t("ops_success_checklist")}</p>
-          <p className="mt-2 text-xs text-[var(--color-muted-foreground)]">
+        <div className="rounded-xl border border-(--color-border) bg-(--color-card)/60 p-4 text-sm text-(--color-muted-foreground)">
+          <p className="font-medium text-(--color-foreground)">{t("ops_success_checklist")}</p>
+          <p className="mt-2 text-xs text-(--color-muted-foreground)">
             {t("ops_success_checklist_hint_ip")}
           </p>
           <ol className="mt-3 list-decimal space-y-3 pl-5">
             {successChecklist.map((item, idx) => (
-              <li key={idx} className="whitespace-pre-wrap text-[var(--color-foreground)]/90">
+              <li key={idx} className="whitespace-pre-wrap text-(--color-foreground)/90">
                 {item}
               </li>
             ))}

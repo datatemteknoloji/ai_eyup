@@ -299,6 +299,17 @@ def resolve_full_scan_turn(
     pending = get_full_scan_pending(session_id, platform=plat)
     kind = kind_label(plat)
 
+    # Güvenlik kapısı (Adım 2): eylem emri / talimat sızdırma isteği "tüm VM" gibi kapsam ifadesi taşısa bile
+    # tam tarama onayına düşmemeli; bekleyen onay da düşer, ret cevabı canned_chitchat_answer'dan gelir.
+    try:
+        from app.services.chat_quality.action_gate import check_message
+        if check_message(message or "") is not None:
+            if pending:
+                clear_full_scan_pending(session_id, platform=plat)
+            return {"action": "proceed", "work_message": message, "full_scan": False, "gate_blocked": True}
+    except Exception:
+        pass
+
     if pending and is_confirm_message(message):
         clear_full_scan_pending(session_id, platform=plat)
         return {
@@ -318,6 +329,15 @@ def resolve_full_scan_turn(
                 f"Sonraki sorularda varsayılan üst sınır ({get_default_fleet_cap()}) geçerli."
             ),
         }
+    # Yanlış öncül / evrensel iddia («Tüm VM'ler çalışıyor, değil mi?», «hiç kapalı VM yok, doğru mu?») liste isteği
+    # değildir: sayım/öncül kuralı (canned_chitchat_answer) cevaplar; tam tarama onayına düşmez (Adım 7a).
+    try:
+        from app.services.chat_quality.premise import looks_like_premise
+        if looks_like_premise(message or ""):
+            return {"action": "proceed", "work_message": message, "full_scan": False, "premise_gate": True}
+    except Exception:
+        pass
+
     if wants_full_fleet(message):
         n = count_fleet_candidates(db, platform=plat)
         cap = get_default_fleet_cap()

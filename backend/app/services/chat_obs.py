@@ -104,6 +104,15 @@ class ChatTiming:
         if cache_hit and cache_ms >= 0:
             observe_seconds("cache", cache_ms / 1000.0, platform=self.platform)
 
+        try:  # tur izi (bağlı değilse no-op): karar yolu = "path" + cache
+            from app.services.chat_quality import trace as _cq_trace
+            _cq_trace.note_path(
+                "timing", cache_hit=bool(cache_hit),
+                **{k: v for k, v in (extra or {}).items() if isinstance(v, (str, int, float, bool))},
+            )
+        except Exception:
+            pass
+
         summary = {
             "cache_ms": round(cache_ms, 1) if cache_ms >= 0 else -1,
             "collect_ms": round(collect_ms, 1) if collect_ms >= 0 else -1,

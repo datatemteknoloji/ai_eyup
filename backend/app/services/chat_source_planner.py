@@ -105,7 +105,15 @@ def plan_sources(
     rag_cols: List[str] = []
     sources: List[str] = ["db"]
 
-    if scope_l == "unified":
+    # Güvenlik kapısına takılacak mesajda (eylem emri / talimat sızdırma) yönlendirme LLM'i boşuna beklenmez:
+    # cevap şablondur; uzak LLM yanıtsızken bile ret anında gelmeli.
+    try:
+        from app.services.chat_quality.action_gate import check_message as _gate_check
+        _gated = _gate_check(msg) is not None
+    except Exception:
+        _gated = False
+
+    if scope_l == "unified" and not _gated:
         try:
             from app.services.unified_intent_router import route_unified
             route = route_unified(

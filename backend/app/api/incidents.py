@@ -406,6 +406,16 @@ async def get_incident(incident_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/{incident_id}/hardware")
+def get_incident_hardware(incident_id: int, db: Session = Depends(get_db)):
+    """«İlgili donanım» kartı: incident'ın donanım olayları / etkilenen sunucularının donanım sağlığı (BMC/seri YOK)."""
+    inc = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident bulunamadı")
+    from app.services.hw.incident_view import hardware_for_incident
+    return {"ok": True, **hardware_for_incident(db, inc)}
+
+
 @router.delete("/{incident_id}")
 async def delete_incident(incident_id: int, db: Session = Depends(get_db)):
     """Incident sil"""

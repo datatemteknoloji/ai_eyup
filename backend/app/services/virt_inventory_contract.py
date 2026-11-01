@@ -11,6 +11,36 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
+# ── Kullanıcıya görünen tazelik satırı (Adım 8c) ──────────────────────────────────
+# «(kaynak: db_…)» başlığı ve ham ISO `as_of` kullanıcı cevabından kalktı; kaynak/ham zaman rozet, `/json` ve
+# `debug_trace`'te durur. Tazelik güveni için insan dilinde «Veri zamanı» satırı kalır.
+_TR_MONTHS = ("Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara")
+
+
+def human_as_of(as_of: Any) -> str:
+    """ISO zaman → «21 Eki 2026 02:30» (uygulama saat dilimi). Çözülemezse ham değeri sadeleştirir."""
+    if as_of in (None, ""):
+        return ""
+    raw = str(as_of).strip()
+    try:
+        from datetime import datetime
+        d = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        try:
+            from app.services.chat_quality import time_window as _tw
+            zone, _ = _tw._tz(_tw.configured_tz())
+            d = d.astimezone(zone) if d.tzinfo else d.replace(tzinfo=zone)
+        except Exception:
+            pass
+        return f"{d.day} {_TR_MONTHS[d.month - 1]} {d.year} {d.hour:02d}:{d.minute:02d}"
+    except Exception:
+        return raw[:16].replace("T", " ")
+
+
+def freshness_line(as_of: Any) -> str:
+    h = human_as_of(as_of)
+    return f"_Veri zamanı: {h}_" if h else ""
+
+
 # ── Niyet sınıfları ──────────────────────────────────────────────────────────
 KIND_VM_DISK = "vm_disk"
 KIND_DATASTORE = "datastore"
@@ -369,7 +399,7 @@ def format_vm_table(
         cols = ["name"] + [c for c in kept if c != "name"]
     header = "| " + " | ".join(_VM_FIELD_LABELS[c] for c in cols) + " |"
     sep = "|" + "|".join(("---:" if c in _VM_NUMERIC_FIELDS else "---") for c in cols) + "|"
-    lines = ["## VM Listesi (kaynak: db_list_vms)", ""]
+    lines = ["## VM Listesi", ""]
     if filter_note:
         lines.append(f"_Filtre: {filter_note}_")
         lines.append("")
@@ -380,7 +410,7 @@ def format_vm_table(
     lines.append("")
     lines.append(f"**Toplam:** {len(vms)} VM")
     if as_of:
-        lines.append(f"as_of: `{as_of}`")
+        lines.append(freshness_line(as_of))
     if {"disk_gb", "disk_count", "disk_breakdown"} & set(cols):
         lines.append(
             "_Not: Adet/boyut vCenter provisioned disk envanteridir (guest `df` değil)._"
@@ -417,7 +447,7 @@ def _format_vm_child_table(
         "---:" if c in numeric else "---" for c in child_cols
     ]
 
-    lines = ["## VM Disk Kırılımı (kaynak: db_list_vms)", ""]
+    lines = ["## VM Disk Kırılımı", ""]
     if filter_note:
         lines += [f"_Filtre: {filter_note}_", ""]
     lines += ["| " + " | ".join(header_cells) + " |", "|" + "|".join(sep_cells) + "|"]
@@ -453,7 +483,7 @@ def _format_vm_child_table(
             f"_{missing_child} VM için disk kırılımı DB'de boş — hypervisor envanter sync gerekir._"
         )
     if as_of:
-        lines.append(f"as_of: `{as_of}`")
+        lines.append(freshness_line(as_of))
     lines.append(
         "_Not: Kapasite vCenter provisioned disk envanteridir (guest `df` değil); "
         "datastore her diskin VMDK backing bilgisinden okunur._"
@@ -464,7 +494,7 @@ def _format_vm_child_table(
 def format_vm_disk_table(vms: Sequence[Dict[str, Any]], *, as_of: Optional[str] = None) -> str:
     """Tool satırlarından deterministik VM disk tablosu."""
     lines = [
-        "## VM Disk Envanteri (kaynak: db_list_vms)",
+        "## VM Disk Envanteri",
         "",
         "| VM Adı | IP | Disk Adedi | Toplam (GB) | Diskler (label: GB) |",
         "|---|---|---:|---:|---|",
@@ -504,7 +534,7 @@ def format_vm_disk_table(vms: Sequence[Dict[str, Any]], *, as_of: Optional[str] 
         f"**Özet:** {len(vms)} VM — disk_gb dolu: {filled}, DB null: {empty}.",
     ])
     if as_of:
-        lines.append(f"as_of: `{as_of}`")
+        lines.append(freshness_line(as_of))
     lines.append(
         "_Not: Adet/boyut vCenter provisioned disk envanteridir (guest `df` değil)._"
     )
@@ -513,7 +543,7 @@ def format_vm_disk_table(vms: Sequence[Dict[str, Any]], *, as_of: Optional[str] 
 
 def format_datastore_table(rows: Sequence[Dict[str, Any]], *, as_of: Optional[str] = None) -> str:
     lines = [
-        "## Datastore Envanteri (kaynak: db_list_datastores)",
+        "## Datastore Envanteri",
         "",
         "| Datastore | Kapasite (GB) | Boş (GB) | Kullanım % | vCenter |",
         "|---|---:|---:|---:|---|",
@@ -526,7 +556,7 @@ def format_datastore_table(rows: Sequence[Dict[str, Any]], *, as_of: Optional[st
             f"{r.get('free_gb', '—')} | {r.get('usage_pct', '—')} | {r.get('hypervisor') or '—'} |"
         )
     if as_of:
-        lines.extend(["", f"as_of: `{as_of}`"])
+        lines.extend(["", freshness_line(as_of)])
     return "\n".join(lines)
 
 
@@ -590,17 +620,17 @@ def format_esx_host_table(rows: Sequence[Dict[str, Any]], *, as_of: Optional[str
 
     header = "| " + " | ".join(t for _, t, _ in present) + " |"
     sep = "|" + "|".join("---:" if right else "---" for _, _, right in present) + "|"
-    lines = ["## ESXi Host Envanteri (kaynak: db_list_esx_hosts)", "", header, sep]
+    lines = ["## ESXi Host Envanteri", "", header, sep]
     for r in data:
         lines.append("| " + " | ".join(_cell(r.get(k)) for k, _, _ in present) + " |")
     if as_of:
-        lines.extend(["", f"as_of: `{as_of}`"])
+        lines.extend(["", freshness_line(as_of)])
     return "\n".join(lines)
 
 
 def format_vm_list_table(vms: Sequence[Dict[str, Any]], *, as_of: Optional[str] = None) -> str:
     lines = [
-        "## VM Listesi (kaynak: db_list_vms)",
+        "## VM Listesi",
         "",
         "| VM Adı | IP | Power | ESXi host | Disk (GB) | vCPU | RAM (MB) |",
         "|---|---|---|---|---:|---:|---:|",
@@ -615,8 +645,36 @@ def format_vm_list_table(vms: Sequence[Dict[str, Any]], *, as_of: Optional[str] 
         )
     lines.extend(["", f"**Toplam:** {len(vms)} VM"])
     if as_of:
-        lines.append(f"as_of: `{as_of}`")
+        lines.append(freshness_line(as_of))
     return "\n".join(lines)
+
+
+def _apply_truncation_note(text_out: str, vms: Sequence[Dict[str, Any]], payload: Dict[str, Any]) -> str:
+    """db_list_vms kesildiyse (limit < filtreye uyan toplam) «Toplam» satırını dürüst yazar + dağılım ekler.
+
+    Yalnız kesilme VE satırlar ek süzgeçle azaltılmamışsa (len(vms) == payload.count) uygulanır.
+    """
+    try:
+        if not payload.get("truncated"):
+            return text_out
+        total = int(payload.get("total_matching") or 0)
+        shown = len(vms)
+        if total <= shown or shown != int(payload.get("count") or -1):
+            return text_out
+        old_line = f"**Toplam:** {shown} VM"
+        new_line = (f"**Gösterilen:** {shown} VM (ad sırasına göre ilk {shown}) · **Kapsamdaki toplam:** {total} VM — "
+                    f"liste KESİLDİ; {total - shown} VM gösterilmiyor.")
+        text_out = text_out.replace(old_line, new_line, 1)
+        bd = payload.get("hypervisor_breakdown") or []
+        if bd:
+            text_out += "\n\n**Kapsamdaki dağılım (hypervisor):** " + " · ".join(
+                f"{b.get('hypervisor')}: {b.get('count')}" for b in bd[:12]
+            )
+        text_out += ("\n_Tümünü görmek için hypervisor / cluster / host / datastore veya VM adıyla daraltın "
+                     "(ör. «ZZ-FAKE-vCenter'daki VM'leri listele»); sayı/dağılım için «hypervisor'lara göre VM sayısı» sorun._")
+        return text_out
+    except Exception:
+        return text_out
 
 
 def materialize_from_tool_results(
@@ -682,15 +740,18 @@ def materialize_from_tool_results(
         if fields is None and not sc.is_child():
             # Geriye dönük uyumluluk: fields hesaplanmadıysa eski sabit şablon.
             if kind == KIND_VM_DISK:
-                return format_vm_disk_table(vms, as_of=as_of)
-            return format_vm_list_table(vms, as_of=as_of)
-        return format_vm_table(
-            vms,
-            fields or ["name"],
-            as_of=as_of,
-            filter_note=_filter_note(scope=sc),
-            scope=sc,
-        )
+                text_out = format_vm_disk_table(vms, as_of=as_of)
+            else:
+                text_out = format_vm_list_table(vms, as_of=as_of)
+        else:
+            text_out = format_vm_table(
+                vms,
+                fields or ["name"],
+                as_of=as_of,
+                filter_note=_filter_note(scope=sc),
+                scope=sc,
+            )
+        return _apply_truncation_note(text_out, vms, payload)
 
     if kind == KIND_DATASTORE:
         payload = by_name.get("db_list_datastores")

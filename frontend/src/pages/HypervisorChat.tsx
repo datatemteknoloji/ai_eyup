@@ -7,12 +7,13 @@ import { API_BASE_URL } from '../config/api'
 import {
   Cpu, Server, MemoryStick, HardDrive, Zap,
   MessageSquare, Lightbulb, Loader2, AlertCircle,
-  ChevronDown, ChevronUp, FileDown, BarChart3,
+  ChevronDown, ChevronUp, FileDown, BarChart3, Wrench,
 } from 'lucide-react'
 import { exportMarkdownToPrintWindow } from '../utils/pdfExport'
 import { pairChatMessages, useChatPdfSelect } from '../lib/chatPdfSelect'
 import { ChatPdfPairWrap, ChatPdfToolbar } from '../components/ChatPdfToolbar'
 import ChatFeedbackButtons from '../components/ChatFeedbackButtons'
+import ThinkingTrace from '../components/ThinkingTrace'
 import { ChatSources, type ChatEvidence } from '../components/ChatEvidenceBadge'
 import ChatMetricChart, { type ChatChartPayload } from '../components/ChatMetricChart'
 import {
@@ -141,7 +142,7 @@ function QuickStatsBar() {
   ]
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2 bg-slate-800/50 border-b border-slate-700/50 text-xs text-slate-400 overflow-x-auto flex-shrink-0">
+    <div className="flex items-center gap-3 px-3 py-1 bg-slate-800/50 border-b border-slate-700/50 text-[11px] text-slate-400 overflow-x-auto shrink-0">
       {stats.map(s => (
         <div key={s.label} className="flex items-center gap-1.5 whitespace-nowrap">
           <span className="text-slate-500">{s.icon}</span>
@@ -230,13 +231,13 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
       {!isUser && (
-        <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center mr-2 mt-1 flex-shrink-0">
+        <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center mr-2 mt-1 shrink-0">
           <Server size={14} className="text-white" />
         </div>
       )}
       <div className={`min-w-0 ${isUser ? 'max-w-[min(72%,42rem)] order-first' : 'w-full max-w-full'}`}>
         <div
-          className={`rounded-2xl px-4 py-3 text-sm leading-relaxed overflow-hidden ${
+          className={`chat-assistant-text rounded-2xl px-4 py-3 text-sm leading-relaxed overflow-hidden ${
             isUser
               ? 'bg-blue-600 text-white rounded-tr-sm ml-auto'
               : msg.error
@@ -247,10 +248,10 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
           {isUser ? (
             <p>{msg.content}</p>
           ) : (
-            <div className="chat-response-content prose prose-invert prose-sm max-w-none min-w-0
+            <div className="chat-response-content chat-msg-body prose prose-invert prose-sm max-w-none min-w-0
               prose-headings:text-blue-300 prose-headings:font-semibold
               prose-strong:text-white prose-code:text-amber-300
-              prose-code:bg-slate-900 prose-code:px-1 prose-code:rounded
+              prose-code:bg-slate-900 prose-code:px-1 prose-code:rounded-sm
               prose-a:text-blue-400">
               {msg.error ? (
                 <div className="flex items-center gap-2">
@@ -307,7 +308,7 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
         )}
       </div>
       {isUser && (
-        <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center ml-2 mt-1 flex-shrink-0">
+        <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center ml-2 mt-1 shrink-0">
           <MessageSquare size={14} className="text-slate-300" />
         </div>
       )}
@@ -315,18 +316,45 @@ function MessageBubble({ msg, question }: { msg: Message; question?: string }) {
   )
 }
 
-function TypingIndicator() {
+function TypingIndicator({
+  progressText, thinkingText = '', toolCalls = [], streamingText = '',
+}: {
+  progressText?: string
+  thinkingText?: string
+  toolCalls?: { tool: string; label: string; done?: boolean }[]
+  streamingText?: string
+}) {
   const t = useT()
   return (
     <div className="flex justify-start mb-4">
-      <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center mr-2 mt-1">
+      <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center mr-2 mt-1 shrink-0">
         <Server size={14} className="text-white" />
       </div>
-      <div className="bg-slate-800 border border-slate-700/50 rounded-2xl rounded-tl-sm px-4 py-3">
-        <div className="flex items-center gap-1.5">
-          <Loader2 size={14} className="text-blue-400 animate-spin" />
-          <span className="text-xs text-slate-400">{t('chat_analyzing_infra')}</span>
-        </div>
+      <div className="chat-assistant-text min-w-0 bg-slate-800 border border-slate-700/50 rounded-2xl rounded-tl-sm px-4 py-3 text-sm max-w-full overflow-hidden" data-testid="hv-live-bubble">
+        <ThinkingTrace text={thinkingText} live={!streamingText} />
+        {toolCalls.length > 0 && (
+          <div className="space-y-1 mb-2">
+            {toolCalls.map((tc, i) => (
+              <div key={`${tc.tool}-${i}`} className="flex items-center gap-2 text-[11px] text-slate-500">
+                <span className={`inline-flex items-center gap-1 ${tc.done ? 'opacity-60' : 'animate-pulse'}`}>
+                  <Wrench size={11} strokeWidth={2} /> {tc.label}{tc.done ? '' : '…'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {streamingText ? (
+          <div className="chat-response-content chat-msg-body prose prose-invert prose-sm max-w-none min-w-0
+            prose-headings:text-blue-300 prose-headings:font-semibold prose-strong:text-white
+            prose-code:text-amber-300 prose-code:bg-slate-900 prose-code:px-1 prose-code:rounded-sm prose-a:text-blue-400">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{streamingText}</ReactMarkdown>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            <Loader2 size={14} className="text-blue-400 animate-spin" />
+            <span className="text-xs text-slate-400">{progressText || t('chat_analyzing_infra')}</span>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -361,6 +389,8 @@ export default function HypervisorChat({
 
   const stream = useChatStream('hypervisor')
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
+  // Yeni açılan oturum liste yenilenene kadar "listede yoksa sessions[0]" effect'i tarafından ezilmesin
+  const justCreatedSessionIdRef = useRef<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const pdfSelect = useChatPdfSelect()
@@ -468,7 +498,11 @@ export default function HypervisorChat({
 
   useEffect(() => {
     if (!hvSessionsFetched || debouncedSearch) return
-    if (selectedSessionId != null && sessions.some((s) => s.id === selectedSessionId)) return
+    if (selectedSessionId != null && sessions.some((s) => s.id === selectedSessionId)) {
+      if (justCreatedSessionIdRef.current === selectedSessionId) justCreatedSessionIdRef.current = null
+      return
+    }
+    if (selectedSessionId != null && selectedSessionId === justCreatedSessionIdRef.current) return
     setSelectedSessionId(sessions.length > 0 ? sessions[0].id : null)
   }, [hvSessionsFetched, sessions, selectedSessionId, debouncedSearch])
 
@@ -479,10 +513,17 @@ export default function HypervisorChat({
       return r.json() as Promise<ChatSession>
     },
     onSuccess: (session) => {
-      queryClient.invalidateQueries({ queryKey: ['hv-chat-sessions'] })
+      abortChatStream('hypervisor', { keepPartial: false })
+      justCreatedSessionIdRef.current = session.id
+      queryClient.setQueryData<ChatSession[]>(['hv-chat-sessions', ''], (prev) => [
+        session,
+        ...(prev ?? []).filter((s) => s.id !== session.id),
+      ])
       setSelectedSessionId(session.id)
       setMessages([])
       setInput('')
+      pdfSelect.reset()
+      queryClient.invalidateQueries({ queryKey: ['hv-chat-sessions'] })
     },
   })
 
@@ -598,7 +639,7 @@ export default function HypervisorChat({
       <NlTopBar>
         {!embedded && (
           <div className="flex items-center gap-3 mr-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <div className="w-9 h-9 rounded-xl bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-500/20">
               <HardDrive size={18} className="text-white" />
             </div>
             <div>
@@ -643,7 +684,7 @@ export default function HypervisorChat({
         {isEmpty ? (
           <div className="max-w-2xl mx-auto mt-6 space-y-6">
             <div className="text-center space-y-2">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center mx-auto shadow-xl shadow-blue-500/20">
+              <div className="w-14 h-14 rounded-2xl bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center mx-auto shadow-xl shadow-blue-500/20">
                 <HardDrive size={24} className="text-white" />
               </div>
               <h2 className="text-lg font-semibold text-white">{t('chat_hv_empty_title')}</h2>
@@ -685,20 +726,27 @@ export default function HypervisorChat({
                 </ChatPdfPairWrap>
               )
             })}
-            {loading && <TypingIndicator />}
+            {(loading || (stream.streamingText && messages[messages.length - 1]?.role === 'user')) && (
+              <TypingIndicator
+                progressText={stream.progress?.text}
+                thinkingText={stream.thinkingText ?? ''}
+                toolCalls={stream.toolCalls}
+                streamingText={stream.streamingText}
+              />
+            )}
             <div ref={bottomRef} />
           </div>
         )}
       </div>
 
       {!isEmpty && suggestions && (
-        <div className={`px-4 pb-2 ${nlChatColumnClass} flex-shrink-0`}>
+        <div className={`px-4 pb-2 ${nlChatColumnClass} shrink-0`}>
           <div className="flex gap-2 overflow-x-auto pb-1">
             {(suggestions.report_suggestions || []).slice(0, 2).concat(suggestions.suggestions.slice(0, 3)).map(s => (
               <button
                 key={s}
                 onClick={() => sendQuestion(s)}
-                className="text-xs px-3 py-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700/50 whitespace-nowrap transition-all flex-shrink-0"
+                className="text-xs px-3 py-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700/50 whitespace-nowrap transition-all shrink-0"
               >
                 {s.length > 40 ? s.slice(0, 40) + '…' : s}
               </button>

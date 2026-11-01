@@ -131,7 +131,7 @@ export function TerminalPage() {
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold">{t("wizard_terminal")}</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("terminal_subtitle")}</p>
+          <p className="mt-1 text-sm text-(--color-muted-foreground)">{t("terminal_subtitle")}</p>
         </div>
         <Button variant="outline" onClick={() => navigate(serversHome)}>
           {t("nav_servers")}
@@ -141,7 +141,7 @@ export function TerminalPage() {
       {!connected ? (
         <form
           onSubmit={connect}
-          className="mb-4 max-w-xl space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4"
+          className="mb-4 max-w-xl space-y-3 rounded-xl border border-(--color-border) bg-(--color-card) p-4"
         >
           <p className="text-sm text-amber-200/90">{t("terminal_warning")}</p>
           <SingleServerField
@@ -165,7 +165,7 @@ export function TerminalPage() {
             required
             autoComplete="off"
           />
-          {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+          {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
           <Button type="submit">{t("terminal_connect")}</Button>
         </form>
       ) : (
@@ -178,7 +178,7 @@ export function TerminalPage() {
 
       <div
         ref={hostRef}
-        className="min-h-[420px] flex-1 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--theme-terminal-bg)] p-2"
+        className="min-h-[420px] flex-1 overflow-hidden rounded-xl border border-(--color-border) bg-(--theme-terminal-bg) p-2"
       />
     </div>
   );

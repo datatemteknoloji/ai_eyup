@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timedelta
+from app.core.timeutil import utc_now
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import or_
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.event import SystemEvent
+from app.services.event_dedupe import ExternalKeyIndex, find_existing_event
 from app.models.hypervisor import Hypervisor
 from app.models.server import Server
 from app.services.incident_auto import auto_create_or_link_incident
@@ -201,24 +203,17 @@ def _upsert_vcenter_event(
     source: str,
     event_type: str,
     now: datetime,
+    index: Optional[ExternalKeyIndex] = None,
 ) -> bool:
     item = _enrich_item_refs(item)
     ext_key = f"hv{hypervisor.id}-{item.get('id') or item.get('event_key')}"
-    since = datetime.utcnow() - timedelta(days=7)
 
-    existing_rows = (
-        db.query(SystemEvent)
-        .filter(
-            SystemEvent.source == source,
-            SystemEvent.created_at >= since,
-        )
-        .all()
-    )
-    for ev in existing_rows:
-        raw = ev.raw_data or {}
-        if raw.get("external_key") == ext_key:
-            _backfill_existing_event(ev, db, hypervisor, item, now)
-            return False
+    # Adım 11: eski kod her olay için son 7 günün TÜM satırlarını ORM nesnesi olarak yüklüyordu
+    # (≈91 bin satır × olay) → dakikalarca GIL; bkz. event_dedupe.py
+    ev = find_existing_event(db, source, ext_key, index)
+    if ev is not None:
+        _backfill_existing_event(ev, db, hypervisor, item, now)
+        return False
 
     server_id = _resolve_server_id(
         db,
@@ -243,6 +238,8 @@ def _upsert_vcenter_event(
         occurrence_count=1,
     )
     db.add(event)
+    if index is not None:
+        index.add(source, ext_key, event)
     return True
 
 
@@ -268,14 +265,15 @@ def sync_vcenter_events_for_hypervisor(db: Session, hypervisor: Hypervisor, hour
     finally:
         client.logout()
 
-    now = datetime.utcnow()
+    now = utc_now()
     saved = 0
     stats = {"events": 0, "alarms": 0, "tasks": 0}
+    index = ExternalKeyIndex(db)
 
     for ev in payload.get("events", []):
         kind = ev.get("kind") or "vcenter_event"
         source = kind if kind in VCENTER_SOURCES else "vcenter_event"
-        if _upsert_vcenter_event(db, hypervisor, ev, source, kind, now):
+        if _upsert_vcenter_event(db, hypervisor, ev, source, kind, now, index):
             saved += 1
             if kind == "vcenter_task":
                 stats["tasks"] += 1
@@ -283,14 +281,14 @@ def sync_vcenter_events_for_hypervisor(db: Session, hypervisor: Hypervisor, hour
                 stats["events"] += 1
 
     for alarm in payload.get("alarms", []):
-        if _upsert_vcenter_event(db, hypervisor, alarm, "vcenter_alarm", "vcenter_alarm", now):
+        if _upsert_vcenter_event(db, hypervisor, alarm, "vcenter_alarm", "vcenter_alarm", now, index):
             saved += 1
             stats["alarms"] += 1
 
     db.commit()
 
     if saved > 0:
-        since_batch = datetime.utcnow() - timedelta(seconds=5)
+        since_batch = utc_now() - timedelta(seconds=5)
         new_events = db.query(SystemEvent).filter(
             SystemEvent.source.in_(VCENTER_SOURCES),
             SystemEvent.created_at >= since_batch,
@@ -369,11 +367,12 @@ def sync_vcenter_lifecycle_events(
     vmware_hvs = [
         h for h in db.query(Hypervisor).all()
         if (h.hypervisor_type.value if h.hypervisor_type else "") == "vmware"
+        and not (getattr(h, "meta_data", None) or {}).get("fake_seed")   # sahte test envanteri (scripts/fake_virt_seed.py)
     ]
     if not vmware_hvs:
         return {"success": True, "total_saved": 0, "hypervisors": 0}
 
-    now = datetime.utcnow()
+    now = utc_now()
     total_saved = 0
     fetched = 0
     errors: List[str] = []
@@ -395,10 +394,11 @@ def sync_vcenter_lifecycle_events(
             fetched += len(events)
             errors.extend(payload.get("errors") or [])
 
+            lifecycle_index = ExternalKeyIndex(db)  # hypervisor başına (rollback sonrası bayat nesne kalmasın)
             for ev in events:
                 kind = ev.get("kind") or "vcenter_event"
                 source = kind if kind in VCENTER_SOURCES else "vcenter_event"
-                if _upsert_vcenter_event(db, hv, ev, source, kind, now):
+                if _upsert_vcenter_event(db, hv, ev, source, kind, now, lifecycle_index):
                     total_saved += 1
             db.commit()
             logger.info(

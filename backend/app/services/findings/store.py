@@ -199,6 +199,18 @@ def _safe_evidence(ev: Any) -> Dict[str, Any]:
     return ev
 
 
+# Senaryoya özel Türkçe öneri yazan taslakların (virt_health_checks) İngilizce karşılığı — aksi halde EN arayüz
+# genel katalog cümlesine düşer ve senaryo bilgisi (unmount / NFS erişilemiyor) kaybolur.
+_EN_SCENARIO_RECOMMENDATIONS: Dict[Tuple[str, Any], str] = {
+    ("vmw.datastore.accessible", "unmounted"): (
+        "The datastore is not mounted on any host. If it is unused, detach the LUN from the hosts and remove it "
+        "from vCenter (likely a decommission leftover). If it is in use, mount it on the hosts again."),
+    ("vmw.datastore.accessible", "nfs_unreachable"): (
+        "Check the NFS server and network path. If the server was removed permanently (e.g. a backup-software "
+        "leftover), unmount the datastore from the hosts; stale NFS mounts can slow ESXi down."),
+}
+
+
 def finding_to_dict(row: InfraFinding, exc: Optional[InfraFindingException] = None,
                     locale: str = "tr") -> Dict[str, Any]:
     cdef = get_check(row.check_id)
@@ -207,6 +219,8 @@ def finding_to_dict(row: InfraFinding, exc: Optional[InfraFindingException] = No
     if locale == "en" and cdef:
         title = cdef.title_en or title
         rec = cdef.recommendation_en or rec
+        rec = _EN_SCENARIO_RECOMMENDATIONS.get(
+            (row.check_id, (row.evidence or {}).get("scenario")), rec)
     return {
         "id": row.id,
         "platform": row.platform,

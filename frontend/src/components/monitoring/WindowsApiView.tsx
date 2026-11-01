@@ -336,7 +336,7 @@ export const WindowsApiView: React.FC = () => {
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder={t('wmn_search')}
-                        className="flex-1 bg-transparent text-sm text-white outline-none"
+                        className="flex-1 bg-transparent text-sm text-white outline-hidden"
                       />
                     </div>
                     <div className="max-h-72 overflow-y-auto p-1">
@@ -344,7 +344,7 @@ export const WindowsApiView: React.FC = () => {
                         const on = selected.includes(o.id)
                         const idx = selected.indexOf(o.id)
                         return (
-                          <label key={o.id} className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-white/[0.04] cursor-pointer">
+                          <label key={o.id} className="flex items-start gap-2 px-2 py-1.5 rounded-sm hover:bg-white/[0.04] cursor-pointer">
                             <input
                               type="checkbox"
                               checked={on}
@@ -402,7 +402,7 @@ export const WindowsApiView: React.FC = () => {
                 <div key={i} className="relative">
                   <button
                     type="button"
-                    className="absolute top-2 right-2 z-10 p-1 rounded text-slate-500 hover:text-white"
+                    className="absolute top-2 right-2 z-10 p-1 rounded-sm text-slate-500 hover:text-white"
                     onClick={() => setFullscreen(i)}
                     title="Fullscreen"
                   >

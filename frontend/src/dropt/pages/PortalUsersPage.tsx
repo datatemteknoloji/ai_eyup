@@ -117,17 +117,17 @@ export function PortalUsersPage() {
   return (
     <div className="px-6 py-6">
       <h2 className="text-xl font-semibold">{t("nav_portal_users")}</h2>
-      <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">{t("portal_users_subtitle")}</p>
-      <p className="mt-2 text-xs text-[var(--color-muted-foreground)]">{t("portal_ad_sso_moved_hint")}</p>
+      <p className="mt-1 text-sm text-(--color-muted-foreground)">{t("portal_users_subtitle")}</p>
+      <p className="mt-2 text-xs text-(--color-muted-foreground)">{t("portal_ad_sso_moved_hint")}</p>
 
-      {error ? <p className="mt-3 text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="mt-3 text-sm text-(--color-destructive)">{error}</p> : null}
       {info ? <p className="mt-3 text-sm text-emerald-300">{info}</p> : null}
 
       <div className="mt-6 space-y-4">
         <div className="flex flex-wrap items-end gap-3">
           <form onSubmit={onCreateUser} className="flex flex-wrap items-end gap-2">
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("username")}</label>
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("username")}</label>
               <Input
                 className="w-40"
                 value={newUser.username}
@@ -136,7 +136,7 @@ export function PortalUsersPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("password")}</label>
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("password")}</label>
               <Input
                 className="w-40"
                 type="password"
@@ -147,7 +147,7 @@ export function PortalUsersPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("portal_role")}</label>
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("portal_role")}</label>
               <Select
                 value={newUser.role}
                 onValueChange={(v) => setNewUser({ ...newUser, role: v as "admin" | "operator" })}
@@ -170,9 +170,9 @@ export function PortalUsersPage() {
           </Button>
         </div>
 
-        <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/80">
+        <div className="overflow-hidden rounded-xl border border-(--color-border) bg-(--color-card)/80">
           <table className="w-full text-sm">
-            <thead className="border-b border-[var(--color-border)] text-[var(--color-muted-foreground)]">
+            <thead className="border-b border-(--color-border) text-(--color-muted-foreground)">
               <tr>
                 <th className="px-3 py-2.5 text-left font-medium">{t("username")}</th>
                 <th className="px-3 py-2.5 text-left font-medium">{t("portal_role")}</th>
@@ -182,7 +182,7 @@ export function PortalUsersPage() {
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-t border-[var(--color-border)]">
+                <tr key={u.id} className="border-t border-(--color-border)">
                   <td className="px-3 py-2 font-mono text-xs">{u.username}</td>
                   <td className="px-3 py-2">
                     <Select value={u.role} onValueChange={(v) => void onChangeRole(u, v as PortalRole)}>
@@ -210,7 +210,7 @@ export function PortalUsersPage() {
               ))}
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-[var(--color-muted-foreground)]">
+                  <td colSpan={4} className="px-3 py-6 text-center text-(--color-muted-foreground)">
                     {t("no_records")}
                   </td>
                 </tr>

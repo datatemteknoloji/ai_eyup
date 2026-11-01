@@ -2,6 +2,7 @@ import React from 'react'
 import {
   BarChart3, Zap, Shield, Server, TrendingUp, AlertTriangle,
   Activity, RefreshCw, CheckCircle2, Cpu, Layers, Target, Radar,
+  HardDrive, FolderTree, ShieldCheck, ArrowRightLeft, ClipboardCheck, PackageOpen,
 } from 'lucide-react'
 import type { PlatformKey } from '../config/platformAiops'
 import type { TranslationKey } from '../i18n/messages'
@@ -14,20 +15,25 @@ export type ReportCatalogItem = {
   descKey: TranslationKey
 }
 
-export const PLATFORM_REPORT_TITLE_KEYS: Record<PlatformKey, TranslationKey> = {
+/** Hazır Raporlar sayfasının kapsamı: modül platformları + yönetici «Tüm Ortamlar». */
+export type ReportPlatformKey = PlatformKey | 'executive'
+
+export const PLATFORM_REPORT_TITLE_KEYS: Record<ReportPlatformKey, TranslationKey> = {
   linux: 'rpt_plat_linux',
   windows: 'rpt_plat_windows',
   virt: 'rpt_plat_virt',
   exadata: 'rpt_plat_exadata',
   openshift: 'rpt_plat_openshift',
+  executive: 'rpt_plat_executive',
 }
 
-export const PLATFORM_REPORT_SUBTITLE_KEYS: Record<PlatformKey, TranslationKey> = {
+export const PLATFORM_REPORT_SUBTITLE_KEYS: Record<ReportPlatformKey, TranslationKey> = {
   linux: 'rpt_sub_linux',
   windows: 'rpt_sub_windows',
   virt: 'rpt_sub_virt',
   exadata: 'rpt_sub_exadata',
   openshift: 'rpt_sub_openshift',
+  executive: 'rpt_sub_executive',
 }
 
 const VIRT_CATALOG: ReportCatalogItem[] = [
@@ -76,14 +82,44 @@ const EXADATA_CATALOG: ReportCatalogItem[] = [
   { type: 'node_health', titleKey: 'rpt_node_health', icon: <Layers size={18} />, color: 'green', descKey: 'rpt_node_health_desc' },
 ]
 
-const OPENSHIFT_CATALOG: ReportCatalogItem[] = []
+const OPENSHIFT_CATALOG: ReportCatalogItem[] = [
+  { type: 'executive_summary', titleKey: 'rpt_exec', icon: <BarChart3 size={18} />, color: 'blue', descKey: 'rpt_ocp_exec_desc' },
+  { type: 'capacity', titleKey: 'rpt_capacity', icon: <Server size={18} />, color: 'purple', descKey: 'rpt_ocp_capacity_desc' },
+  { type: 'forecast', titleKey: 'rpt_forecast', icon: <TrendingUp size={18} />, color: 'cyan', descKey: 'rpt_ocp_forecast_desc' },
+  { type: 'capacity_plan', titleKey: 'rpt_capacity_plan', icon: <Layers size={18} />, color: 'blue', descKey: 'rpt_ocp_plan_desc' },
+  { type: 'risk', titleKey: 'rpt_risk', icon: <AlertTriangle size={18} />, color: 'red', descKey: 'rpt_ocp_risk_desc' },
+  { type: 'riskiest_assets', titleKey: 'rpt_riskiest', icon: <Target size={18} />, color: 'red', descKey: 'rpt_ocp_riskiest_desc' },
+  { type: 'namespace_usage', titleKey: 'rpt_ocp_ns', icon: <FolderTree size={18} />, color: 'amber', descKey: 'rpt_ocp_ns_desc' },
+  { type: 'storage', titleKey: 'rpt_ocp_storage', icon: <HardDrive size={18} />, color: 'orange', descKey: 'rpt_ocp_storage_desc' },
+  { type: 'workload_health', titleKey: 'rpt_ocp_workload', icon: <Zap size={18} />, color: 'green', descKey: 'rpt_ocp_workload_desc' },
+  { type: 'vm_health', titleKey: 'rpt_ocp_vm', icon: <Cpu size={18} />, color: 'teal', descKey: 'rpt_ocp_vm_desc' },
+  { type: 'compliance_update', titleKey: 'rpt_ocp_compliance', icon: <ShieldCheck size={18} />, color: 'teal', descKey: 'rpt_ocp_compliance_desc' },
+  { type: 'operations', titleKey: 'rpt_ops', icon: <Activity size={18} />, color: 'indigo', descKey: 'rpt_ocp_ops_desc' },
+  { type: 'mtv_migration', titleKey: 'rpt_mtv_migration', icon: <ArrowRightLeft size={18} />, color: 'emerald', descKey: 'rpt_mtv_migration_desc' },
+  { type: 'mtv_readiness', titleKey: 'rpt_mtv_readiness', icon: <ClipboardCheck size={18} />, color: 'emerald', descKey: 'rpt_mtv_readiness_desc' },
+]
 
-export const PLATFORM_REPORT_CATALOGS: Record<PlatformKey, ReportCatalogItem[]> = {
+const EXECUTIVE_CATALOG: ReportCatalogItem[] = [
+  { type: 'executive_summary', titleKey: 'rpt_x_exec', icon: <BarChart3 size={18} />, color: 'blue', descKey: 'rpt_x_exec_desc' },
+  { type: 'capacity', titleKey: 'rpt_capacity', icon: <Server size={18} />, color: 'purple', descKey: 'rpt_x_capacity_desc' },
+  { type: 'forecast', titleKey: 'rpt_forecast', icon: <TrendingUp size={18} />, color: 'cyan', descKey: 'rpt_x_forecast_desc' },
+  { type: 'risk', titleKey: 'rpt_risk', icon: <AlertTriangle size={18} />, color: 'red', descKey: 'rpt_x_risk_desc' },
+  { type: 'riskiest_assets', titleKey: 'rpt_riskiest', icon: <Target size={18} />, color: 'red', descKey: 'rpt_x_riskiest_desc' },
+  { type: 'operations', titleKey: 'rpt_ops', icon: <Activity size={18} />, color: 'indigo', descKey: 'rpt_x_ops_desc' },
+  { type: 'sla', titleKey: 'rpt_sla_linux', icon: <CheckCircle2 size={18} />, color: 'green', descKey: 'rpt_x_sla_desc' },
+  { type: 'patch_compliance', titleKey: 'rpt_x_patch', icon: <RefreshCw size={18} />, color: 'orange', descKey: 'rpt_x_patch_desc' },
+  { type: 'reclaim', titleKey: 'rpt_x_reclaim', icon: <PackageOpen size={18} />, color: 'amber', descKey: 'rpt_x_reclaim_desc' },
+  { type: 'monitoring_coverage', titleKey: 'rpt_mon', icon: <Radar size={18} />, color: 'cyan', descKey: 'rpt_x_mon_desc' },
+  { type: 'migration', titleKey: 'rpt_x_migration', icon: <ArrowRightLeft size={18} />, color: 'emerald', descKey: 'rpt_x_migration_desc' },
+]
+
+export const PLATFORM_REPORT_CATALOGS: Record<ReportPlatformKey, ReportCatalogItem[]> = {
   linux: LINUX_CATALOG,
   windows: WINDOWS_CATALOG,
   virt: VIRT_CATALOG,
   exadata: EXADATA_CATALOG,
   openshift: OPENSHIFT_CATALOG,
+  executive: EXECUTIVE_CATALOG,
 }
 
 /** Rapor kartındaki ⓘ metni — "bu rapor hangi matematikle hesaplanıyor?".
@@ -114,14 +150,18 @@ const REPORT_METHODOLOGY_KEYS: Record<string, TranslationKey> = {
 }
 
 export function reportMethodologyKey(
-  platform: PlatformKey,
+  platform: ReportPlatformKey,
   reportType: string,
 ): TranslationKey | undefined {
+  // OpenShift ve Yönetici raporları genel şemadadır; hesaplama yöntemi rapor yükündeki
+  // `methodology` alanında gelir. Tür bazlı yedek metinler virt/Linux'a özeldir → burada kullanılmaz.
+  if (platform === 'openshift' || platform === 'executive') return undefined
   return REPORT_METHODOLOGY_KEYS[`${platform}:${reportType}`]
     || REPORT_METHODOLOGY_KEYS[reportType]
 }
 
-export function reportsApiBase(platform: PlatformKey): string {
+export function reportsApiBase(platform: ReportPlatformKey): string {
+  if (platform === 'executive') return '/executive-reports'
   return platform === 'virt'
     ? '/hypervisors/reports'
     : `/platform-reports/${platform}`

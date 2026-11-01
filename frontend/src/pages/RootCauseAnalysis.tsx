@@ -124,7 +124,7 @@ function LLMSection({ title, items, accent }: { title: string; items?: string[];
       <ul className="space-y-1.5">
         {items.map((item, i) => (
           <li key={i} className="flex gap-2 text-sm leading-relaxed" style={{ color: 'rgba(226,232,240,0.88)' }}>
-            <span className="flex-shrink-0 mt-0.5" style={{ color: accent }}>▸</span>
+            <span className="shrink-0 mt-0.5" style={{ color: accent }}>▸</span>
             <span>{item}</span>
           </li>
         ))}
@@ -193,7 +193,7 @@ function AnalysisCard({ result }: { result: LogAnalysisResult }) {
           <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: NEON.green }}>
             {t('ops_recommended')}
             {hasApproval && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium normal-case"
+              <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-medium normal-case"
                 style={{ background: 'rgba(251,191,36,0.12)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.25)' }}>
                 {t('ev_approval_needed')}
               </span>
@@ -202,9 +202,9 @@ function AnalysisCard({ result }: { result: LogAnalysisResult }) {
           <ol className="space-y-2">
             {result.recommendations.map((rec, i) => (
               <li key={i} className="flex gap-2.5 items-start">
-                <span className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold"
+                <span className="mt-0.5 shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold"
                   style={{ background: 'rgba(34,197,94,0.14)', color: NEON.green }}>{i + 1}</span>
-                <code className="text-[12px] leading-relaxed font-mono px-1.5 py-0.5 rounded"
+                <code className="text-[12px] leading-relaxed font-mono px-1.5 py-0.5 rounded-sm"
                   style={{ background: 'rgba(0,0,0,0.25)', color: 'rgba(226,232,240,0.9)' }}>{rec}</code>
               </li>
             ))}
@@ -292,7 +292,7 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
     border: '1px solid rgba(255,255,255,0.08)',
     color: 'rgba(226,232,240,0.9)',
   }
-  const inputCls = "w-full text-sm px-3 py-2 rounded-[6px] outline-none focus:border-cyan-500/40"
+  const inputCls = "w-full text-sm px-3 py-2 rounded-[6px] outline-hidden focus:border-cyan-500/40"
 
   return (
     <div className="space-y-5">
@@ -318,7 +318,7 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
             <select
               value={serverIdA}
               onChange={e => { setServerIdA(e.target.value); setSearchA('') }}
-              className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
+              className="w-full text-sm px-3 py-2 rounded-[6px] outline-hidden"
               style={{ ...inputStyle, colorScheme: 'dark' }}
             >
               <option value="">{t('ana_pick_server')}</option>
@@ -337,13 +337,13 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
             <div>
               <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_start')}</div>
               <input type="datetime-local" value={sinceA} onChange={e => setSinceA(e.target.value)}
-                className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-none"
+                className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-hidden"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.8)', colorScheme: 'dark' }} />
             </div>
             <div>
               <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_end')}</div>
               <input type="datetime-local" value={untilA} onChange={e => setUntilA(e.target.value)}
-                className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-none"
+                className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-hidden"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.8)', colorScheme: 'dark' }} />
             </div>
           </div>
@@ -370,7 +370,7 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
             <select
               value={serverIdB}
               onChange={e => { setServerIdB(e.target.value); setSearchB('') }}
-              className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
+              className="w-full text-sm px-3 py-2 rounded-[6px] outline-hidden"
               style={{ ...inputStyle, colorScheme: 'dark' }}
             >
               <option value="">{t('ana_pick_server')}</option>
@@ -389,13 +389,13 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
             <div>
               <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_start')}</div>
               <input type="datetime-local" value={sinceB} onChange={e => setSinceB(e.target.value)}
-                className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-none"
+                className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-hidden"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.8)', colorScheme: 'dark' }} />
             </div>
             <div>
               <div className="text-[10px] mb-1" style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_end')}</div>
               <input type="datetime-local" value={untilB} onChange={e => setUntilB(e.target.value)}
-                className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-none"
+                className="w-full text-xs px-2 py-1.5 rounded-[6px] outline-hidden"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.8)', colorScheme: 'dark' }} />
             </div>
           </div>
@@ -408,7 +408,7 @@ function ComparePanel({ platform }: { platform: PlatformAiopsProps['platform'] }
           {t('ana_extra_ctx')}
         </div>
         <textarea value={context} onChange={e => setContext(e.target.value)} rows={3}
-          className="w-full text-sm px-3 py-2 rounded-[6px] outline-none resize-none"
+          className="w-full text-sm px-3 py-2 rounded-[6px] outline-hidden resize-none"
           style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(226,232,240,0.8)' }}
           placeholder={t('ana_ctx_ph')} />
       </div>
@@ -602,7 +602,7 @@ function AWRPanel() {
             onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(f, setContent, setFilename) }} />
           <div className="text-[10px]" style={{ color: 'rgba(148,163,184,0.4)' }}>{t('ana_or_paste')}</div>
           <textarea value={content} onChange={e => { setContent(e.target.value); setFilename(prev => prev || 'paste.txt') }} rows={4}
-            className="w-full text-xs px-3 py-2 rounded-[6px] outline-none resize-none font-mono"
+            className="w-full text-xs px-3 py-2 rounded-[6px] outline-hidden resize-none font-mono"
             style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(226,232,240,0.7)' }}
             placeholder={t('ana_awr_paste')} />
         </div>
@@ -951,10 +951,10 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
                 style={{ color: 'rgba(148,163,184,0.75)', fontSize: 13 }}>
                 <div
                   onClick={() => setHideOffline(h => !h)}
-                  className="relative w-9 h-5 rounded-full transition-colors cursor-pointer flex-shrink-0"
+                  className="relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0"
                   style={{ background: hideOffline ? 'rgba(6,182,212,0.5)' : 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.1)' }}
                 >
-                  <div className="absolute top-0.5 transition-all w-4 h-4 rounded-full bg-white shadow"
+                  <div className="absolute top-0.5 transition-all w-4 h-4 rounded-full bg-white shadow-sm"
                     style={{ left: hideOffline ? '18px' : '2px' }} />
                 </div>
                 <span>{t('ana_hide_offline')}</span>
@@ -976,24 +976,24 @@ const RootCauseAnalysis: React.FC<PlatformAiopsProps & { hideHeader?: boolean }>
                 return (
                   <div key={event.id} className="cyber-card overflow-hidden transition-all">
                     <div className="flex items-start gap-3 p-4">
-                      <div className="mt-0.5 flex-shrink-0">
+                      <div className="mt-0.5 shrink-0">
                         <div className="w-2 h-2 rounded-full mt-1.5"
                           style={{ background: event.severity === 'critical' ? NEON.red : event.severity === 'warning' ? NEON.orange : NEON.cyan, boxShadow: `0 0 6px ${event.severity === 'critical' ? NEON.red : event.severity === 'warning' ? NEON.orange : NEON.cyan}` }} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2 mb-1">
                           <SeverityBadge severity={event.severity} />
-                          <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(148,163,184,0.6)' }}>{event.event_type}</span>
+                          <span className="text-[11px] px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(148,163,184,0.6)' }}>{event.event_type}</span>
                           {event.server_name && <span className="text-[11px]" style={{ color: NEON.cyan }}>{event.server_name}</span>}
                         </div>
                         <p className="text-sm font-medium leading-snug" style={{ color: 'rgba(226,232,240,0.9)' }}>{event.title}</p>
                         {event.description && <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'rgba(148,163,184,0.55)' }}>{event.description}</p>}
                         <p className="text-[11px] mt-1" style={{ color: 'rgba(148,163,184,0.4)' }}>{event.created_at ? new Date(event.created_at).toLocaleString('tr-TR') : '—'}</p>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="flex items-center gap-2 shrink-0">
                         {state?.result && (
                           <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(event.id) ? n.delete(event.id) : n.add(event.id); return n })}
-                            className="text-[11px] px-2 py-1 rounded transition-colors"
+                            className="text-[11px] px-2 py-1 rounded-sm transition-colors"
                             style={{ color: NEON.cyan, border: `1px solid rgba(6,182,212,0.2)`, background: 'rgba(6,182,212,0.05)' }}>
                             {isExpanded ? t('ana_hide') : t('ana_show_result')}
                           </button>

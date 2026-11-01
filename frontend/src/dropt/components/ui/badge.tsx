@@ -10,14 +10,14 @@ export function Badge({
 }) {
   const styles =
     variant === "success"
-      ? "bg-emerald-500/15 text-[var(--theme-success-fg)] border-emerald-500/30"
+      ? "bg-emerald-500/15 text-(--theme-success-fg) border-emerald-500/30"
       : variant === "warning"
-        ? "bg-amber-500/15 text-[var(--theme-warning-fg)] border-amber-500/30"
+        ? "bg-amber-500/15 text-(--theme-warning-fg) border-amber-500/30"
         : variant === "danger"
-          ? "bg-red-500/15 text-[var(--theme-danger-fg)] border-red-500/30"
+          ? "bg-red-500/15 text-(--theme-danger-fg) border-red-500/30"
           : variant === "muted"
-            ? "bg-[var(--color-muted)] text-[var(--color-muted-foreground)] border-[var(--color-border)]"
-            : "bg-[var(--color-primary)]/15 text-[var(--theme-success-fg)] border-[var(--color-primary)]/30";
+            ? "bg-(--color-muted) text-(--color-muted-foreground) border-(--color-border)"
+            : "bg-(--color-primary)/15 text-(--theme-success-fg) border-(--color-primary)/30";
 
   return (
     <div

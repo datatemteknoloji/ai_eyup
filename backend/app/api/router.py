@@ -139,6 +139,13 @@ try:
 except Exception as e:
     logger.error(f"Could not load hw router: {e}", exc_info=True)
 
+# Faz 3b — BMC (iLO/iDRAC) uç noktaları + kimlik profilleri (okuma: hardware; yazma: admin)
+try:
+    from app.api import hw_bmc
+    api_router.include_router(hw_bmc.router, prefix="/hw/bmc", tags=["hardware"])
+except Exception as e:
+    logger.error(f"Could not load hw_bmc router: {e}", exc_info=True)
+
 # Yedek & DR görünümü (yalnız backup capability varken anlamlı)
 try:
     from app.api import backup_insights
@@ -341,6 +348,13 @@ try:
     api_router.include_router(platform_reports.router, prefix="/platform-reports", tags=["platform-reports"])
 except Exception as e:
     logger.error(f"Could not load platform_reports router: {e}", exc_info=True)
+
+# Yönetici hazır raporları — Tüm Ortamlar (executive modülü)
+try:
+    from app.api import executive_reports
+    api_router.include_router(executive_reports.router, prefix="/executive-reports", tags=["executive-reports"])
+except Exception as e:
+    logger.error(f"Could not load executive_reports router: {e}", exc_info=True)
 
 # Public (kimlik doğrulama gerektirmeyen — marka adı/logo)
 try:

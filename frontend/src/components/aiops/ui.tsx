@@ -84,7 +84,7 @@ export function Kpi({ label, value, accent = NEON.cyan, active, onClick }: {
 export function SeverityBadge({ severity }: { severity: string }) {
   const c = sevColor(severity)
   return (
-    <span className="px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap"
+    <span className="px-2 py-0.5 rounded-sm text-[11px] font-semibold whitespace-nowrap"
       style={{ background: `rgba(${rgb(c)},0.14)`, color: c, border: `1px solid rgba(${rgb(c)},0.3)` }}>
       {SEV_LABEL[severity?.toLowerCase()] || severity}
     </span>
@@ -118,7 +118,7 @@ export function SearchInput({ value, onChange, placeholder, width = 'w-56' }: {
         <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
       </svg>
       <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none transition-colors"
+        className="w-full rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-hidden transition-colors"
         style={{ background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.2)' }} />
     </div>
   )
@@ -128,7 +128,7 @@ export function Select({ value, onChange, children }: {
 }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)}
-      className="rounded-lg px-3 py-2 text-sm text-white focus:outline-none transition-colors"
+      className="rounded-lg px-3 py-2 text-sm text-white focus:outline-hidden transition-colors"
       style={{ background: 'var(--bg-deep)', border: '1px solid rgba(99,130,194,0.2)' }}>
       {children}
     </select>
@@ -174,7 +174,7 @@ export function ActionMenu({ items, label }: { items: MenuItem[]; label?: string
         <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
       </button>
       {open && (
-        <div ref={menuRef} className="fixed z-[100] py-1 rounded-lg shadow-2xl animate-fade-in"
+        <div ref={menuRef} className="fixed z-100 py-1 rounded-lg shadow-2xl animate-fade-in"
           style={{ top: pos.top, left: pos.left, width: 180, background: 'var(--bg-card2)', border: '1px solid rgba(99,130,194,0.25)' }}>
           {visible.map((it, i) => (
             <button key={i} onClick={() => { it.onClick(); setOpen(false) }}
@@ -204,7 +204,7 @@ export function Tabs({ tabs, active, onChange }: {
             style={{ background: on ? 'rgba(34,211,238,0.12)' : 'transparent', color: on ? NEON.cyan : 'rgba(148,163,184,0.7)' }}>
             {t.label}
             {t.count != null && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold"
+              <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-bold"
                 style={{ background: on ? 'rgba(34,211,238,0.2)' : 'rgba(255,255,255,0.06)', color: on ? NEON.cyan : 'rgba(148,163,184,0.6)' }}>
                 {t.count}
               </span>
@@ -254,15 +254,15 @@ export function Modal({ title, subtitle, onClose, children, footer, maxWidth = '
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
       <div className={`cyber-card w-full ${maxWidth} max-h-[88vh] flex flex-col shadow-2xl animate-fade-in`} onClick={e => e.stopPropagation()}>
-        <div className="px-5 py-4 flex items-start justify-between flex-shrink-0" style={{ borderBottom: '1px solid rgba(99,130,194,0.12)' }}>
+        <div className="px-5 py-4 flex items-start justify-between shrink-0" style={{ borderBottom: '1px solid rgba(99,130,194,0.12)' }}>
           <div className="min-w-0">
             <h3 className="text-white font-semibold text-sm">{title}</h3>
             {subtitle && <p className="text-xs mt-0.5" style={{ color: 'rgba(148,163,184,0.6)' }}>{subtitle}</p>}
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none flex-shrink-0 ml-3">&times;</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none shrink-0 ml-3">&times;</button>
         </div>
         <div className="flex-1 overflow-y-auto">{children}</div>
-        {footer && <div className="px-5 py-3 flex-shrink-0" style={{ borderTop: '1px solid rgba(99,130,194,0.12)' }}>{footer}</div>}
+        {footer && <div className="px-5 py-3 shrink-0" style={{ borderTop: '1px solid rgba(99,130,194,0.12)' }}>{footer}</div>}
       </div>
     </div>
   )

@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Monitor, Cloud, Brain, ClipboardList,
   Bot, Zap, RefreshCw, Package, Database, Activity,
   ScrollText, Settings, LogOut, ChevronRight, ChevronLeft,
-  BarChart3, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
+  BarChart3, FileBarChart2, Server, Shield, Layers, FileUp, Wrench, HardDrive, Users,
   KeyRound, X, Check, AlertTriangle, Crown, Boxes, Moon, Sun, Languages, Star,
   Gauge, Recycle, ShieldCheck, GitCompare, Workflow, ListChecks, PlayCircle, Cpu,
 } from 'lucide-react'
@@ -80,13 +80,13 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
               <label className="text-xs font-medium text-slate-400 mb-1.5 block">{t('pw_new')}</label>
               <input value={pw} onChange={e => setPw(e.target.value)} type="password"
                 placeholder={t('pw_placeholder')} required autoFocus
-                className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+                className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50" />
             </div>
             <div>
               <label className="text-xs font-medium text-slate-400 mb-1.5 block">{t('pw_new_again')}</label>
               <input value={pw2} onChange={e => setPw2(e.target.value)} type="password"
                 placeholder={t('pw_repeat_placeholder')} required
-                className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+                className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50" />
             </div>
             {error && (
               <p className="text-sm text-red-400 flex items-center gap-1.5">
@@ -171,7 +171,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { theme, toggleTheme } = useTheme()
   const { t, locale, setLocale } = useLocale()
   const { appName, logoUrl, version } = useBranding()
-  const { hasBackup, hasHw } = useCapabilities()
+  const { hasBackup, hasHw, hasAutomic, hasCentrify } = useCapabilities()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -240,6 +240,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const virtAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('virt', virtOpsSummary, t))
   const windowsAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('windows', windowsOpsSummary, t))
   const exadataAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('exadata', exadataOpsSummary, t))
+  const openshiftAiopsLinks = toLinkChildren(buildPlatformAiopsChildren('openshift', openshiftOpsSummary, t))
 
   let menuItems: MenuItem[] = [
     { type: 'link', path: '/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={18} /> },
@@ -248,6 +249,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       moduleIds: ['executive', 'ai_automation'],
       children: [
         { type: 'link', path: '/executive', name: t('nav_executive_reports'), icon: <BarChart3 size={15} />, moduleId: 'executive' },
+        { type: 'link', path: '/executive/infra-reports', name: t('nav_exec_infra_reports'), icon: <FileBarChart2 size={15} />, moduleId: 'executive' },
         { type: 'link', path: '/chat', name: t('nav_unified_chat'), icon: <Bot size={15} />, moduleIds: ['ai_automation', 'executive'] },
       ],
     },
@@ -337,22 +339,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       type: 'group', key: 'openshift', name: t('nav_openshift'), icon: <Boxes size={18} />, moduleId: 'openshift',
       children: [
-        {
-          type: 'link', path: '/openshift/ops', name: t('nav_command_center'), icon: <Zap size={15} />,
-          badge: () => {
-            const n = openshiftOpsSummary?.critical ?? 0
-            if (n <= 0) return null
-            return (
-              <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
-                {n > 99 ? '99+' : n}
-              </span>
-            )
-          },
-        },
+        { type: 'link', path: '/openshift/dashboard', name: t('nav_dashboard'), icon: <LayoutDashboard size={15} /> },
         { type: 'link', path: '/openshift', name: t('nav_inventory'), icon: <LayoutDashboard size={15} /> },
         { type: 'link', path: '/openshift/vms', name: t('nav_virtual_machines'), icon: <Monitor size={15} /> },
         { type: 'link', path: '/openshift/monitoring', name: t('nav_ocp_monitoring'), icon: <Activity size={15} /> },
         { type: 'link', path: '/openshift/access', name: t('nav_ocp_access'), icon: <Users size={15} /> },
+        { type: 'link', path: '/openshift/reports', name: t('nav_infra_reports'), icon: <BarChart3 size={15} /> },
         {
           type: 'subgroup', key: 'openshift-insights', name: t('nav_insights_group'), icon: <Shield size={15} />,
           moduleId: 'openshift', adminOnly: true,
@@ -364,52 +356,33 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           ],
         },
         {
-          type: 'link', path: '/openshift/events', name: t('nav_events'), icon: <ClipboardList size={15} />,
-          badge: () => {
-            const n = openshiftOpsSummary?.warning ?? 0
-            if (n <= 0) return null
-            return (
-              <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
-                {n > 99 ? '99+' : n}
-              </span>
-            )
-          },
+          type: 'subgroup', key: 'openshift-aiops', name: t(PLATFORM_AIOPS_LABEL_KEY.openshift), icon: <Brain size={15} />,
+          moduleId: 'openshift',
+          badge: aiopsTotalBadge(openshiftOpsSummary),
+          children: openshiftAiopsLinks,
         },
-        {
-          type: 'link', path: '/openshift/incidents', name: t('nav_incidents'), icon: <AlertTriangle size={15} />,
-          badge: () => {
-            const n = openshiftOpsSummary?.open_incidents ?? 0
-            if (n <= 0) return null
-            return (
-              <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
-                {n > 99 ? '99+' : n}
-              </span>
-            )
-          },
-        },
-        { type: 'link', path: '/openshift/chat', name: t('nav_assistant'), icon: <Brain size={15} /> },
       ],
     },
     {
       type: 'group', key: 'level1', name: t('nav_level1'), icon: <Wrench size={18} />, moduleId: 'level1',
       children: [
         { type: 'link', path: '/level1', name: t('nav_ops_center'), icon: <Wrench size={15} /> },
-        { type: 'link', path: '/level1/centrify', name: t('nav_centrify'), icon: <KeyRound size={15} /> },
+        ...(hasCentrify ? [{ type: 'link' as const, path: '/level1/centrify', name: t('nav_centrify'), icon: <KeyRound size={15} /> }] : []),
         { type: 'link', path: '/level1/jobs', name: t('nav_jobs'), icon: <ClipboardList size={15} /> },
         { type: 'link', path: '/level1/audit', name: t('nav_audit'), icon: <ScrollText size={15} />, adminOnly: true },
         { type: 'link', path: '/level1/settings', name: t('nav_settings'), icon: <Settings size={15} />, adminOnly: true },
       ],
     },
-    {
-      type: 'group', key: 'automation', name: t('nav_automation'), icon: <Workflow size={18} />, moduleId: 'automation',
+    ...(hasAutomic ? [{
+      type: 'group' as const, key: 'automation', name: t('nav_automation'), icon: <Workflow size={18} />, moduleId: 'automation',
       children: [
-        { type: 'link', path: '/automation', name: t('nav_automation_overview'), icon: <LayoutDashboard size={15} /> },
-        { type: 'link', path: '/automation/executions', name: t('nav_automation_executions'), icon: <ListChecks size={15} /> },
-        { type: 'link', path: '/automation/active', name: t('nav_automation_active'), icon: <PlayCircle size={15} /> },
-        { type: 'link', path: '/automation/infrastructure', name: t('nav_automation_infrastructure'), icon: <Server size={15} /> },
-        { type: 'link', path: '/automation/chat', name: t('nav_automation_chat'), icon: <Brain size={15} /> },
+        { type: 'link' as const, path: '/automation', name: t('nav_automation_overview'), icon: <LayoutDashboard size={15} /> },
+        { type: 'link' as const, path: '/automation/executions', name: t('nav_automation_executions'), icon: <ListChecks size={15} /> },
+        { type: 'link' as const, path: '/automation/active', name: t('nav_automation_active'), icon: <PlayCircle size={15} /> },
+        { type: 'link' as const, path: '/automation/infrastructure', name: t('nav_automation_infrastructure'), icon: <Server size={15} /> },
+        { type: 'link' as const, path: '/automation/chat', name: t('nav_automation_chat'), icon: <Brain size={15} /> },
       ],
-    },
+    }] : []),
     {
       type: 'group', key: 'integrations', name: t('nav_integrations'), icon: <FileUp size={18} />, moduleId: 'integrations',
       children: [
@@ -447,6 +420,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const favoriteAllowed = (path: string) => {
     if (!path.startsWith('/') || path === '/login') return false
+    if (path.startsWith('/automation') && !hasAutomic) return false
+    if (path.startsWith('/level1/centrify') && !hasCentrify) return false
     const link = catalogLinks.find(l => l.path === path)
     if (!link) return true
     return childVisible(link, hasModule, isAdmin)
@@ -528,13 +503,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               : 'px-3 py-1.5 text-xs leading-snug [&_svg]:h-3.5 [&_svg]:w-3.5'
           } ${
             childActive
-              ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow shadow-blue-500/20'
+              ? 'bg-linear-to-r from-blue-600 to-blue-700 text-white shadow-sm shadow-blue-500/20'
               : isDeep
-                ? 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                ? 'text-(--text-muted) hover:text-(--text-secondary) hover:bg-(--bg-hover)'
+                : 'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--bg-hover)'
           }`}
         >
-          <span className="flex-shrink-0 text-current">{child.icon}</span>
+          <span className="shrink-0 text-current">{child.icon}</span>
           <span className={`truncate flex-1 ${isDeep ? 'font-normal' : 'font-medium'}`}>{child.name}</span>
           {badge}
         </Link>
@@ -560,14 +535,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           onClick={() => toggleGroup(child.key, subActive)}
           className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 text-xs leading-snug [&_svg]:h-3.5 [&_svg]:w-3.5 ${
             subActive
-              ? 'text-[var(--text-primary)] bg-[var(--bg-hover)]'
-              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+              ? 'text-(--text-primary) bg-(--bg-hover)'
+              : 'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--bg-hover)'
           }`}
         >
-          <span className="flex-shrink-0 text-current">{child.icon}</span>
+          <span className="shrink-0 text-current">{child.icon}</span>
           <span className="font-medium truncate flex-1 text-left">{child.name}</span>
           {subBadge}
-          <ChevronRight size={11} className={`text-slate-500 transition-transform duration-200 flex-shrink-0 ${isSubOpen ? 'rotate-90' : ''}`} />
+          <ChevronRight size={11} className={`text-slate-500 transition-transform duration-200 shrink-0 ${isSubOpen ? 'rotate-90' : ''}`} />
         </button>
         {isSubOpen && (
           <ul className="mt-0.5 ml-2 pl-2 border-l border-slate-700/40 space-y-0.5">
@@ -594,11 +569,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           onClick={() => sidebarOpen && toggleGroup(item.key, groupActive)}
           className={`w-full flex items-center px-3 py-2 rounded-lg transition-all duration-200 ${
             groupActive
-              ? 'text-[var(--text-primary)] bg-[var(--bg-hover)]'
-              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+              ? 'text-(--text-primary) bg-(--bg-hover)'
+              : 'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--bg-hover)'
           }`}
         >
-          <span className="flex-shrink-0 text-current">{item.icon}</span>
+          <span className="shrink-0 text-current">{item.icon}</span>
           {sidebarOpen && (
             <>
               <span className="font-semibold ml-3 flex-1 text-left text-sm tracking-tight">{item.name}</span>
@@ -629,11 +604,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   title={`${item.name} — ${child.name}`}
                   className={`flex items-center justify-center px-3 py-2 rounded-lg transition-all duration-200 ${
                     childActive
-                      ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                      ? 'bg-linear-to-r from-blue-600 to-blue-700 text-white'
+                      : 'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--bg-hover)'
                   }`}
                 >
-                  <span className="flex-shrink-0 text-current">{child.icon}</span>
+                  <span className="shrink-0 text-current">{child.icon}</span>
                 </Link>
               )
             })}
@@ -647,12 +622,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     <div className="h-screen flex overflow-hidden" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       {/* Sidebar — viewport'a sabit; yalnızca iç menü kayar */}
       <aside
-        className={`app-sidebar ${sidebarOpen ? 'w-60' : 'w-16'} h-full border-r transition-all duration-300 flex flex-col flex-shrink-0`}
+        className={`app-sidebar ${sidebarOpen ? 'w-60' : 'w-16'} h-full border-r transition-all duration-300 flex flex-col shrink-0`}
         style={{ background: 'var(--bg-surface)', borderColor: 'var(--border-strong)' }}
       >
         {/* Logo */}
         <div
-          className={`${sidebarOpen ? 'min-h-[5.5rem] py-3' : 'h-14'} flex items-start justify-between px-3 border-b flex-shrink-0 gap-1`}
+          className={`${sidebarOpen ? 'min-h-[5.5rem] py-3' : 'h-14'} flex items-start justify-between px-3 border-b shrink-0 gap-1`}
           style={{ borderColor: 'var(--border-strong)' }}
         >
           {sidebarOpen && (
@@ -664,7 +639,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   className="h-12 w-auto max-w-full object-contain"
                 />
               ) : (
-                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-sky-600 rounded-xl flex items-center justify-center">
+                <div className="w-12 h-12 bg-linear-to-br from-blue-500 to-sky-600 rounded-xl flex items-center justify-center">
                   <span className="text-white font-bold text-sm">DT</span>
                 </div>
               )}
@@ -673,14 +648,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           )}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`p-1.5 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0 ${!sidebarOpen ? 'mx-auto mt-2' : ''}`}
+            className={`p-1.5 rounded-lg hover:bg-(--bg-hover) text-(--text-secondary) hover:text-(--text-primary) transition-colors shrink-0 ${!sidebarOpen ? 'mx-auto mt-2' : ''}`}
           >
             {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
           </button>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 py-3 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
+        <nav className="flex-1 py-3 overflow-y-auto">
           <ul className="space-y-0.5 px-2">
             {menuItems.map((item, idx) => {
               if (item.type === 'section') {
@@ -708,11 +683,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       title={!sidebarOpen ? item.name : undefined}
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 ${
                         active
-                          ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-500/25'
-                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                          ? 'bg-linear-to-r from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-500/25'
+                          : 'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--bg-hover)'
                       }`}
                     >
-                      <span className="flex-shrink-0 text-current">{item.icon}</span>
+                      <span className="shrink-0 text-current">{item.icon}</span>
                       {sidebarOpen && <span className="font-semibold text-sm tracking-tight truncate">{item.name}</span>}
                     </Link>
                   </li>
@@ -731,7 +706,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </nav>
 
         {/* Footer */}
-        <div className="p-3 border-t border-slate-700 flex-shrink-0">
+        <div className="p-3 border-t border-slate-700 shrink-0">
           {sidebarOpen && (
             <div className="text-xs text-slate-500">
               <p>{appName}{version ? ` v${version}` : ''}</p>
@@ -744,7 +719,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Top Bar */}
         <header
-          className="h-14 border-b flex items-center justify-between px-5 flex-shrink-0"
+          className="h-14 border-b flex items-center justify-between px-5 shrink-0"
           style={{ background: 'var(--bg-surface)', borderColor: 'var(--border-strong)' }}
         >
           <div className="flex min-w-0 flex-1 items-center gap-3 pr-4">
@@ -765,7 +740,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               className={`shrink-0 rounded-lg p-1.5 transition-colors ${
                 isCurrentFavorite
                   ? 'text-amber-400 hover:bg-amber-500/10'
-                  : 'text-slate-500 hover:text-amber-400 hover:bg-[var(--bg-hover)]'
+                  : 'text-slate-500 hover:text-amber-400 hover:bg-(--bg-hover)'
               }`}
             >
               <Star size={16} fill={isCurrentFavorite ? 'currentColor' : 'none'} />
@@ -810,7 +785,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     <div className="text-[10px] uppercase" style={{ color: 'var(--text-muted)' }}>{user?.role || ''}</div>
                   </div>
                 )}
-                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-sky-500 rounded-full flex items-center justify-center">
+                <div className="w-8 h-8 bg-linear-to-br from-blue-500 to-sky-500 rounded-full flex items-center justify-center">
                   <span className="text-white text-sm font-medium">
                     {(user?.username || 'A').charAt(0).toUpperCase()}
                   </span>
@@ -830,7 +805,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     </div>
                     <button
                       onClick={() => { toggleTheme(); }}
-                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-(--bg-hover)"
                       style={{ color: 'var(--text-secondary)' }}
                     >
                       {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
@@ -838,7 +813,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     </button>
                     <button
                       onClick={() => { setLocale(locale === 'tr' ? 'en' : 'tr') }}
-                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-(--bg-hover)"
                       style={{ color: 'var(--text-secondary)' }}
                     >
                       <Languages size={14} />
@@ -846,7 +821,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     </button>
                     <button
                       onClick={() => { setUserMenuOpen(false); setShowChangePassword(true) }}
-                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-(--bg-hover)"
                       style={{ color: 'var(--text-secondary)' }}
                     >
                       <KeyRound size={14} /> {t('change_password')}
@@ -855,7 +830,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       <Link
                         to="/settings"
                         onClick={() => setUserMenuOpen(false)}
-                        className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-[var(--bg-hover)]"
+                        className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-(--bg-hover)"
                         style={{ color: 'var(--text-secondary)' }}
                       >
                         <Settings size={14} /> {t('nav_settings')}

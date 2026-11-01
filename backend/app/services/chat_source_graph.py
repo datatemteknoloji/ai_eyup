@@ -81,6 +81,9 @@ def execute_tools_node(state: ChatSourceState, config) -> ChatSourceState:
     deterministic_answer = ""
     inventory_kind = ""
 
+    # Adım 17: Sanallaştırma canlı akışı — araç turlarının düşünmesi/araç olayları SSE'ye aktarılır
+    from app.services.chat_live_final import current_sink
+    _sink = current_sink()
     try:
         gen = run_read_only_tool_loop(
             db,
@@ -94,9 +97,17 @@ def execute_tools_node(state: ChatSourceState, config) -> ChatSourceState:
             planning_mode=bool(state.get("planning_mode")),
             planning_depth=bool(state.get("planning_depth")),
             output_directive=state.get("output_directive"),
+            forward_thinking=bool(_sink is not None and _sink.allow_thinking),
         )
         for item in gen:
             t = item.get("type")
+            if _sink is not None:
+                if t == "thinking":
+                    _sink.thinking(item.get("text") or "")
+                elif t == "tool_call":
+                    _sink.event({"type": "tool_call", "tool": item.get("tool"), "label": item.get("label")})
+                elif t == "tool_result":
+                    _sink.event({"type": "tool_result", "tool": item.get("tool")})
             if t == "final":
                 tool_text = item.get("tool_text") or ""
                 tools_used = list(item.get("tools_used") or [])

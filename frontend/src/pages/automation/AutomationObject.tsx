@@ -84,7 +84,7 @@ export default function AutomationObject() {
       </Link>
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-300"><Box size={18} /></div>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-300"><Box size={18} /></div>
           <div className="min-w-0">
             <h1 className="text-lg font-semibold text-white break-all">{objName}</h1>
             <p className="text-xs text-slate-500">{d ? `${d.system} · ${d.object_type ?? '—'}${d.folder ? ` · ${d.folder}` : ''}` : '…'}</p>
@@ -150,7 +150,7 @@ export default function AutomationObject() {
                   <ul className="space-y-1.5">
                     {d.top_error_signatures.map(e => (
                       <li key={e.signature} className="flex items-start gap-2 text-xs">
-                        <span className="rounded bg-red-500/15 px-1.5 font-mono text-red-300">{e.count}</span>
+                        <span className="rounded-sm bg-red-500/15 px-1.5 font-mono text-red-300">{e.count}</span>
                         <span className="font-mono text-slate-300 break-all">{e.signature}</span>
                       </li>
                     ))}
@@ -199,7 +199,7 @@ export default function AutomationObject() {
               {d?.versions && d.versions.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-1">
                   {d.versions.map(v => (
-                    <span key={v.version_no} className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+                    <span key={v.version_no} className="rounded-sm bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
                       v{v.version_no} · {fmtAgo(v.fetched_at)}
                     </span>
                   ))}

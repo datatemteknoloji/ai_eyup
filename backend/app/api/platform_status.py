@@ -10,8 +10,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.core.auth import require_role
+from app.core.database import get_db, release_txn
 from app.models.user import User
 from app.services import docker_engine as docker
 from app.services import platform_status as ps
@@ -63,8 +65,10 @@ async def platform_container_logs_stream(
     request: Request,
     tail: int = Query(100, ge=1, le=1000),
     _admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
 ):
     """SSE canlı log akışı."""
+    release_txn(db, keep_loaded=True)   # canlı akış boyunca kimlik doğrulama işlemi açık kalmasın
     try:
         cid = ps.resolve_container_id(name)
     except ValueError as e:

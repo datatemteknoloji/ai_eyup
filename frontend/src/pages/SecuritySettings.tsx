@@ -80,6 +80,8 @@ function Banner({ error, info }: { error?: string | null; info?: string | null }
 function IdentityPanel() {
   const [form, setForm] = useState<Record<string, any> | null>(null)
   const [bindPw, setBindPw] = useState('')
+  const [ssoSecret, setSsoSecret] = useState('')
+  const [ssoCheck, setSsoCheck] = useState<{ ok: boolean; checks: { name: string; ok: boolean; message: string }[] } | null>(null)
   const [testUser, setTestUser] = useState({ username: '', password: '' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -128,10 +130,23 @@ function IdentityPanel() {
       }
       if (form.ad_ca_cert_pem) body.ad_ca_cert_pem = form.ad_ca_cert_pem
       if (bindPw) body.ad_bind_password = bindPw
+      if (ssoSecret) body.sso_client_secret = ssoSecret
       const saved = await api('PUT', '/identity', body)
       setForm(saved)
       setBindPw('')
+      setSsoSecret('')
       setInfo('Kimlik ayarları kaydedildi')
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const testSso = async () => {
+    setBusy(true); setError(null); setInfo(null); setSsoCheck(null)
+    try {
+      setSsoCheck(await api('POST', '/identity/test-sso'))
     } catch (e: any) {
       setError(e.message)
     } finally {
@@ -250,22 +265,72 @@ function IdentityPanel() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-white font-medium">SSO / OIDC</h3>
-            <p className="text-xs text-slate-500 mt-1">Yapılandırma saklanır; OIDC login akışı sonraki adımda etkinleştirilir.</p>
+            <p className="text-xs text-slate-500 mt-1">
+              Etkinleştirince giriş ekranında «Kurumsal SSO ile devam et» düğmesi görünür (Authorization Code + PKCE, imza doğrulamalı).
+              Yerel hesap girişi her zaman açık kalır (acil durum erişimi). SSO girişinde MFA&apos;yı kimlik sağlayıcı yapar.
+            </p>
           </div>
-          <label className="flex items-center gap-2 text-sm text-slate-300">
+          <label className="flex items-center gap-2 text-sm text-slate-300 shrink-0 ml-4">
             <input type="checkbox" checked={!!form.sso_enabled} onChange={(e) => set('sso_enabled', e.target.checked)} />
-            Etkin (yapılandırma)
+            Etkin
           </label>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Issuer" value={form.sso_issuer} onChange={(v) => set('sso_issuer', v)} />
+          <Field label="Issuer (https://…/realms/kurum)" value={form.sso_issuer} onChange={(v) => set('sso_issuer', v)} />
           <Field label="Client ID" value={form.sso_client_id} onChange={(v) => set('sso_client_id', v)} />
-          <Field label="Redirect URI" value={form.sso_redirect_uri} onChange={(v) => set('sso_redirect_uri', v)} />
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">
+              Client Secret {form.sso_client_secret_set ? '(tanımlı — değiştirmek için yazın)' : '(zorunlu)'}
+            </label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={ssoSecret}
+              onChange={(e) => setSsoSecret(e.target.value)}
+              placeholder={form.sso_client_secret_set ? '••••••••' : ''}
+              className="w-full bg-cyber-deep border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"
+            />
+          </div>
           <Field label="Scopes" value={form.sso_scopes} onChange={(v) => set('sso_scopes', v)} />
+          <div className="md:col-span-2">
+            <Field label="Redirect URI (kimlik sağlayıcıda aynen kayıtlı olmalı)" value={form.sso_redirect_uri} onChange={(v) => set('sso_redirect_uri', v)} />
+            <button
+              type="button"
+              className="mt-1 text-xs text-blue-300 hover:text-blue-200"
+              onClick={() => set('sso_redirect_uri', `${window.location.origin}/api/v1/auth/sso/callback`)}
+            >
+              Bu adresten üret: {window.location.origin}/api/v1/auth/sso/callback
+            </button>
+          </div>
         </div>
-        <button type="button" disabled={busy} onClick={save} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-50">
-          Kaydet
-        </button>
+        <div>
+          <p className="text-xs text-slate-400 mb-1">
+            Rol eşleme — kimlik sağlayıcının <code>groups</code>/<code>roles</code> değerleriyle TAM eşleşir. Hiçbir gruba uymayan kullanıcı giriş yapamaz.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Field label="Admin grubu" value={form.sso_admin_group} onChange={(v) => set('sso_admin_group', v)} />
+            <Field label="Operator grubu" value={form.sso_operator_group} onChange={(v) => set('sso_operator_group', v)} />
+            <Field label="Viewer grubu" value={form.sso_viewer_group} onChange={(v) => set('sso_viewer_group', v)} />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" disabled={busy} onClick={save} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-50">
+            Kaydet
+          </button>
+          <button type="button" disabled={busy} onClick={testSso} className="px-4 py-2 rounded-lg bg-white/[0.07] border border-slate-600 text-slate-200 text-sm disabled:opacity-50">
+            Yapılandırmayı test et
+          </button>
+          <span className="text-xs text-slate-500">Test kaydedilmiş ayarları kullanır; önce Kaydet&apos;e basın.</span>
+        </div>
+        {ssoCheck && (
+          <ul className="text-sm space-y-1" data-testid="sso-check">
+            {ssoCheck.checks.map((c) => (
+              <li key={c.name} className={c.ok ? 'text-emerald-300' : 'text-red-300'}>
+                {c.ok ? '✓' : '✗'} <span className="font-medium">{c.name}:</span> {c.message}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   )

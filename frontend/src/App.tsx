@@ -1,5 +1,6 @@
 import React, { Suspense } from 'react'
 import { lazyWithRetry as lazy } from './lib/lazyWithRetry'
+import { useCapabilities } from './hooks/useCapabilities'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './auth/AuthContext'
@@ -50,6 +51,7 @@ const ExecutiveReports = lazy(() => import('./pages/ExecutiveReports'))
 const ExadataDashboard = lazy(() => import('./pages/ExadataDashboard'))
 const OpenShiftDashboard = lazy(() => import('./pages/OpenShiftDashboard'))
 const OpenShiftExplorer = lazy(() => import('./pages/OpenShiftExplorer'))
+const OpenShiftHome = lazy(() => import('./pages/OpenShiftHome'))
 const OpenShiftMonitoring = lazy(() => import('./pages/OpenShiftMonitoring'))
 const OpenShiftAccessPage = lazy(() => import('./pages/OpenShiftAccessPage'))
 const OpenShiftVmsPage = lazy(() => import('./pages/OpenShiftVmsPage'))
@@ -91,6 +93,12 @@ const VirtInfraReportsPage = lazy(() =>
 )
 const ExadataInfraReportsPage = lazy(() =>
   import('./pages/PlatformInfraReportsPages').then((m) => ({ default: m.ExadataInfraReportsPage }))
+)
+const OpenShiftInfraReportsPage = lazy(() =>
+  import('./pages/PlatformInfraReportsPages').then((m) => ({ default: m.OpenShiftInfraReportsPage }))
+)
+const ExecutiveInfraReportsPage = lazy(() =>
+  import('./pages/PlatformInfraReportsPages').then((m) => ({ default: m.ExecutiveInfraReportsPage }))
 )
 
 const AdminDashboardPage = lazy(() =>
@@ -174,6 +182,9 @@ const OpenShiftIncidentsPage = lazy(() =>
 )
 const OpenShiftChatPage = lazy(() =>
   import('./pages/PlatformAiopsPages').then((m) => ({ default: m.OpenShiftChatPage }))
+)
+const OpenShiftAnalysisPage = lazy(() =>
+  import('./pages/PlatformAiopsPages').then((m) => ({ default: m.OpenShiftAnalysisPage }))
 )
 
 const queryClient = new QueryClient({
@@ -283,6 +294,23 @@ const RequireModule: React.FC<{ moduleId: string; children: React.ReactNode }> =
   return <>{children}</>
 }
 
+/** Donanım entegrasyonu (gerçek veya etiketli DEMO) yoksa `/hardware` doğrudan açılsa bile ana sayfaya yönlendirir. */
+const RequireHwCapability: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { hasHw, isLoading } = useCapabilities()
+  if (isLoading) return null
+  if (!hasHw) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
+/** UC4 sistemi veya Centrify bağlantısı yoksa ilgili sayfa açılmaz. */
+const RequireConfigured: React.FC<{ kind: 'automic' | 'centrify'; children: React.ReactNode }> = ({ kind, children }) => {
+  const caps = useCapabilities()
+  if (caps.isLoading) return null
+  const on = kind === 'automic' ? caps.hasAutomic : caps.hasCentrify
+  if (!on) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 const RequireAnyModule: React.FC<{ moduleIds: string[]; children: React.ReactNode }> = ({ moduleIds, children }) => {
   const { hasModule } = useAuth()
   if (!moduleIds.some(id => hasModule(id))) return <Navigate to="/" replace />
@@ -331,6 +359,7 @@ function App() {
                       <Route path="/dashboard" element={<ErrorBoundary><AdminDashboardPage /></ErrorBoundary>} />
                       <Route path="/executive" element={<RequireModule moduleId="executive"><ErrorBoundary><ExecutiveReports /></ErrorBoundary></RequireModule>} />
                       <Route path="/executive/reports" element={<Navigate to="/executive" replace />} />
+                      <Route path="/executive/infra-reports" element={<RequireModule moduleId="executive"><ErrorBoundary><ExecutiveInfraReportsPage /></ErrorBoundary></RequireModule>} />
                       <Route
                         path="/monitoring"
                         element={
@@ -397,9 +426,11 @@ function App() {
                       <Route path="/exadata/baseline" element={<Navigate to="/exadata/analysis?tab=baseline" replace />} />
 
                       <Route path="/openshift" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftExplorer /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/dashboard" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftHome /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/vms" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftVmsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/monitoring" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftMonitoring /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/access" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftAccessPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/openshift/reports" element={<RequireModule moduleId="openshift"><ErrorBoundary><OpenShiftInfraReportsPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/openshift/capacity" element={<RequireAdmin><RequireModule moduleId="openshift"><ErrorBoundary><OcpCapacityPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
                       <Route path="/openshift/reclaim" element={<RequireAdmin><RequireModule moduleId="openshift"><ErrorBoundary><OcpReclaimPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
                       <Route path="/openshift/health" element={<RequireAdmin><RequireModule moduleId="openshift"><ErrorBoundary><OcpHealthPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
@@ -408,9 +439,9 @@ function App() {
                       <Route path="/openshift/ops" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftOpsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/events" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftEventsPage /></ErrorBoundary></RequirePlatformAiops>} />
                       <Route path="/openshift/incidents" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftIncidentsPage /></ErrorBoundary></RequirePlatformAiops>} />
-                      <Route path="/openshift/analysis" element={<Navigate to="/openshift" replace />} />
-                      <Route path="/openshift/rca" element={<Navigate to="/openshift" replace />} />
-                      <Route path="/openshift/baseline" element={<Navigate to="/openshift?section=riskler" replace />} />
+                      <Route path="/openshift/analysis" element={<RequirePlatformAiops platform="openshift"><ErrorBoundary><OpenShiftAnalysisPage /></ErrorBoundary></RequirePlatformAiops>} />
+                      <Route path="/openshift/rca" element={<Navigate to="/openshift/analysis?tab=operators" replace />} />
+                      <Route path="/openshift/baseline" element={<Navigate to="/openshift/analysis?tab=risks" replace />} />
 
                       <Route path="/ops" element={<Navigate to="/linux/ops" replace />} />
                       <Route path="/events" element={<Navigate to="/linux/events" replace />} />
@@ -435,24 +466,24 @@ function App() {
                       <Route path="/integrations/openshift" element={<RequireAnyModule moduleIds={['integrations', 'openshift']}><ErrorBoundary><OpenShiftDashboard allowInventoryEdit /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/backup" element={<RequireModule moduleId="integrations"><ErrorBoundary><BackupIntegrationPage /></ErrorBoundary></RequireModule>} />
                       <Route path="/integrations/hardware" element={<RequireAdmin><RequireModule moduleId="integrations"><ErrorBoundary><HardwareIntegrationPage /></ErrorBoundary></RequireModule></RequireAdmin>} />
-                      <Route path="/hardware" element={<RequireModule moduleId="hardware"><ErrorBoundary><HardwarePage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/hardware" element={<RequireModule moduleId="hardware"><RequireHwCapability><ErrorBoundary><HardwarePage /></ErrorBoundary></RequireHwCapability></RequireModule>} />
                       <Route path="/integrations/centrify" element={<RequireAnyModule moduleIds={['integrations', 'level1']}><ErrorBoundary><CentrifySettingsPage /></ErrorBoundary></RequireAnyModule>} />
                       <Route path="/integrations/automic" element={<RequireAnyModule moduleIds={['integrations', 'automation']}><ErrorBoundary><AutomicIntegrationPage /></ErrorBoundary></RequireAnyModule>} />
-                      <Route path="/automation" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationOverview /></ErrorBoundary></RequireModule>} />
-                      <Route path="/automation/executions" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationExecutions /></ErrorBoundary></RequireModule>} />
-                      <Route path="/automation/executions/:systemId/:client/:runId" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationExecutionDetail /></ErrorBoundary></RequireModule>} />
-                      <Route path="/automation/active" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationActive /></ErrorBoundary></RequireModule>} />
-                      <Route path="/automation/objects/:systemId/:name" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationObject /></ErrorBoundary></RequireModule>} />
-                      <Route path="/automation/agents/:systemId/:name" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationAgent /></ErrorBoundary></RequireModule>} />
-                      <Route path="/automation/infrastructure" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationInfrastructure /></ErrorBoundary></RequireModule>} />
-                      <Route path="/automation/infrastructure/engines/:systemId/:ip" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationEngineServer /></ErrorBoundary></RequireModule>} />
-                      <Route path="/automation/chat" element={<RequireModule moduleId="automation"><ErrorBoundary><AutomationChat /></ErrorBoundary></RequireModule>} />
+                      <Route path="/automation" element={<RequireModule moduleId="automation"><RequireConfigured kind="automic"><ErrorBoundary><AutomationOverview /></ErrorBoundary></RequireConfigured></RequireModule>} />
+                      <Route path="/automation/executions" element={<RequireModule moduleId="automation"><RequireConfigured kind="automic"><ErrorBoundary><AutomationExecutions /></ErrorBoundary></RequireConfigured></RequireModule>} />
+                      <Route path="/automation/executions/:systemId/:client/:runId" element={<RequireModule moduleId="automation"><RequireConfigured kind="automic"><ErrorBoundary><AutomationExecutionDetail /></ErrorBoundary></RequireConfigured></RequireModule>} />
+                      <Route path="/automation/active" element={<RequireModule moduleId="automation"><RequireConfigured kind="automic"><ErrorBoundary><AutomationActive /></ErrorBoundary></RequireConfigured></RequireModule>} />
+                      <Route path="/automation/objects/:systemId/:name" element={<RequireModule moduleId="automation"><RequireConfigured kind="automic"><ErrorBoundary><AutomationObject /></ErrorBoundary></RequireConfigured></RequireModule>} />
+                      <Route path="/automation/agents/:systemId/:name" element={<RequireModule moduleId="automation"><RequireConfigured kind="automic"><ErrorBoundary><AutomationAgent /></ErrorBoundary></RequireConfigured></RequireModule>} />
+                      <Route path="/automation/infrastructure" element={<RequireModule moduleId="automation"><RequireConfigured kind="automic"><ErrorBoundary><AutomationInfrastructure /></ErrorBoundary></RequireConfigured></RequireModule>} />
+                      <Route path="/automation/infrastructure/engines/:systemId/:ip" element={<RequireModule moduleId="automation"><RequireConfigured kind="automic"><ErrorBoundary><AutomationEngineServer /></ErrorBoundary></RequireConfigured></RequireModule>} />
+                      <Route path="/automation/chat" element={<RequireModule moduleId="automation"><RequireConfigured kind="automic"><ErrorBoundary><AutomationChat /></ErrorBoundary></RequireConfigured></RequireModule>} />
                       <Route path="/ucmdb/import" element={<Navigate to="/integrations/ucmdb" replace />} />
                       <Route path="/level1" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1OpsCenter /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/ops/*" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Ops /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/console/:id" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Console /></ErrorBoundary></RequireModule>} />
                       <Route path="/level1/jobs/*" element={<RequireModule moduleId="level1"><ErrorBoundary><Level1Jobs /></ErrorBoundary></RequireModule>} />
-                      <Route path="/level1/centrify" element={<RequireModule moduleId="level1"><ErrorBoundary><CentrifyPage /></ErrorBoundary></RequireModule>} />
+                      <Route path="/level1/centrify" element={<RequireModule moduleId="level1"><RequireConfigured kind="centrify"><ErrorBoundary><CentrifyPage /></ErrorBoundary></RequireConfigured></RequireModule>} />
                       <Route path="/level1/audit" element={<RequireModule moduleId="level1"><RequireAdmin><ErrorBoundary><Level1Audit /></ErrorBoundary></RequireAdmin></RequireModule>} />
                       <Route path="/level1/settings" element={<RequireModule moduleId="level1"><RequireAdmin><ErrorBoundary><Level1Settings /></ErrorBoundary></RequireAdmin></RequireModule>} />
                       <Route path="/level1/:category" element={<Navigate to="/level1" replace />} />

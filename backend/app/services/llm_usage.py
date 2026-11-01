@@ -69,6 +69,12 @@ def record(data: Any) -> None:
         crm.record_ollama_stats(data)
     except Exception:
         pass
+    try:
+        # Çağrı etkinlik kaydına token / done_reason (tahmin yok; yalnız sağlayıcı alanları)
+        from app.services import llm_activity
+        llm_activity.note_result(data, parse_usage(data))
+    except Exception:
+        pass
     acc = _current.get()
     if acc is None:
         return

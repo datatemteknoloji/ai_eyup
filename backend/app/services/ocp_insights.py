@@ -450,6 +450,10 @@ def save_snapshots(db: Session, cluster: OpenShiftCluster, col: Dict[str, Any], 
 
 
 def run_for_cluster(db: Session, cluster: OpenShiftCluster) -> Dict[str, Any]:
+    from app.services.openshift.fake_cluster import is_fake
+    if is_fake(cluster):      # sahte test cluster'ı: canlı toplama yok, hata turu da yazılmaz
+        return {"platform": PLATFORM, "source_id": cluster.id, "source_name": cluster.name,
+                "status": "skipped", "error": None, "run_id": None}
     now = utcnow()
     run = InfraCheckRun(platform=PLATFORM, source_id=cluster.id, source_name=cluster.name, kind="full",
                         status="running", started_at=now, stats={})

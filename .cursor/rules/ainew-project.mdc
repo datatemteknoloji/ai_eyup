@@ -5,12 +5,12 @@ alwaysApply: true
 
 # ainew — AI-Powered Infrastructure Management
 
-Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvance/app`, sürüm `VERSION` (şu an 1.0.9.39). Repo: `datatemteknoloji/ai_eyup`.
+Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvance/app`, sürüm `VERSION` (şu an 1.0.9.42). Repo: `datatemteknoloji/ai_eyup`.
 
 ## Yığın
 
-- **Backend:** Python 3.11, FastAPI, SQLAlchemy 2, Alembic, Paramiko, LangGraph, pgvector
-- **Frontend:** React 18, TypeScript, Vite, Tailwind, TanStack Query, Recharts
+- **Backend:** Python 3.14, FastAPI, SQLAlchemy 2.1, Alembic, Paramiko, LangGraph 1.x, pgvector
+- **Frontend:** React 19, TypeScript 6, Vite 8, Tailwind 4, TanStack Query, Recharts (Node 26)
 - **Altyapı:** TimescaleDB (PG15), Redis 7, Prometheus, Pushgateway; Ollama isteğe bağlı (`profiles: [ollama]`)
 - **Level 1:** Dropt sidecar (`dropt_api` `:8001`, ayrı Postgres) — ainew DB ile karıştırma
 
@@ -18,7 +18,9 @@ Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvan
 
 - `backend/app/api/` — REST (`router.py` → `/api/v1`)
 - `backend/app/services/` — SSH, AIOps, agent, NLQ, hypervisor, Windows, Prometheus chat
-- `backend/app/models/` — ORM · `backend/app/core/` — config, DB, JWT, encryption
+- `backend/app/models/` — ORM · `backend/app/core/` — config, DB, JWT, encryption, `chat_executor` (sohbete ayrı iş parçacığı havuzu), `loop_watchdog` (event döngüsü tanısı)
+- `backend/app/services/chat_orchestrator/` — tur yaşam döngüsü (`service.py`, Redis akışı `events.py`, `ai_gate.py`, `progress.py`, `http_bridge.py`) · `services/chat_quality/` — kapılar, doğrulayıcı, iz (`trace.py`), sayım/varlık kuralları · `services/chat_cache_service.py` (cevap önbelleği) · `services/event_dedupe.py`
+- `scripts/chat_bench/` — sohbet kalite bench'i (`run.py`, `silence_eval.py`, `cache_eval.py`, `grounding_eval.py`, `rag_eval.py`); program/durum: `docs/chat-quality/plan.md`
 - `frontend/src/pages/` · `components/` (Layout, AIOps, `nlChatUi`, chat markdown)
 - `docs/` — mimari; `DESIGN.md` — UI (dark, blue accent, DM Sans/Mono)
 - Dağıtım: `scripts/build-distribution.sh` → `dist/ainew-<sürüm>-linux-amd64.tar.gz` (Ollama yok); GitHub **Release asset**, git’e tar koyma
@@ -38,8 +40,11 @@ Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvan
 ## Kurallar
 
 - Uygulama verisini (DB, `.env`, volume) izinsiz değiştirme/silme
+- Atlas sunucu/uygulaması (192.168.1.61) SALT-OKUNUR: değişiklik yok; kullanıcının verdiği SSH/parola/kimlik bilgilerini hiçbir dosyaya (kural, belge, betik, log) yazma
 - AI: yerel Ollama veya `REMOTE_LLM_*`; harici cloud varsayılan değil
 - Sohbet Prometheus: **yalnızca PromQL**; scrape / `prometheus.yml` / target JSON’a dokunma. Context = instance JOIN tablosu (preset / aile detayı / `node_*`).
 - UI ve API hataları çoğunlukla Türkçe
 - Ürün asistan prompt’ları: `.cursor/rules/ainew-assistant-prompts.mdc`
+- Sohbet kalite programı (Adım 0–20; durum `docs/chat-quality/plan.md`) kuralı: kapanış kriteri koddan ÖNCE `docs/chat-quality/plan.md`'ye yazılır; «Kapandı» İH (insan testi) olmadan yazılmaz; Automic (`services/automic/*`, `api/automation.py`) dokunulmaz; her adımda yedek (`/root/backup-stepN-*`); keşif/hata düzeltmesi sırasında kod kriterden önce yazıldıysa plan.md'de bunu AÇIKÇA belirt
+- `async def` yolunda SENKRON iş (LLM `generate_sync`, SQL arama, Redis SCAN, OCP/vCenter HTTP) YOK → `core/chat_executor.run_chat_io` (sohbet) veya `asyncio.to_thread` (arka plan). Ayrıntı: `ainew-backend.mdc`
 - AI sohbet/tool/RAG yaşam döngüsü değişince **aynı turda** güncelle: `docs/guides/tr/modules/ai-architecture.md`, `docs/guides/en/modules/ai-architecture.md`, `.cursor/rules/ainew-ai-architecture.mdc`. Ayarlar → Hakkında → AI Mimari PDF bu dosyalardan üretilir. Atlama.

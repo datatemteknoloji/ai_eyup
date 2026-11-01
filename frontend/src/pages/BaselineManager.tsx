@@ -54,7 +54,7 @@ const SEV_COLOR: Record<string, string> = {
 function SevBadge({ severity }: { severity: string }) {
   const color = SEV_COLOR[severity] ?? 'rgba(148,163,184,0.5)'
   return (
-    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase"
+    <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-semibold uppercase"
       style={{ background: `color-mix(in srgb, ${color} 12%, transparent)`, color, border: `1px solid color-mix(in srgb, ${color} 20%, transparent)` }}>
       {severity}
     </span>
@@ -66,7 +66,7 @@ function ChronicBadge({ days }: { days: number }) {
   const color = days >= 7 ? NEON.red : days >= 3 ? NEON.orange : 'rgba(148,163,184,0.4)'
   const label = days >= 7 ? t('ana_chronic_n', { n: days }) : days >= 3 ? t('ana_repeat_n', { n: days }) : t('ana_n_days', { n: days })
   return (
-    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-sm"
       style={{ background: `color-mix(in srgb, ${color} 10%, transparent)`, color, border: `1px solid color-mix(in srgb, ${color} 18%, transparent)` }}>
       {label}
     </span>
@@ -162,7 +162,7 @@ function SuppressModal({
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'rgba(148,163,184,0.55)' }}>{t('ana_reason_opt')}</div>
           <input value={reason} onChange={e => setReason(e.target.value)}
-            className="w-full text-sm px-3 py-2 rounded-[6px] outline-none"
+            className="w-full text-sm px-3 py-2 rounded-[6px] outline-hidden"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(226,232,240,0.9)' }}
             placeholder={t('ana_reason_ph')} />
         </div>
@@ -179,7 +179,7 @@ function SuppressModal({
         </div>
 
         {error && (
-          <div className="text-xs p-2 rounded" style={{ background: 'rgba(239,68,68,0.07)', color: NEON.red }}>{error}</div>
+          <div className="text-xs p-2 rounded-sm" style={{ background: 'rgba(239,68,68,0.07)', color: NEON.red }}>{error}</div>
         )}
 
         <div className="flex gap-2 pt-1">
@@ -314,7 +314,7 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
               {metrics.map(m => (
                 <div key={m.metric} className="cyber-card p-4 flex items-start gap-3">
                   {/* Kronik göstergesi */}
-                  <div className="flex-shrink-0 mt-0.5">
+                  <div className="shrink-0 mt-0.5">
                     <div className="w-2 h-2 rounded-full"
                       style={{
                         background: m.is_very_chronic ? NEON.red : m.is_chronic ? NEON.orange : 'rgba(148,163,184,0.3)',
@@ -327,7 +327,7 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
                       <ChronicBadge days={m.recurrence_days} />
                       <SevBadge severity={m.max_severity} />
                       {m.has_suppression && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(34,197,94,0.1)', color: NEON.green, border: '1px solid rgba(34,197,94,0.2)' }}>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(34,197,94,0.1)', color: NEON.green, border: '1px solid rgba(34,197,94,0.2)' }}>
                           {t('ana_has_rule')}
                         </span>
                       )}
@@ -374,7 +374,7 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
                 <div key={rule.id} className="cyber-card p-4 flex items-start gap-3">
                   <div className="flex-1 min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium uppercase"
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm font-medium uppercase"
                         style={{
                           background: rule.baseline_severity === null ? 'rgba(239,68,68,0.1)' : 'rgba(251,191,36,0.1)',
                           color: rule.baseline_severity === null ? NEON.red : NEON.orange,
@@ -382,7 +382,7 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
                         }}>
                         {rule.baseline_severity === null ? t('ana_full_suppress') : `Max: ${rule.baseline_severity}`}
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.5)' }}>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.5)' }}>
                         {rule.scope}
                       </span>
                       {rule.server_id && (
@@ -402,7 +402,7 @@ const BaselineManager: React.FC<PlatformAiopsProps & { hideHeader?: boolean }> =
                     </div>
                   </div>
                   <button onClick={() => deleteRule.mutate(rule.id)}
-                    className="flex-shrink-0 text-xs px-2 py-1.5 rounded transition-colors"
+                    className="shrink-0 text-xs px-2 py-1.5 rounded-sm transition-colors"
                     style={{ color: NEON.red, border: '1px solid rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.05)' }}>
                     {t('remove')}
                   </button>

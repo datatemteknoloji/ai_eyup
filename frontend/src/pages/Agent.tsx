@@ -63,8 +63,8 @@ const isToolCapable = (name: string) => {
 const riskBadge = (tool?: string) => {
   const mutating = ['clean_logs', 'restart_service', 'update_packages', 'manage_lvm'].includes(tool || '')
   return mutating
-    ? <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/40">MUTATING</span>
-    : <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">READ-ONLY</span>
+    ? <span className="px-2 py-0.5 rounded-sm text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/40">MUTATING</span>
+    : <span className="px-2 py-0.5 rounded-sm text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">READ-ONLY</span>
 }
 
 const Agent: React.FC = () => {
@@ -438,7 +438,7 @@ const Agent: React.FC = () => {
             placeholder={t('chat_agent_ph')}
             rows={2}
             disabled={loading}
-            className="flex-1 bg-cyber-card border border-white/[0.06] rounded-[10px] px-4 py-3 text-slate-200 text-sm resize-none focus:outline-none focus:border-blue-500 disabled:opacity-60"
+            className="flex-1 bg-cyber-card border border-white/[0.06] rounded-[10px] px-4 py-3 text-slate-200 text-sm resize-none focus:outline-hidden focus:border-blue-500 disabled:opacity-60"
           />
           <button
             onClick={send}

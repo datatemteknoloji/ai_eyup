@@ -13,7 +13,7 @@ export const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-[var(--color-input)] bg-[var(--color-card)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-50 [&>span]:min-w-0 [&>span]:truncate [&>span]:text-left",
+      "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-(--color-input) bg-(--color-card) px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-(--color-ring) disabled:cursor-not-allowed disabled:opacity-50 [&>span]:min-w-0 [&>span]:truncate [&>span]:text-left",
       className,
     )}
     {...props}
@@ -35,8 +35,8 @@ export const SelectContent = React.forwardRef<
       ref={ref}
       className={cn(
         // Dialog modal: body pointer-events:none — portal içeriği auto + Dialog üstü z-index
-        "pointer-events-auto relative z-[110] max-h-[min(20rem,var(--radix-select-content-available-height))] min-w-[8rem] overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-popover,#1a2540)] text-[var(--color-popover-foreground,#eef3fb)] shadow-lg",
-        position === "popper" && "w-[var(--radix-select-trigger-width)]",
+        "pointer-events-auto relative z-110 max-h-[min(20rem,var(--radix-select-content-available-height))] min-w-[8rem] overflow-hidden rounded-md border border-(--color-border) bg-(--color-popover,#1a2540) text-(--color-popover-foreground,#eef3fb) shadow-lg",
+        position === "popper" && "w-(--radix-select-trigger-width)",
         className,
       )}
       position={position}
@@ -60,7 +60,7 @@ export const SelectItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-[var(--color-accent)] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex w-full cursor-default select-none items-center rounded-xs py-1.5 pl-8 pr-2 text-sm outline-hidden focus:bg-(--color-accent) data-disabled:pointer-events-none data-disabled:opacity-50",
       className,
     )}
     {...props}

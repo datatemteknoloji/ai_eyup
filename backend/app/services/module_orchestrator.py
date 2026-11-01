@@ -53,7 +53,7 @@ _STRONG: Dict[str, Tuple[str, ...]] = {
         "openshift", "ocp", "kubernetes", "k8s", "kube", "pod", "pods",
         "namespace", "crashloop", "deployment", "statefulset", "route", "scc",
         "operator", "etcd", "oc get", "kubectl", "kubevirt", "machineconfig",
-        "clusterversion", "mtv", "migration toolkit",
+        "clusterversion", "mtv", "migration toolkit", "cronjob",
     ),
     MOD_EXADATA: (
         "exadata", "cell server", "db node", "asm diskgroup", "oracle rac cell",
@@ -95,6 +95,15 @@ _GUEST_OS_HINT = (
 _CONF_SINGLE = 0.78
 _CONF_MULTI = 0.72
 _CONF_AUTO = 0.62
+
+# «Genel durum / tüm altyapı» (güçlü modül sinyali yok): yalnız virt+linux değil, ana modüllerin TÜMÜNDEN veri toplanır (Adım 15).
+# Yalnız VERİ TOPLAMA kapsamı genişler; cevabın kısa/uzun olması (varsayılan kısa cevap kuralı) değişmez.
+_OVERVIEW_RE = re.compile(
+    r"genel\s+(?:durum|sa[ğg]l[ıi]k|bak[ıi][şs])|t[üu]m\s+altyap|altyap[ıi]\w*\s+(?:durum|sa[ğg]l[ıi]k|analiz|[öo]zet)"
+    r"|t[üu]m\s+ortam|overall|infrastructure\s+(?:status|health|overview)|environment\s+(?:status|health)",
+    re.IGNORECASE,
+)
+_OVERVIEW_MODULES = (MOD_VIRT, MOD_LINUX, MOD_WINDOWS, MOD_OPENSHIFT)
 
 # vm / vms / vmler / vmlerdeki / vm'nin … (Türkçe ekler + İngilizce çoğul)
 _VM_RE = re.compile(
@@ -146,6 +155,12 @@ def _score_modules(ml: str) -> Dict[str, float]:
         scores[MOD_LINUX] += 1.5
     if any(keyword_hit(ml, k) for k in ("mdstat", "mdadm", "systemctl", "journalctl", "systemd")):
         scores[MOD_LINUX] = max(scores[MOD_LINUX], 2.4)
+    try:
+        from app.services.chat_quality.automic_signal import automic_signal
+        if automic_signal(ml):
+            scores[MOD_AUTOMIC] = max(scores[MOD_AUTOMIC], 2.4)
+    except Exception:
+        pass
     return scores
 
 
@@ -393,6 +408,13 @@ def plan_modules(message: str, *, skip_ctx: bool = False) -> ModulePlan:
 
     # Zayıf genel kelime, güçlü/soft yok → virt+linux otomatik keşif (seçim yok)
     if not strong and not soft:
+        if _OVERVIEW_RE.search(ml):
+            return _multi_plan(
+                ml,
+                _OVERVIEW_MODULES,
+                reason="auto_explore:overview",
+                confidence=_CONF_AUTO,
+            )
         if any(w in ml for w in _WEAK):
             return _multi_plan(
                 ml,

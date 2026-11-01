@@ -74,8 +74,68 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
     "chat_ai_max_concurrent": {
         "default": 3, "type": "int", "min": 1, "max": 8,
         "group": "process", "label": "Eşzamanlı AI üretimi",
-        "help": "Aynı anda en fazla kaç LLM çağrısı. Fazlası FIFO kuyruğa alınır; sohbette sıra gösterilir.",
+        "help": "Aynı anda en fazla kaç sohbet turu LLM hattına girer. Fazlası kuyruğa alınır; sohbette sıra ve tahmini süre gösterilir. "
+                "Etkin LLM paralelliği ayrıca «Eşzamanlı LLM çağrısı sınırı» (llm_max_concurrent) ile sınırlıdır; bu değer onu "
+                "aşarsa fazla turlar LLM semaforunda bekler.",
         "env": "CHAT_AI_MAX_CONCURRENT",
+    },
+    "chat_gate_max_wait_sec": {
+        "default": 180, "type": "int", "min": 10, "max": 900,
+        "group": "process", "label": "Sohbet kuyruğu en uzun bekleme (sn)",
+        "help": "Adım 13: bir tur kapıda en fazla bu kadar bekler; dolunca kullanıcıya «sistem yoğun» mesajı gösterilir.",
+        "env": "CHAT_GATE_MAX_WAIT_SEC",
+    },
+    "chat_gate_max_queue": {
+        "default": 20, "type": "int", "min": 0, "max": 500,
+        "group": "process", "label": "Sohbet kuyruğu üst sınırı",
+        "help": "Adım 13: kuyrukta bu kadar tur bekliyorsa yeni soru beklemeden HTTP 429 «Sistem yoğun» ile reddedilir (tur oluşmaz). 0 = sınırsız.",
+        "env": "CHAT_GATE_MAX_QUEUE",
+    },
+    "chat_user_max_active_turns": {
+        "default": 2, "type": "int", "min": 0, "max": 10,
+        "group": "process", "label": "Kullanıcı başına eşzamanlı aktif sohbet turu",
+        "help": "Adım 13: bir kullanıcının aynı anda bekleyen+çalışan tur sayısı bu değeri aşarsa yeni soru HTTP 429 ile reddedilir "
+                "(çok sekme/çift gönderim bir kullanıcının tüm slotları almasını engeller). 0 = sınırsız.",
+        "env": "CHAT_USER_MAX_ACTIVE_TURNS",
+    },
+    "chat_gate_fast_bonus_sec": {
+        "default": 45, "type": "int", "min": 0, "max": 600,
+        "group": "process", "label": "Hızlı şerit avantajı (sn)",
+        "help": "Adım 13: selamlaşma ve kavramsal (önbellek adayı) sorular kuyrukta bu kadar saniye öne geçer; bu süreden uzun bekleyen "
+                "normal tur geçilmez (açlık yok). 0 = saf FIFO.",
+        "env": "CHAT_GATE_FAST_BONUS_SEC",
+    },
+    "chat_session_serial_enabled": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "process", "label": "Aynı oturumda turlar sırayla",
+        "help": "Adım 13: aynı sohbet oturumuna art arda gelen ikinci soru, ilkinin yanıtı bitene kadar bekler (geçmiş tutarlı kalır). "
+                "Farklı oturumlar etkilenmez.",
+        "env": "CHAT_SESSION_SERIAL_ENABLED",
+    },
+    "chat_unified_stream_final": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "llm_chat", "label": "Sohbet: cevap canlı akar (tüm AI sohbet ekranları)",
+        "help": "Adım 14/17: Yönetici, Windows, Linux/OpenShift sohbetinde araçlar çalıştıktan sonra modelin son turu "
+                "doğrudan kullanıcıya canlı akıtılır; ikinci bir üretim çağrısı yapılmaz (ilk karakter ve toplam süre kısalır). "
+                "Sanallaştırma sohbetinde cevap token token akar. Kapalıysa eski davranış: cevap bloklayan çağrıdan sonra "
+                "topluca gelir. Kısalma/uzun/hatalı turlarda otomatik ikinci üretime düşer.",
+        "env": "CHAT_UNIFIED_STREAM_FINAL",
+    },
+    "chat_final_think": {
+        "default": "low", "type": "str", "choices": ["", "low", "medium", "high"],
+        "group": "llm_chat", "label": "Sohbet: ikinci üretimde düşünme seviyesi",
+        "help": "Adım 14: araç turunun cevabı kullanılamayınca (sızıntı/kesik/nudge) yapılan ikinci üretimin gpt-oss think "
+                "seviyesi. Araç verisini özetlemek için uzun düşünme gerekmez; sınırsız düşünme bu çağrıyı 30–200 sn "
+                "sessiz bırakabiliyordu. Boş = model varsayılanı (eski davranış).",
+        "env": "CHAT_FINAL_THINK",
+    },
+    "chat_stream_thinking": {
+        "default": "admin", "type": "str", "choices": ["off", "admin", "all"],
+        "group": "llm_chat", "label": "Sohbet: «Düşünme süreci» akışı",
+        "help": "Adım 14: modelin akıl yürütmesi (cevap değil) araç aşamasında canlı gösterilir, kullanıcı ilk karakteri "
+                "beklerken boş kalmaz. off = kapalı; admin = yalnız yönetici; all = herkes. Cevap metnine / kayda / "
+                "önbelleğe karışmaz.",
+        "env": "CHAT_STREAM_THINKING",
     },
     # ── SSH ─────────────────────────────────────────────────────────
     "ssh_connect_timeout_sec": {
@@ -227,11 +287,51 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Hypervisor VM envanteri + opsiyonel uCMDB senkron aralığı (full sync).",
         "env": "INVENTORY_SYNC_INTERVAL_MINUTES",
     },
+    "openshift_sync_prune_enabled": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "background", "label": "OpenShift senkronu: bayat pod temizliği",
+        "help": "OpenShift senkronu TAM ve BAŞARILI bir pod listelemesi aldığında, o cluster'da bu senkronda görülmeyen "
+                "(silinmiş/bitmiş) pod satırlarını envanterden temizler. Liste hata/zaman aşımı/kısmi ise, sahte cluster'da "
+                "ve aşırı büyük silmede (yarıdan fazlası) HİÇBİR ŞEY silinmez. Kapatılırsa pod satırları yalnız eklenir/güncellenir (eski davranış).",
+        "env": "OPENSHIFT_SYNC_PRUNE_ENABLED",
+    },
     "esx_metric_interval_sec": {
         "default": 900, "type": "int", "min": 120, "max": 7200,
         "group": "background", "label": "ESX metrik aralığı (sn)",
         "help": "ESXi host metrik toplama.",
         "env": "ESX_METRIC_INTERVAL_SEC",
+    },
+    "hw_host_logs_enabled": {
+        "default": False, "type": "bool", "min": 0, "max": 1,
+        "group": "background", "label": "Host donanım logları (ESXi SEL/vmkernel, Linux/Windows)",
+        "help": "VARSAYILAN KAPALI. Açıkken ESXi host'lardan vCenter üzerinden IPMI SEL ve vmkernel/vmkwarning donanım "
+                "kayıtları okunur (vCenter rolünde Global.Diagnostics gerekir) ve mevcut Linux/Windows log "
+                "toplayıcılarının donanım kayıtları (MCE, EDAC/ECC, WHEA, PSU, ısı) ayrıştırılır. iLO/iDRAC'e bağlanılmaz, "
+                "yeni port/firewall gerekmez, donanıma yazılmaz. Kapalıyken hiçbir ek çağrı yapılmaz.",
+        "env": "HW_HOST_LOGS_ENABLED",
+    },
+    "hw_ipmi_inband_enabled": {
+        "default": False, "type": "bool", "min": 0, "max": 1,
+        "group": "background", "label": "Linux fiziksel: in-band ipmitool SEL (donanım logu + BMC IP keşfi)",
+        "help": "VARSAYILAN KAPALI. Açıkken SSH ile bağlı FİZİKSEL Linux sunucularda yalnız okuma yapan `ipmitool sel elist` / "
+                "`mc info` / `lan print` çalıştırılır (BMC hesabı ve BMC ağına erişim gerekmez). Root değilse `sudo -n` "
+                "(parola sorulmaz); ipmitool/IPMI cihazı/sudo yoksa host durumu işaretlenir, hata sayılmaz. Hiçbir şey "
+                "kurulmaz, donanıma yazılmaz. Windows ve sanal sunucular atlanır.",
+        "env": "HW_IPMI_INBAND_ENABLED",
+    },
+    "hw_bmc_logs_enabled": {
+        "default": False, "type": "bool", "min": 0, "max": 1,
+        "group": "background", "label": "BMC (iLO/iDRAC) Redfish donanım logları",
+        "help": "VARSAYILAN KAPALI. Açıkken ainew her BMC'ye HTTPS (443) ile doğrudan bağlanır (BMC ağına erişim + salt-okunur "
+                "BMC hesabı gerekir; Ayarlar → BMC). Yalnız GET; kimlik reddedilirse o BMC durur (hesap kilitlenmesin). "
+                "Kapalıyken BMC'ye hiç bağlanılmaz.",
+        "env": "HW_BMC_LOGS_ENABLED",
+    },
+    "hw_host_logs_interval_sec": {
+        "default": 3600, "type": "int", "min": 900, "max": 86400,
+        "group": "background", "label": "Host donanım logu aralığı (sn)",
+        "help": "Host donanım log toplama sıklığı (varsayılan 1 saat). Kayıtlar 30 gün saklanır.",
+        "env": "HW_HOST_LOGS_INTERVAL_SEC",
     },
     "virt_insights_interval_sec": {
         "default": 3600, "type": "int", "min": 600, "max": 86400,
@@ -394,6 +494,68 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "help": "Keyword skor belirsizken (eşik/tie) ucuz bir LLM ikinci fikir sorar. "
                 "auto_explore (disk→virt+linux) daraltılamaz. Devre açıksa atlanır.",
         "env": "UNIFIED_ROUTE_LLM_HINT",
+    },
+    "chat_entity_gate_enabled": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "unified_chat", "label": "Varlık çözümleyici kapısı",
+        "help": "Sohbette envanterde olmayan bir ad (VM/sunucu/host/cluster/namespace/node…) sorulursa LLM'e gitmeden "
+                "'bulunamadı' der; aynı adla birden fazla VM kaydı varsa kayıtları listeleyip hangisini kastettiğinizi sorar. "
+                "Kapatılırsa sorular eskisi gibi doğrudan LLM/araç yoluna gider.",
+        "env": "CHAT_ENTITY_GATE_ENABLED",
+    },
+    "chat_count_rules_enabled": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "unified_chat", "label": "Sayım kuralları (kaç VM/host/datastore/cluster/node/proje)",
+        "help": "Sohbette net sayım soruları (ör. 'kaç tane kapalı VM var?', 'OpenShift'te kaç node var?') LLM'e ve araca "
+                "gitmeden SQL sayımıyla, kapsam etiketi ve kırılımla cevaplanır; yetkisiz platform görünmez. "
+                "Kapatılırsa sayım soruları eskisi gibi QA kuralları / LLM-araç yoluna gider.",
+        "env": "CHAT_COUNT_RULES_ENABLED",
+    },
+    "chat_grounding_mode": {
+        "default": "enforce", "type": "str", "min": 0, "max": 16,
+        "group": "unified_chat", "label": "Veriye dayalılık doğrulayıcısı modu (off|shadow|enforce)",
+        "help": "Cevap bittikten sonra sayı/ad/komut/iç terim/kaynak etiketi/kabul edilen yanlış öncül araç verisine göre denetlenir. "
+                "shadow: yalnız iz ve log (cevap değişmez); enforce (varsayılan): «Doğrulama sınıfları» listesindeki sınıflar için "
+                "cevabın sonuna uyarı eklenir (cevap yeniden yazılmaz); off: kapalı. Akışı geciktirmez; Automic sohbeti kapsam dışıdır.",
+        "env": "CHAT_GROUNDING_MODE",
+    },
+    "chat_grounding_enforce_classes": {
+        "default": "internal_term,source_label,ungrounded_entity,ungrounded_command", "type": "str", "min": 0, "max": 200,
+        "group": "unified_chat", "label": "Doğrulama sınıfları (enforce)",
+        "help": "Virgülle ayrılmış sınıf adları: ungrounded_number, ungrounded_entity, ungrounded_command, internal_term, "
+                "source_label, premise_accepted. Yalnız mod 'enforce' iken uyarı eklenir; boşsa hiçbir sınıf engellenmez. "
+                "Varsayılan: ölçümde yanlış alarm <%2 ve yakalama ≥%80 olan sınıflar (ungrounded_number ve premise_accepted gölgede).",
+        "env": "CHAT_GROUNDING_ENFORCE_CLASSES",
+    },
+    "chat_timezone": {
+        "default": "Europe/Istanbul", "type": "str", "min": 0, "max": 64,
+        "group": "unified_chat", "label": "Sohbet zaman dilimi",
+        "help": "'dün', 'geçen hafta', 'bu ay' gibi zaman ifadeleri bu dilimin takvimine göre çözülür "
+                "(hafta Pazartesi başlar). Cevapta çözülen pencere yazılır.",
+        "env": "CHAT_TIMEZONE",
+    },
+    "virt_live_event_retention_days": {
+        "default": 30, "type": "int", "min": 1, "max": 3650,
+        "group": "unified_chat", "label": "vCenter canlı olay saklama süresi (gün)",
+        "help": "vCenter'ın olay geçmişini tuttuğu süre (varsayılan 30). Zaman penceresi bunun dışındaysa sohbet "
+                "'veri yok + kapsam' der; ortamınızda farklıysa buradan güncelleyin.",
+        "env": "VIRT_LIVE_EVENT_RETENTION_DAYS",
+    },
+    "route_hint_num_predict": {
+        "default": 128, "type": "int", "min": 32, "max": 1024,
+        "group": "unified_chat", "label": "Routing ipucu — üretim sınırı (num_predict)",
+        "help": (
+            "Düşük güvenli routing ipucu çağrısının en fazla üreteceği token (gpt-oss'ta düşünme "
+            "tokenları dahil). Çıktı yalnız kısa bir modül listesidir; sınırsız düşünme 8 sn zaman "
+            "aşımını aşıp ana cevabın LLM'ini boş yere meşgul ediyordu."
+        ),
+        "env": "ROUTE_HINT_NUM_PREDICT",
+    },
+    "route_hint_think": {
+        "default": "low", "type": "str", "choices": ["low", "medium", "high"],
+        "group": "unified_chat", "label": "Routing ipucu — düşünme seviyesi",
+        "help": "gpt-oss (Ollama native) için routing ipucu çağrısında gönderilen think seviyesi; diğer modellerde yok sayılır.",
+        "env": "ROUTE_HINT_THINK",
     },
     "unified_chat_agentic_mode": {
         "default": True, "type": "bool", "min": 0, "max": 1,
@@ -618,8 +780,11 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "default": 1, "type": "int", "min": 0, "max": 16,
         "group": "llm_chat", "label": "Eşzamanlı LLM çağrısı sınırı (semafor)",
         "help": (
-            "Ollama Parallel değeriyle aynı olmalı (varsayılan 1). Sınır dolunca çağrılar kuyrukta bekler; "
-            "kullanıcı sohbeti arka plan işlerinden (rapor, özet, backfill, analiz) önceliklidir. 0 = kapalı."
+            "LLM sunucusunun GERÇEK paralelliğiyle eşleşmelidir (Ollama için sunucudaki OLLAMA_NUM_PARALLEL; "
+            "vLLM/Bifrost için sunucunun eşzamanlı istek sınırı). Varsayılan 1. Bu değer sunucudan BÜYÜKSE "
+            "istekler sunucuda sıraya girer ve okuma zaman aşımına uğrayabilir; KÜÇÜKSE sunucu kapasitesi boşa gider. "
+            "Sınır dolunca çağrılar kuyrukta bekler; kullanıcı sohbeti arka plan işlerinden (rapor, özet, backfill, "
+            "analiz) önceliklidir. 0 = kapalı. Kuyruk beklemesi yüksekse LLM sağlık kartında uyarı çıkar."
         ),
         "env": "LLM_MAX_CONCURRENT",
     },
@@ -634,6 +799,37 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "group": "llm_chat", "label": "Sohbet çağrısı en uzun kuyruk beklemesi (sn)",
         "help": "Güvenlik sınırı: slot bu sürede alınamazsa çağrı slotsuz devam eder (kilitlenme önleme).",
         "env": "LLM_SCHED_MAX_WAIT_SEC",
+    },
+    "llm_circuit_failure_threshold": {
+        "default": 3, "type": "int", "min": 1, "max": 20,
+        "group": "llm_chat", "label": "Uzak LLM devre kesici — hata eşiği",
+        "help": (
+            "Pencere içinde bu kadar hata birikince devre açılmadan ÖNCE sağlık yoklaması yapılır; "
+            "uzak model yoklamaya yanıt veriyorsa (yavaş ama ayakta) devre açılmaz. İsteğe bağlı yan "
+            "çağrılar (yönlendirme ipucu vb.) bu sayaca hiç girmez."
+        ),
+        "env": "LLM_CIRCUIT_FAILURE_THRESHOLD",
+    },
+    "llm_circuit_failure_window_sec": {
+        "default": 60, "type": "int", "min": 5, "max": 3600,
+        "group": "llm_chat", "label": "Uzak LLM devre kesici — hata penceresi (sn)",
+        "help": "Hataların sayıldığı kayan pencere süresi.",
+        "env": "LLM_CIRCUIT_FAILURE_WINDOW_SEC",
+    },
+    "llm_circuit_open_sec": {
+        "default": 45, "type": "int", "min": 5, "max": 3600,
+        "group": "llm_chat", "label": "Uzak LLM devre kesici — açık kalma süresi (sn)",
+        "help": (
+            "Devre açılınca istekler ağ beklemeden reddedilir. Süre dolunca ilk istekte tek yoklamalı "
+            "yarı açık deneme yapılır: başarılıysa devre kapanır, değilse yeniden açılır."
+        ),
+        "env": "LLM_CIRCUIT_OPEN_SEC",
+    },
+    "llm_circuit_probe_timeout_sec": {
+        "default": 3, "type": "int", "min": 1, "max": 15,
+        "group": "llm_chat", "label": "Uzak LLM devre kesici — sağlık yoklaması zaman aşımı (sn)",
+        "help": "Ollama için /api/version, OpenAI-uyumlu gateway için /v1/models yoklamasının üst süresi.",
+        "env": "LLM_CIRCUIT_PROBE_TIMEOUT_SEC",
     },
     "llm_num_predict_low": {
         "default": 1536, "type": "int", "min": 256, "max": 32768,
@@ -652,6 +848,67 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "group": "llm_chat", "label": "num_predict — think=high",
         "help": "Üretim üst sınırı (düşünme dahil).",
         "env": "LLM_NUM_PREDICT_HIGH",
+    },
+    "unified_tool_think": {
+        "default": "medium", "type": "str", "choices": ["low", "medium", "high"],
+        "group": "llm_chat", "label": "Araç turu düşünme seviyesi (politikasız sohbetler)",
+        "help": ("Unified / Linux / Windows / Sanallaştırma sohbetlerinin araç döngüsü (llm_policy vermeyen yollar) "
+                 "için gpt-oss (Ollama native) think seviyesi. Varsayılan medium = gpt-oss'un zaten kullandığı seviye "
+                 "(davranış değişmez). Diğer modellerde yok sayılır. Automic kendi politikasını kullanır."),
+        "env": "UNIFIED_TOOL_THINK",
+    },
+    "unified_tool_num_predict": {
+        "default": 6144, "type": "int", "min": 0, "max": 32768,
+        "group": "llm_chat", "label": "Araç turu üretim tavanı (num_predict)",
+        "help": ("Politikasız sohbetlerin araç turunda tek LLM çağrısının üretebileceği en çok token "
+                 "(gpt-oss'ta düşünme tokenlarını da kapsar). Sınırsız düşünme, araç turunu zaman aşımına (90 sn) "
+                 "taşıyabiliyordu. Konservatif varsayılan 6144; boş çıktı + done_reason=length olursa bir kez "
+                 "2 kat tavanla yeniden denenir. 0 = sınırsız (eski davranış). Yalnız Ollama native taşımada "
+                 "uygulanır (OpenAI-uyumlu gateway'de yok sayılır)."),
+        "env": "UNIFIED_TOOL_NUM_PREDICT",
+    },
+    "llm_warn_window_sec": {
+        "default": 1800, "type": "int", "min": 60, "max": 86400,
+        "group": "llm_chat", "label": "LLM sağlık uyarıları — ölçüm penceresi (sn)",
+        "help": "Kuyruk bekleme / zaman aşımı / atlanan ipucu uyarıları son bu kadar saniyeyi inceler.",
+        "env": "LLM_WARN_WINDOW_SEC",
+    },
+    "llm_warn_queue_wait_ms": {
+        "default": 5000, "type": "int", "min": 100, "max": 600000,
+        "group": "llm_chat", "label": "LLM sağlık uyarısı — kuyruk bekleme eşiği (ms, p95)",
+        "help": "Penceredeki çağrıların scheduler kuyruk beklemesi p95'i bu değeri aşarsa bilgi uyarısı çıkar (erişimi engellemez).",
+        "env": "LLM_WARN_QUEUE_WAIT_MS",
+    },
+    "llm_warn_best_effort_timeouts": {
+        "default": 3, "type": "int", "min": 1, "max": 1000,
+        "group": "llm_chat", "label": "LLM sağlık uyarısı — isteğe bağlı çağrı zaman aşımı eşiği",
+        "help": "Penceredeki isteğe bağlı (ör. yönlendirme ipucu) çağrılardan en az bu kadarı zaman aşımına dayanırsa uyarı çıkar.",
+        "env": "LLM_WARN_BEST_EFFORT_TIMEOUTS",
+    },
+    "llm_warn_hint_skips": {
+        "default": 5, "type": "int", "min": 1, "max": 10000,
+        "group": "llm_chat", "label": "LLM sağlık uyarısı — atlanan ipucu eşiği",
+        "help": "Penceredeki atlanan (slot meşgul) yönlendirme ipucu sayısı bu değeri aşarsa uyarı çıkar.",
+        "env": "LLM_WARN_HINT_SKIPS",
+    },
+    "llm_warn_tool_turn_limit": {
+        "default": 2, "type": "int", "min": 1, "max": 1000,
+        "group": "llm_chat", "label": "LLM sağlık uyarısı — araç turu zaman aşımı sınırına dayanma eşiği",
+        "help": "Penceredeki araç turu çağrılarından en az bu kadarı zaman aşımı sınırına dayanırsa uyarı çıkar.",
+        "env": "LLM_WARN_TOOL_TURN_LIMIT",
+    },
+    "llm_timeout_dynamic": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "llm_chat", "label": "Dinamik LLM zaman aşımı",
+        "help": ("Açıkken okuma zaman aşımı çağrı sınıfına göre ölçülen p95 × k ile uzar (alt sınırın altına inmez, "
+                 "üst sınırı aşmaz). Kapalıyken sınıf alt sınırı (sabit eski değerler) kullanılır."),
+        "env": "LLM_TIMEOUT_DYNAMIC",
+    },
+    "llm_timeout_min_samples": {
+        "default": 10, "type": "int", "min": 3, "max": 200,
+        "group": "llm_chat", "label": "Dinamik zaman aşımı — en az örnek sayısı",
+        "help": "Sınıfın penceresinde bu kadar çağrı yoksa dinamik hesap yapılmaz, alt sınır kullanılır.",
+        "env": "LLM_TIMEOUT_MIN_SAMPLES",
     },
     "llm_chat_stream_final": {
         "default": True, "type": "bool", "min": 0, "max": 1,
@@ -731,6 +988,75 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
                 "Büyütmek isabetliliği artırabilir ama CPU'da yanıt süresini uzatır.",
         "env": "RAG_RERANKER_CANDIDATES",
     },
+    "rag_min_relevance_enabled": {
+        "default": False, "type": "bool", "min": 0, "max": 1,
+        "group": "rag_reranker", "label": "RAG alaka eşiği (açık/kapalı)",
+        "help": "Açıkken reranker skoru «Alaka eşiği» değerinin altındaki bilgi parçaları sohbet bağlamına girmez; "
+                "hepsi altındaysa bağlam boş kalır (bilgi bankasında yok yolu). Varsayılan KAPALI; değer ölçümle seçilir. "
+                "Reranker kapalıysa/yüklenmediyse eşik uygulanmaz.",
+        "env": "RAG_MIN_RELEVANCE_ENABLED",
+    },
+    "rag_min_relevance": {
+        "default": 0.0, "type": "float", "min": -30, "max": 30,
+        "group": "rag_reranker", "label": "RAG alaka eşiği (reranker skoru)",
+        "help": "Cross-encoder ham skoru; ölçek modele bağlıdır (ölçüm: docs/chat-quality/plan.md Adım 8R). Yalnız eşik açıkken geçerli.",
+        "env": "RAG_MIN_RELEVANCE",
+    },
+    "rag_lexical_timeout_ms": {
+        "default": 1500, "type": "int", "min": 0, "max": 60000,
+        "group": "rag_reranker", "label": "RAG lexical (FTS) zaman sınırı (ms)",
+        "help": "Tam metin (FTS) kolunun toplam süre sınırı. Aşılırsa lexical sonuç boş döner ve hibrit aramada yalnız vektör sonucu kullanılır "
+                "(incidents ~1,2 M satırda yaygın sözcükler saniyeler/dakikalar sürebiliyordu). 0 = sınır yok.",
+        "env": "RAG_LEXICAL_TIMEOUT_MS",
+    },
+    "rag_lexical_max_candidates": {
+        "default": 2000, "type": "int", "min": 0, "max": 100000,
+        "group": "rag_reranker", "label": "RAG lexical aday sınırı",
+        "help": "Yalnız büyük koleksiyonlarda (≥ 50 bin satır; incidents): FTS ile eşleşen satırlardan en çok bu kadarı sıralanır "
+                "(aday seçimi fiziksel sırayla, yani en eski kayıtlar öncelikli — vektör kolu bunu dengeler). 0 = sınır yok.",
+        "env": "RAG_LEXICAL_MAX_CANDIDATES",
+    },
+    "rag_incidents_retention_enabled": {
+        "default": False, "type": "bool", "min": 0, "max": 1,
+        "group": "rag_reranker", "label": "RAG incidents yaş bazlı budama (açık/kapalı)",
+        "help": "VARSAYILAN KAPALI. Açıkken RAG bakım turu, saklama süresinden eski event/log gömme satırlarını (vcenter_event, openshift_event, "
+                "openshift_virt_event, log_entry, virt_log) önce yedekleyip tek işlemde siler; `incident` kayıtları kalıcıdır. "
+                "Açmadan önce dry-run raporu incelenmeli (docs/chat-quality/plan.md Adım 8R). VACUUM/REINDEX ayrı bakım işidir.",
+        "env": "RAG_INCIDENTS_RETENTION_ENABLED",
+    },
+    "rag_incidents_retention_days": {
+        "default": 60, "type": "int", "min": 7, "max": 3650,
+        "group": "rag_reranker", "label": "RAG incidents saklama süresi (gün)",
+        "help": "Yalnız budama açıkken geçerli; bu günden eski event/log satırları silinir (tur başına `rag_maintenance_max_delete` üst sınırı).",
+        "env": "RAG_INCIDENTS_RETENTION_DAYS",
+    },
+    "chat_cache_enabled": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "llm_chat", "label": "Sohbet cevap önbelleği (açık/kapalı)",
+        "help": "Adım 9: yalnız KAVRAMSAL sorular (nedir / ne demek / nasıl çalışır …) için TAM eşleşmeli önbellek; veri, sayım, durum, zaman-göreli, "
+                "varlık adı içeren, araç/canlı veri kullanan, ret/hata/«veri yok» cevapları önbelleğe girmez. Anahtar platform + kullanıcının izinli modül imzasıdır. "
+                "Kapalıyken ne okuma ne yazma yapılır (anında etkili).",
+        "env": "CHAT_CACHE_ENABLED",
+    },
+    "chat_cache_ttl_sec": {
+        "default": 86400, "type": "int", "min": 60, "max": 604800,
+        "group": "llm_chat", "label": "Sohbet cevap önbelleği TTL (sn)",
+        "help": "Sabit süre (varsayılan 24 saat); önbellek isabeti süreyi UZATMAZ.",
+        "env": "CHAT_CACHE_TTL_SEC",
+    },
+    "chat_progress_enabled": {
+        "default": True, "type": "bool", "min": 0, "max": 1,
+        "group": "llm_chat", "label": "Sohbet ilerleme olayları (ilk token öncesi)",
+        "help": "Adım 10: ilk token gelmeden önce aşama metni + geçen süre (`type: progress`) gönderilir; LLM/araç çağırmaz, yalnız olay üretir. "
+                "Kapalıyken hiç progress olayı yoktur (anında).",
+        "env": "CHAT_PROGRESS_ENABLED",
+    },
+    "chat_progress_heartbeat_sec": {
+        "default": 5, "type": "int", "min": 2, "max": 30,
+        "group": "llm_chat", "label": "İlerleme kalp atışı aralığı (sn)",
+        "help": "Son olaydan bu kadar sn sonra «hâlâ çalışıyor» ilerlemesi gönderilir (yalnız ilk token öncesi).",
+        "env": "CHAT_PROGRESS_HEARTBEAT_SEC",
+    },
     # ── Proxy (uygulama notu; nginx restart ile uygulanır) ───────────
     "nginx_proxy_read_timeout_sec": {
         "default": 1800, "type": "int", "min": 60, "max": 7200,
@@ -758,6 +1084,38 @@ ADVANCED_SCHEMA: Dict[str, dict] = {
         "env": "MONITORING_SERVERS_CACHE_TTL_SEC",
     },
 }
+
+# Çağrı sınıfı başına dinamik zaman aşımı parametreleri (llm_timeouts): k, alt sınır, üst sınır.
+_TIMEOUT_CLASS_META = {
+    "route_hint": ("Yönlendirme ipucu", 1.5, 8, 10, 3, 10,
+                   "İsteğe bağlı çağrı; üst sınır 10 sn'yi AŞAMAZ (gerçek sohbeti geciktirmesin)."),
+    "tool_turn": ("Araç turu", 2.0, 90, 180, 30, 900,
+                  "Araç seçimi / araç turu (chat_sync). Alt sınır mevcut 90 sn davranışıdır."),
+    "final_answer": ("Cevap üretimi", 2.0, 120, 240, 30, 1800,
+                     "Cevap akışları. Alt sınır mevcut 120/180 sn varsayılanıdır."),
+    "background": ("Arka plan", 2.0, 120, 300, 30, 1800,
+                   "Rapor, özet, analiz gibi diğer çağrılar."),
+}
+for _cls, (_ad, _k, _lo, _hi, _rlo, _rhi, _note) in _TIMEOUT_CLASS_META.items():
+    ADVANCED_SCHEMA[f"llm_timeout_{_cls}_k"] = {
+        "default": _k, "type": "float", "min": 0.5, "max": 10.0,
+        "group": "llm_chat", "label": f"Dinamik zaman aşımı — {_ad}: çarpan (p95 × k)",
+        "help": f"Zaman aşımı = clamp(p95 × k, alt, üst). {_note}",
+        "env": f"LLM_TIMEOUT_{_cls.upper()}_K",
+    }
+    ADVANCED_SCHEMA[f"llm_timeout_{_cls}_min_sec"] = {
+        "default": _lo, "type": "int", "min": _rlo, "max": _rhi,
+        "group": "llm_chat", "label": f"Dinamik zaman aşımı — {_ad}: alt sınır (sn)",
+        "help": f"Ölçüm yetersizken/düşükken kullanılan değer. {_note}",
+        "env": f"LLM_TIMEOUT_{_cls.upper()}_MIN_SEC",
+    }
+    ADVANCED_SCHEMA[f"llm_timeout_{_cls}_max_sec"] = {
+        "default": _hi, "type": "int", "min": _rlo, "max": _rhi,
+        "group": "llm_chat", "label": f"Dinamik zaman aşımı — {_ad}: üst sınır (sn)",
+        "help": f"Dinamik değerin çıkabileceği en yüksek değer. {_note}",
+        "env": f"LLM_TIMEOUT_{_cls.upper()}_MAX_SEC",
+    }
+
 
 GROUP_LABELS = {
     "health": "Health checker",

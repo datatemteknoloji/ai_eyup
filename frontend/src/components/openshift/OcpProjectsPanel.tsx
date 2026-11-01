@@ -71,7 +71,7 @@ export default function OcpProjectsPanel({
         <div className="relative flex-1 min-w-[220px] max-w-sm">
           <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
           <input
-            className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/60 pl-8 pr-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-rose-500/40"
+            className="w-full rounded-lg border border-white/[0.08] bg-cyber-deep/60 pl-8 pr-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-hidden focus:border-rose-500/40"
             placeholder={t('ocp_search_project')}
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -82,7 +82,7 @@ export default function OcpProjectsPanel({
             type="checkbox"
             checked={showSystem}
             onChange={(e) => setShowSystem(e.target.checked)}
-            className="rounded border-white/20"
+            className="rounded-sm border-white/20"
           />
           {t('ocp_show_system', { n: projects.length - userCount })}
         </label>
@@ -112,19 +112,19 @@ export default function OcpProjectsPanel({
               >
                 <div className="flex items-center gap-2">
                   <span
-                    className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                       (p.status || '').toLowerCase() === 'active' ? 'bg-emerald-400' : 'bg-amber-400'
                     }`}
                   />
                   <span className="text-sm text-slate-100 truncate font-medium">{title}</span>
                   {p.is_system && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.06] text-slate-500 flex-shrink-0">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-sm bg-white/[0.06] text-slate-500 shrink-0">
                       {t('ocp_system_badge')}
                     </span>
                   )}
                   <ArrowRight
                     size={14}
-                    className="text-slate-600 ml-auto flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="text-slate-600 ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                   />
                 </div>
                 {title !== p.name && (

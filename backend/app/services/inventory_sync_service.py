@@ -6,6 +6,7 @@ import inspect
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -120,7 +121,69 @@ def _vm_status(vm: dict) -> str:
     return mapping.get(raw, "OFFLINE")
 
 
+def is_matchable_ip(ip: str | None) -> bool:
+    """IP ile kayıt eşleştirmesine uygun mu?
+
+    Link-local (169.254/16, fe80::/10), loopback, unspecified ve multicast adresler
+    birçok sanal cihazda (güvenlik/HA appliance) ortak olur; bu adreslerle eşleştirme
+    farklı VM'leri aynı kayda birleştirir. Bunlar eşleştirmede kullanılmaz.
+    """
+    import ipaddress
+
+    raw = (ip or "").strip()
+    if not raw:
+        return False
+    try:
+        addr = ipaddress.ip_address(raw)
+    except ValueError:
+        # IP olmayan değer (hostname vb.) — eski davranışı koru
+        return True
+    return not (
+        addr.is_link_local
+        or addr.is_loopback
+        or addr.is_unspecified
+        or addr.is_multicast
+    )
+
+
+_UNSET: Any = object()   # `_upsert_vm_record(existing=...)`: "verilmedi" (None geçerli bir değerdir)
+
+
+def _belongs_to_other_vm(
+    server: Server,
+    vm_id: str,
+    *,
+    name: str | None = None,
+    ip: str | None = None,
+    hypervisor_id: int | None = None,
+) -> bool:
+    """Kayıt başka bir VM'e (farklı dolu hypervisor_vm_id) mi ait?
+
+    İstisna: aynı hypervisor'da ad VE IP birebir aynıysa kayıt aynı VM'dir; yalnız VM kimliği
+    biçimi değişmiştir (ör. KubeVirt UID → `namespace/ad`) ve kayıt devralınır.
+    """
+    sid = (getattr(server, "hypervisor_vm_id", None) or "").strip()
+    if not (vm_id and sid and sid != vm_id):
+        return False
+    if (
+        hypervisor_id is not None
+        and getattr(server, "hypervisor_id", None) == hypervisor_id
+        and name
+        and getattr(server, "name", None) == name
+        and ip
+        and getattr(server, "ip_address", None) == ip
+    ):
+        return False
+    return True
+
+
 def _find_existing_server(db: Session, hypervisor_id: int, vm: dict) -> Server | None:
+    """VM'e karşılık gelen Server kaydını bul.
+
+    Sıra: (hypervisor_id, vm_id) → IP → ad. IP/ad yedeği yalnızca henüz bir VM'e
+    bağlanmamış (hypervisor_vm_id boş) kayıtlara uygulanır; başka bir VM'in kaydına
+    yazmak (sessiz birleştirme) yapılmaz — o VM için yeni kayıt açılır.
+    """
     vm_name = vm.get("name", "Unknown")
     vm_id = (vm.get("vm_id") or "").strip()
     vm_ip = (vm.get("ip_address") or "").strip()
@@ -131,16 +194,24 @@ def _find_existing_server(db: Session, hypervisor_id: int, vm: dict) -> Server |
             Server.hypervisor_id == hypervisor_id,
             Server.hypervisor_vm_id == vm_id,
         ).first()
-    if not existing and vm_ip:
+    if not existing and vm_ip and is_matchable_ip(vm_ip):
         by_ip = db.query(Server).filter(Server.ip_address == vm_ip).all()
         existing = next(
-            (s for s in by_ip if not owned_by_other_vcenter(s.hypervisor_id, hypervisor_id)),
+            (
+                s for s in by_ip
+                if not owned_by_other_vcenter(s.hypervisor_id, hypervisor_id)
+                and not _belongs_to_other_vm(s, vm_id, name=vm_name, ip=vm_ip, hypervisor_id=hypervisor_id)
+            ),
             None,
         )
     if not existing and vm_name:
         by_name = db.query(Server).filter(Server.name == vm_name).all()
         existing = next(
-            (s for s in by_name if not owned_by_other_vcenter(s.hypervisor_id, hypervisor_id)),
+            (
+                s for s in by_name
+                if not owned_by_other_vcenter(s.hypervisor_id, hypervisor_id)
+                and not _belongs_to_other_vm(s, vm_id, name=vm_name, ip=vm_ip, hypervisor_id=hypervisor_id)
+            ),
             None,
         )
     return existing
@@ -196,8 +267,13 @@ def _upsert_vm_record(
     global_cred: GlobalCredential | None,
     client=None,
     preloaded_details: dict | None = None,
+    existing: Any = _UNSET,
+    commit_facts: bool = True,
 ) -> bool:
-    """Tek VM kaydını oluşturur/günceller. Yeni kayıt ise True döner."""
+    """Tek VM kaydını oluşturur/günceller. Yeni kayıt ise True döner.
+
+    `existing`: çağıran `_find_existing_server` sonucunu zaten bulduysa (None dahil) tekrar sorgulanmaz.
+    """
     vm_name = vm.get("name", "Unknown")
     vm_status_val = _vm_status(vm)
     vm_id = (vm.get("vm_id") or "").strip()
@@ -205,7 +281,8 @@ def _upsert_vm_record(
     # VMware sync_vms_to_inventory: hostname = Tools host_name (guest)
     # KubeVirt: hostname = guest veya VM adı; guest yoksa vm_name kullan
     row_hostname = (vm.get("hostname") or "").strip() or vm_name
-    existing = _find_existing_server(db, hypervisor.id, vm)
+    if existing is _UNSET:
+        existing = _find_existing_server(db, hypervisor.id, vm)
     created = False
 
     if not existing:
@@ -316,7 +393,7 @@ def _upsert_vm_record(
 
     try:
         from app.services.fact_learning import extract_and_store_virt_facts
-        extract_and_store_virt_facts(db, existing)
+        extract_and_store_virt_facts(db, existing, commit=commit_facts)
     except Exception as exc:
         logger.debug("Virt fact learning atlandı (%s): %s", existing.name, exc)
 
@@ -540,6 +617,8 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
                 global_cred,
                 client=client,
                 preloaded_details=preloaded.get(vid) if vid else None,
+                existing=before,
+                commit_facts=False,   # döngü 10 VM'de bir + sonunda commit eder (VM başına fsync yok)
             ):
                 synced += 1
             elif was_missing_meta:
@@ -583,6 +662,7 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
 
         hypervisor.last_sync = datetime.now(timezone.utc)
         db.add(hypervisor)
+        db.commit()   # son (<10) VM'ler + fact'ler; önceden VM başına fact commit'i bunu örtüyordu
     finally:
         if client and hasattr(client, "logout"):
             try:
@@ -621,40 +701,87 @@ def sync_hypervisor_vms(db: Session, hypervisor: Hypervisor, *, track_progress: 
     return result
 
 
+_HV_PARALLEL = 4   # aynı anda en çok bu kadar hypervisor (her biri kendi DB oturumunda)
+
+
+def _record_sync_outcome(hypervisor_id: int, hypervisor: Hypervisor, errors: list) -> None:
+    """Periyodik turun sonucunu `meta_data.sync_job` + `status` alanına yazar.
+
+    Eskiden yalnız elle başlatılan tarama (`track_progress=True`) bunu yazıyordu; periyodik turda başarısızlık
+    hiçbir yerde görünmüyordu (OLVM 11 gün boyunca "ONLINE" göründü). Kullanıcının çalışan taramasının
+    üzerine yazılmaz.
+    """
+    try:
+        job = get_sync_job(hypervisor)
+        if job.get("status") == "running" and not job_is_stale_running(job):
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        if errors:
+            msg = str(errors[0])[:300]
+            update_sync_job(hypervisor_id, status="error", phase="error", message=msg, error=msg, last_error_at=now)
+        else:
+            update_sync_job(hypervisor_id, status="done", phase="done", message="Periyodik senkron tamamlandı",
+                            error=None, last_success_at=now)
+    except Exception:
+        logger.debug("sync sonucu kaydedilemedi (hv=%s)", hypervisor_id, exc_info=True)
+
+
+def _sync_one_hypervisor(session: Session, hypervisor: Hypervisor) -> dict:
+    """Tek hypervisor turu: (sonuç satırı, hata listesi). Hata fırlatmaz."""
+    name = hypervisor.name
+    hv_id = hypervisor.id
+    try:
+        r = sync_hypervisor_vms(session, hypervisor)
+        session.commit()
+        _record_sync_outcome(hv_id, hypervisor, r["errors"])
+        return {
+            "name": name, "synced_count": r["synced_count"], "total_vms": r["total_vms"],
+            "enriched_count": r.get("enriched_count", 0), "errors": r["errors"],
+        }
+    except Exception as e:
+        logger.error(f"Inventory sync error for {name}: {e}", exc_info=True)
+        session.rollback()
+        _record_sync_outcome(hv_id, hypervisor, [str(e)])
+        return {"name": name, "synced_count": 0, "total_vms": 0, "errors": [str(e)]}
+
+
 def sync_all_hypervisors(db: Session) -> dict:
     """
     Tüm hypervisor'lardan VM'leri senkronize et.
     Returns: { success, total_synced, hypervisors: [{ name, synced_count, total_vms, errors }] }
+
+    Birden fazla hypervisor varsa paralel çalışır: ulaşılamayan biri (bağlantı zaman aşımı ~10 sn)
+    diğerlerinin turunu geciktirmez. Her iş parçacığı kendi DB oturumunu kullanır; sonuç sırası korunur.
     """
-    hypervisors = db.query(Hypervisor).all()
+    # Test amaçlı sahte envanter (scripts/fake_virt_seed.py) gerçek bir yönetim API'sine bağlanamaz; atlanır
+    hypervisors = [h for h in db.query(Hypervisor).all() if not (getattr(h, "meta_data", None) or {}).get("fake_seed")]
     if not hypervisors:
         return {"success": True, "total_synced": 0, "hypervisors": []}
 
-    results = []
-    total_synced = 0
-    all_errors = []
+    if len(hypervisors) == 1:
+        results = [_sync_one_hypervisor(db, hypervisors[0])]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        from app.core.database import ThreadSessionLocal
 
-    for h in hypervisors:
-        try:
-            r = sync_hypervisor_vms(db, h)
-            db.commit()
-            total_synced += r["synced_count"]
-            all_errors.extend(r["errors"])
-            results.append({
-                "name": h.name,
-                "synced_count": r["synced_count"],
-                "total_vms": r["total_vms"],
-                "enriched_count": r.get("enriched_count", 0),
-                "errors": r["errors"],
-            })
-        except Exception as e:
-            logger.error(f"Inventory sync error for {h.name}: {e}", exc_info=True)
-            db.rollback()
-            results.append({"name": h.name, "synced_count": 0, "total_vms": 0, "errors": [str(e)]})
-            all_errors.append(str(e))
+        hv_ids = [h.id for h in hypervisors]
 
+        def _worker(hid: int) -> dict:
+            session = ThreadSessionLocal()
+            try:
+                hv = session.get(Hypervisor, hid)
+                if hv is None:
+                    return {"name": f"#{hid}", "synced_count": 0, "total_vms": 0, "errors": ["hypervisor bulunamadı"]}
+                return _sync_one_hypervisor(session, hv)
+            finally:
+                session.close()
+
+        with ThreadPoolExecutor(max_workers=min(_HV_PARALLEL, len(hv_ids)), thread_name_prefix="inv-sync") as pool:
+            results = list(pool.map(_worker, hv_ids))
+
+    all_errors = [e for r in results for e in r["errors"]]
     return {
         "success": len(all_errors) == 0,
-        "total_synced": total_synced,
+        "total_synced": sum(r["synced_count"] for r in results),
         "hypervisors": results,
     }

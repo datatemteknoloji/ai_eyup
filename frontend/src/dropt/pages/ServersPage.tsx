@@ -1,15 +1,14 @@
 import { FormEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useOutletContext } from "react-router-dom";
+import { flexRender, RowSelectionState, SortingState } from "@tanstack/react-table";
+// TanStack Table v9: v8 uyumlu katman (resmi geçiş yolu). Tam v9 API'sine (useTable + tableFeatures) geçiş ayrı iş.
 import {
-  ColumnDef,
-  flexRender,
   getCoreRowModel,
   getSortedRowModel,
-  RowSelectionState,
-  SortingState,
-  useReactTable,
-} from "@tanstack/react-table";
+  LegacyColumnDef as ColumnDef,
+  useLegacyTable as useReactTable,
+} from "@tanstack/react-table/legacy";
 import {
   ArrowDown,
   ArrowUp,
@@ -387,9 +386,9 @@ export function ServersPage({
       {
         accessorKey: "ip",
         header: ({ column }) => <SortableHeader label={t("ip")} sorted={column.getIsSorted()} />,
-        sortingFn: "alphanumeric",
+        sortFn: "alphanumeric",
         cell: ({ row }) => (
-          <span className="font-mono text-sm text-[var(--color-muted-foreground)]">{row.original.ip}</span>
+          <span className="font-mono text-sm text-(--color-muted-foreground)">{row.original.ip}</span>
         ),
       },
       {
@@ -428,7 +427,7 @@ export function ServersPage({
               </Badge>
             );
           }
-          return <span className="text-xs text-[var(--color-muted-foreground)]">—</span>;
+          return <span className="text-xs text-(--color-muted-foreground)">—</span>;
         },
       },
       {
@@ -974,14 +973,14 @@ export function ServersPage({
           )
         : null}
 
-      <div className="border-b border-[var(--color-border)] bg-[var(--color-card)]/40 px-6 py-3">
+      <div className="border-b border-(--color-border) bg-(--color-card)/40 px-6 py-3">
         {!level1Mode ? (
           <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold tracking-tight">{t("servers_title")}</h2>
-              <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+              <p className="mt-1 text-sm text-(--color-muted-foreground)">
                 {t("servers_subtitle")}{" "}
-                <span className="font-mono text-[var(--color-foreground)]">{automationUsername}</span>
+                <span className="font-mono text-(--color-foreground)">{automationUsername}</span>
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1002,7 +1001,7 @@ export function ServersPage({
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative min-w-[200px] flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-muted-foreground)" />
             <Input
               className="pl-9"
               placeholder={t("search_placeholder")}
@@ -1096,13 +1095,13 @@ export function ServersPage({
       </div>
 
       <div className="flex-1 px-6 py-4">
-        {error ? <p className="mb-3 text-sm text-[var(--color-destructive)]">{error}</p> : null}
+        {error ? <p className="mb-3 text-sm text-(--color-destructive)">{error}</p> : null}
         {info ? <p className="mb-3 text-sm text-emerald-300">{info}</p> : null}
 
-        <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/80">
+        <div className="overflow-hidden rounded-xl border border-(--color-border) bg-(--color-card)/80">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="border-b border-[var(--color-border)] bg-[var(--color-muted)]/40 text-[var(--color-muted-foreground)]">
+              <thead className="border-b border-(--color-border) bg-(--color-muted)/40 text-(--color-muted-foreground)">
                 {table.getHeaderGroups().map((hg) => (
                   <tr key={hg.id}>
                     {hg.headers.map((h) => (
@@ -1110,7 +1109,7 @@ export function ServersPage({
                         key={h.id}
                         className={`px-3 py-3 text-left font-medium ${
                           h.column.getCanSort()
-                            ? "cursor-pointer select-none hover:text-[var(--color-foreground)]"
+                            ? "cursor-pointer select-none hover:text-(--color-foreground)"
                             : ""
                         }`}
                         onClick={h.column.getToggleSortingHandler()}
@@ -1124,13 +1123,13 @@ export function ServersPage({
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={columns.length} className="px-3 py-10 text-center text-[var(--color-muted-foreground)]">
+                    <td colSpan={columns.length} className="px-3 py-10 text-center text-(--color-muted-foreground)">
                       {t("loading")}
                     </td>
                   </tr>
                 ) : items.length === 0 ? (
                   <tr>
-                    <td colSpan={columns.length} className="px-3 py-10 text-center text-[var(--color-muted-foreground)]">
+                    <td colSpan={columns.length} className="px-3 py-10 text-center text-(--color-muted-foreground)">
                       {t("no_records")}
                     </td>
                   </tr>
@@ -1138,7 +1137,7 @@ export function ServersPage({
                   table.getRowModel().rows.map((row) => (
                     <tr
                       key={row.id}
-                      className="ops-row cursor-pointer border-t border-[var(--color-border)] data-[state=selected]:bg-[var(--color-primary)]/25"
+                      className="ops-row cursor-pointer border-t border-(--color-border) data-[state=selected]:bg-(--color-primary)/25"
                       data-state={row.getIsSelected() ? "selected" : undefined}
                       onClick={(e) => {
                         const el = e.target as HTMLElement;
@@ -1210,20 +1209,20 @@ export function ServersPage({
           </DialogHeader>
           <form onSubmit={onSubmit} className="space-y-3">
             {level1Mode ? (
-              <p className="text-xs text-[var(--color-muted-foreground)] leading-relaxed">
+              <p className="text-xs text-(--color-muted-foreground) leading-relaxed">
                 Kayıt ainew envantere yazılır. Fiziksel/sanal tip, SSH sonrası otomatik tespit edilir
                 (Ops: Level 1 otomasyon user —{" "}
-                <span className="font-mono text-[var(--color-foreground)]">{automationUsername}</span>
+                <span className="font-mono text-(--color-foreground)">{automationUsername}</span>
                 ; ainew yönetim: Global Credential). Aşağıdaki parola opsiyonel ainew SSH override.
               </p>
             ) : (
-              <p className="text-xs text-[var(--color-muted-foreground)]">
+              <p className="text-xs text-(--color-muted-foreground)">
                 {t("ssh_user_setting")}:{" "}
-                <span className="font-mono text-[var(--color-foreground)]">{automationUsername}</span>
+                <span className="font-mono text-(--color-foreground)">{automationUsername}</span>
               </p>
             )}
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("hostname")}</label>
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("hostname")}</label>
               <Input
                 value={form.hostname}
                 onChange={(e) => setForm({ ...form, hostname: e.target.value })}
@@ -1231,7 +1230,7 @@ export function ServersPage({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">{t("ip")}</label>
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">{t("ip")}</label>
               <Input
                 className="font-mono"
                 value={form.ip}
@@ -1240,7 +1239,7 @@ export function ServersPage({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {level1Mode
                   ? editing
                     ? "Ainew SSH parola (opsiyonel)"
@@ -1280,28 +1279,28 @@ export function ServersPage({
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-(--color-muted-foreground)">
               {t("import_progress", { done: importDone, total: importTotal || "…" })}
             </p>
             {importCurrent ? (
-              <p className="font-mono text-xs text-[var(--color-foreground)]">
+              <p className="font-mono text-xs text-(--color-foreground)">
                 {t("import_progress_current", { hostname: importCurrent })}
               </p>
             ) : null}
-            <div className="h-2 overflow-hidden rounded-full bg-[var(--color-muted)]">
+            <div className="h-2 overflow-hidden rounded-full bg-(--color-muted)">
               <div
-                className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300"
+                className="h-full rounded-full bg-(--color-primary) transition-[width] duration-300"
                 style={{
                   width: `${importTotal > 0 ? Math.round((importDone / importTotal) * 100) : 0}%`,
                 }}
               />
             </div>
             {importItems.length > 0 ? (
-              <div className="max-h-56 overflow-auto rounded-md border border-[var(--color-border)]">
+              <div className="max-h-56 overflow-auto rounded-md border border-(--color-border)">
                 <table className="w-full text-xs">
                   <tbody>
                     {importItems.map((item) => (
-                      <tr key={`${item.hostname}-${item.ip}`} className="border-t border-[var(--color-border)]">
+                      <tr key={`${item.hostname}-${item.ip}`} className="border-t border-(--color-border)">
                         <td className="px-2 py-1.5 font-mono">{item.hostname}</td>
                         <td className="px-2 py-1.5">
                           <Badge
@@ -1322,7 +1321,7 @@ export function ServersPage({
                                   : t("import_status_error")}
                           </Badge>
                         </td>
-                        <td className="max-w-[180px] truncate px-2 py-1.5 text-[var(--color-muted-foreground)]" title={item.message}>
+                        <td className="max-w-[180px] truncate px-2 py-1.5 text-(--color-muted-foreground)" title={item.message}>
                           {item.message}
                         </td>
                       </tr>
@@ -1364,7 +1363,7 @@ export function ServersPage({
           <DialogHeader>
             <DialogTitle>{t("bulk_test_all_confirm_title")}</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
+          <p className="text-sm text-(--color-muted-foreground)">
             {t("bulk_test_all_confirm", { n: bulkTestConfirmCount })}
           </p>
           <div className="mt-4 flex justify-end gap-2">
@@ -1400,28 +1399,28 @@ export function ServersPage({
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-(--color-muted-foreground)">
               {t("bulk_test_progress", { done: bulkTestDone, total: bulkTestTotal || "…" })}
             </p>
             {bulkTestCurrent ? (
-              <p className="font-mono text-xs text-[var(--color-foreground)]">
+              <p className="font-mono text-xs text-(--color-foreground)">
                 {t("bulk_test_current", { hostname: bulkTestCurrent })}
               </p>
             ) : null}
-            <div className="h-2 overflow-hidden rounded-full bg-[var(--color-muted)]">
+            <div className="h-2 overflow-hidden rounded-full bg-(--color-muted)">
               <div
-                className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300"
+                className="h-full rounded-full bg-(--color-primary) transition-[width] duration-300"
                 style={{
                   width: `${bulkTestTotal > 0 ? Math.round((bulkTestDone / bulkTestTotal) * 100) : 0}%`,
                 }}
               />
             </div>
             {bulkTestItems.length > 0 ? (
-              <div className="max-h-56 overflow-auto rounded-md border border-[var(--color-border)]">
+              <div className="max-h-56 overflow-auto rounded-md border border-(--color-border)">
                 <table className="w-full text-xs">
                   <tbody>
                     {bulkTestItems.map((item) => (
-                      <tr key={item.id} className="border-t border-[var(--color-border)]">
+                      <tr key={item.id} className="border-t border-(--color-border)">
                         <td className="px-2 py-1.5 font-mono">{item.hostname}</td>
                         <td className="px-2 py-1.5">
                           <Badge variant={item.ok ? "success" : "danger"}>
@@ -1429,7 +1428,7 @@ export function ServersPage({
                           </Badge>
                         </td>
                         <td
-                          className="max-w-[180px] truncate px-2 py-1.5 text-[var(--color-muted-foreground)]"
+                          className="max-w-[180px] truncate px-2 py-1.5 text-(--color-muted-foreground)"
                           title={item.message}
                         >
                           {item.message}
@@ -1459,7 +1458,7 @@ export function ServersPage({
       {bulkTestMinimized && (bulkTesting || bulkTestFinished) ? (
         <div
           ref={chipRef}
-          className="fixed z-50 w-[min(360px,calc(100vw-2rem))] cursor-grab rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]/95 p-3 shadow-lg backdrop-blur active:cursor-grabbing"
+          className="fixed z-50 w-[min(360px,calc(100vw-2rem))] cursor-grab rounded-xl border border-(--color-border) bg-(--color-card)/95 p-3 shadow-lg backdrop-blur-sm active:cursor-grabbing"
           style={
             chipPos
               ? { left: chipPos.left, top: chipPos.top, right: "auto", bottom: "auto" }
@@ -1471,7 +1470,7 @@ export function ServersPage({
           onPointerCancel={onChipPointerUp}
         >
           <div className="flex items-start gap-2">
-            <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" aria-hidden />
+            <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-(--color-muted-foreground)" aria-hidden />
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-medium">
@@ -1484,20 +1483,20 @@ export function ServersPage({
                 </p>
                 <button
                   type="button"
-                  className="shrink-0 text-xs text-[var(--color-primary)] hover:underline"
+                  className="shrink-0 text-xs text-(--color-primary) hover:underline"
                   onClick={expandBulkTest}
                 >
                   {t("bulk_test_show")}
                 </button>
               </div>
               {!bulkTestFinished && bulkTestCurrent ? (
-                <p className="mt-1 truncate font-mono text-xs text-[var(--color-muted-foreground)]">
+                <p className="mt-1 truncate font-mono text-xs text-(--color-muted-foreground)">
                   {bulkTestCurrent}
                 </p>
               ) : null}
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--color-muted)]">
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-(--color-muted)">
                 <div
-                  className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300"
+                  className="h-full rounded-full bg-(--color-primary) transition-[width] duration-300"
                   style={{
                     width: `${bulkTestTotal > 0 ? Math.round((bulkTestDone / bulkTestTotal) * 100) : 0}%`,
                   }}

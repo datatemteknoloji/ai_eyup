@@ -89,7 +89,5 @@ export default {
       },
     },
   },
-  plugins: [
-    require('@tailwindcss/typography'),
-  ],
+  // plugins: @tailwindcss/typography → src/index.css içinde @plugin ile yüklenir (Tailwind v4)
 }

@@ -1,4 +1,6 @@
-import React, { useMemo } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Maximize2, X } from 'lucide-react'
 import {
   AreaChart,
   Area,
@@ -77,6 +79,13 @@ function formatChartTooltipLabel(ts: string, spanMs: number): string {
 /** AI chat mesajı içine gömülü zaman serisi grafiği (Recharts). */
 const ChatMetricChart: React.FC<{ chart: ChatChartPayload; chartId?: string }> = ({ chart, chartId = 'chat-chart' }) => {
   const { theme } = useTheme()
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!open) return undefined
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
   const light = theme === 'light'
   const axis = light ? '#475569' : '#64748b'
   const grid = light ? '#cbd5e1' : '#334155'
@@ -135,81 +144,133 @@ const ChatMetricChart: React.FC<{ chart: ChatChartPayload; chartId?: string }> =
     )
   }
 
+  const renderPlot = (idPrefix: string, big: boolean) => (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={chartData} margin={{ top: 8, right: big ? 20 : 8, left: 0, bottom: 8 }}>
+        <defs>
+          {chart.series.map((_, i) => (
+            <linearGradient key={i} id={`${idPrefix}-fill-${i}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={CHART_COLORS[i % CHART_COLORS.length]} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={CHART_COLORS[i % CHART_COLORS.length]} stopOpacity={0} />
+            </linearGradient>
+          ))}
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke={grid} opacity={0.55} />
+        <XAxis
+          dataKey="ts"
+          stroke={axis}
+          fontSize={big ? 12 : 10}
+          tickLine={false}
+          ticks={xTicks}
+          interval={0}
+          tickFormatter={(v) => formatChartTick(String(v), spanMs)}
+          angle={spanMs > 36 * 3600 * 1000 ? -28 : 0}
+          textAnchor={spanMs > 36 * 3600 * 1000 ? 'end' : 'middle'}
+          height={spanMs > 36 * 3600 * 1000 ? 48 : 28}
+        />
+        <YAxis
+          stroke={axis}
+          fontSize={big ? 12 : 10}
+          tickLine={false}
+          tickCount={big ? 8 : 5}
+          domain={[yDomain.min, yDomain.max]}
+          allowDataOverflow
+          tickFormatter={(v) => {
+            const n = Number(v)
+            if (chart.unit === 'B/s') return formatBytesPerSec(n)
+            if (chart.unit === '%') return `${n.toFixed(n < 10 ? 1 : 0)}%`
+            return String(Math.round(n * 100) / 100)
+          }}
+          width={chart.unit === 'B/s' ? 56 : 44}
+        />
+        <Tooltip
+          contentStyle={{
+            backgroundColor: tip.bg,
+            border: `1px solid ${tip.border}`,
+            borderRadius: 8,
+            fontSize: 12,
+            color: tip.item,
+          }}
+          labelStyle={{ color: tip.label }}
+          itemStyle={{ color: tip.item }}
+          formatter={(value, name) => [formatValue(Number(value), chart.unit), name]}
+          labelFormatter={(label) => formatChartTooltipLabel(String(label), spanMs)}
+        />
+        {chart.series.length > 1 && (
+          <Legend wrapperStyle={{ fontSize: big ? 12 : 11, color: titleColor }} />
+        )}
+        {chart.series.map((s, i) => (
+          <Area
+            key={s.metric_name}
+            type="monotone"
+            dataKey={s.label}
+            stroke={CHART_COLORS[i % CHART_COLORS.length]}
+            strokeWidth={big ? 2.5 : 2}
+            fill={`url(#${idPrefix}-fill-${i})`}
+            connectNulls
+          />
+        ))}
+      </AreaChart>
+    </ResponsiveContainer>
+  )
+
   return (
     <div className="mt-2 overflow-hidden rounded-xl border border-cyber-border bg-cyber-card">
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5 dark:border-white/10">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5 dark:border-white/10">
         <span className="text-xs font-semibold text-slate-100">{chart.title}</span>
-        {chart.unit && <span className="text-[10px] text-slate-500">{chart.unit}</span>}
+        <div className="flex items-center gap-2">
+          {chart.unit && <span className="text-[10px] text-slate-500">{chart.unit}</span>}
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            title="Grafiği büyüt"
+            aria-label={`Grafiği büyüt: ${chart.title}`}
+            data-testid="chat-chart-expand"
+            className="inline-flex items-center gap-1 rounded-md border border-cyber-border px-2 py-1 text-[10px] font-medium text-slate-300 transition-colors hover:border-blue-500/60 hover:text-blue-400 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
+            <Maximize2 size={12} aria-hidden="true" />
+            Büyüt
+          </button>
+        </div>
       </div>
       <div className="p-3" style={{ height: 240 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-            <defs>
-              {chart.series.map((_, i) => (
-                <linearGradient key={i} id={`${chartId}-fill-${i}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={CHART_COLORS[i % CHART_COLORS.length]} stopOpacity={0.35} />
-                  <stop offset="100%" stopColor={CHART_COLORS[i % CHART_COLORS.length]} stopOpacity={0} />
-                </linearGradient>
-              ))}
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke={grid} opacity={0.55} />
-            <XAxis
-              dataKey="ts"
-              stroke={axis}
-              fontSize={10}
-              tickLine={false}
-              ticks={xTicks}
-              interval={0}
-              tickFormatter={(v) => formatChartTick(String(v), spanMs)}
-              angle={spanMs > 36 * 3600 * 1000 ? -28 : 0}
-              textAnchor={spanMs > 36 * 3600 * 1000 ? 'end' : 'middle'}
-              height={spanMs > 36 * 3600 * 1000 ? 48 : 28}
-            />
-            <YAxis
-              stroke={axis}
-              fontSize={10}
-              tickLine={false}
-              tickCount={5}
-              domain={[yDomain.min, yDomain.max]}
-              allowDataOverflow
-              tickFormatter={(v) => {
-                const n = Number(v)
-                if (chart.unit === 'B/s') return formatBytesPerSec(n)
-                if (chart.unit === '%') return `${n.toFixed(n < 10 ? 1 : 0)}%`
-                return String(Math.round(n * 100) / 100)
-              }}
-              width={chart.unit === 'B/s' ? 56 : 44}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: tip.bg,
-                border: `1px solid ${tip.border}`,
-                borderRadius: 8,
-                fontSize: 12,
-                color: tip.item,
-              }}
-              labelStyle={{ color: tip.label }}
-              itemStyle={{ color: tip.item }}
-              formatter={(value: number, name: string) => [formatValue(Number(value), chart.unit), name]}
-              labelFormatter={(label) => formatChartTooltipLabel(String(label), spanMs)}
-            />
-            {chart.series.length > 1 && (
-              <Legend wrapperStyle={{ fontSize: 11, color: titleColor }} />
-            )}
-            {chart.series.map((s, i) => (
-              <Area
-                key={s.metric_name}
-                type="monotone"
-                dataKey={s.label}
-                stroke={CHART_COLORS[i % CHART_COLORS.length]}
-                strokeWidth={2}
-                fill={`url(#${chartId}-fill-${i})`}
-                connectNulls
-              />
-            ))}
-          </AreaChart>
-        </ResponsiveContainer>
+        {renderPlot(chartId, false)}
       </div>
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-100 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={chart.title}
+          data-testid="chat-chart-modal"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-cyber-border bg-cyber-card shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3 dark:border-white/10">
+              <span className="text-sm font-semibold text-slate-100">{chart.title}</span>
+              <div className="flex items-center gap-3">
+                {chart.unit && <span className="text-xs text-slate-500">{chart.unit}</span>}
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  aria-label="Kapat"
+                  data-testid="chat-chart-close"
+                  className="rounded-md p-1 text-slate-400 hover:bg-white/10 hover:text-slate-100 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <X size={18} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+            <div className="p-4" style={{ height: 'min(70vh, 640px)' }}>
+              {renderPlot(`${chartId}-zoom`, true)}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   )
 }

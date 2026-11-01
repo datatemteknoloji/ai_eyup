@@ -2,7 +2,7 @@
 
 Tek kural: bir kayıt sentetiktir eğer
 - `meta_data.fake_seed` veya `meta_data.synthetic` doğruysa, veya
-- adı `ZZ-FAKE` ile başlıyorsa (hypervisor, OpenShift cluster, sunucu), veya
+- adı `ZZ-FAKE` ile başlıyorsa (hypervisor, OpenShift cluster, sunucu) ya da `zz-hwdemo-` ile başlıyorsa (donanım demo sunucuları), veya
 - entegrasyon `kind` değeri `_demo` ile bitiyorsa (`veeam_demo`, `hw_demo`).
 
 Sunucu satırında ayrı bayrak yok; sentetik hypervisor'a bağlıysa sentetiktir.
@@ -22,6 +22,8 @@ from app.models.openshift import OpenShiftCluster
 from app.models.server import Server
 
 NAME_PREFIX = "ZZ-FAKE"
+# Donanım demo tohumunun sunucuları (zz-hwdemo-lnx-01, zz-hwdemo-win-01 …): ad kuralıyla sentetik (küçük harf; kayıt silinmez).
+_DEMO_NAME_PREFIXES = ("zz-hwdemo-",)
 
 
 def _meta(value: Any) -> Dict[str, Any]:
@@ -34,7 +36,8 @@ def meta_is_synthetic(meta: Any) -> bool:
 
 
 def name_is_synthetic(name: Optional[str]) -> bool:
-    return (name or "").startswith(NAME_PREFIX)
+    n = name or ""
+    return n.startswith(NAME_PREFIX) or n.lower().startswith(_DEMO_NAME_PREFIXES)
 
 
 def kind_is_synthetic(kind: Optional[str]) -> bool:

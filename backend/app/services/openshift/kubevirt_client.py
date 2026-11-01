@@ -253,6 +253,11 @@ class KubeVirtClient:
                     "node_name": node_name,
                     "node": node_name,
                     "host": node_name,
+                    # Envanter kolonları: node eşlemesi olmadan dashboard VM'leri host'a bağlayamaz
+                    # (OpenShift'te VM sayısı N kat şişiyordu — host başı sayım vm_host_name'den gelir).
+                    "vm_host_name": node_name or None,
+                    "vm_host_ref": f"ocp-node/{node_name}" if node_name else None,
+                    "vm_cluster": namespace or None,
                     "phase": phase,
                     "printable_status": printable,
                     "usage": None,

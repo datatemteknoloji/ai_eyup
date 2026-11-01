@@ -92,7 +92,7 @@ const OpenShiftVmConsolePage: React.FC = () => {
 
   return (
     <div className="fixed inset-0 bg-[#0a0f1a] flex flex-col">
-      <div className="h-12 flex items-center gap-3 px-4 border-b border-white/10 bg-[#161b22] flex-shrink-0">
+      <div className="h-12 flex items-center gap-3 px-4 border-b border-white/10 bg-[#161b22] shrink-0">
         <Monitor className="w-4 h-4 text-violet-400" />
         <span className="text-sm font-semibold text-slate-200">{t('ocp_kubevirt_console')}</span>
         <span className="text-xs text-slate-500 font-mono truncate">{title}</span>
@@ -110,7 +110,7 @@ const OpenShiftVmConsolePage: React.FC = () => {
                   /* ignore */
                 }
               }}
-              className="text-xs px-2.5 py-1.5 rounded border border-white/15 text-slate-300 hover:bg-white/5"
+              className="text-xs px-2.5 py-1.5 rounded-sm border border-white/15 text-slate-300 hover:bg-white/5"
             >
               {t('ocp_ctrl_alt_del')}
             </button>
@@ -118,14 +118,14 @@ const OpenShiftVmConsolePage: React.FC = () => {
           <button
             type="button"
             onClick={() => connect()}
-            className="text-xs px-2.5 py-1.5 rounded border border-white/15 text-slate-300 hover:bg-white/5 inline-flex items-center gap-1.5"
+            className="text-xs px-2.5 py-1.5 rounded-sm border border-white/15 text-slate-300 hover:bg-white/5 inline-flex items-center gap-1.5"
           >
             <RefreshCw className="w-3.5 h-3.5" /> {t('ocp_reconnect')}
           </button>
           <button
             type="button"
             onClick={() => window.close()}
-            className="text-xs px-2.5 py-1.5 rounded border border-white/15 text-slate-300 hover:bg-white/5"
+            className="text-xs px-2.5 py-1.5 rounded-sm border border-white/15 text-slate-300 hover:bg-white/5"
           >
             {t('close')}
           </button>

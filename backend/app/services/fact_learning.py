@@ -20,8 +20,8 @@ Akis:
 """
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -337,8 +337,36 @@ VIRT_STABLE_SERVER_FIELDS: Dict[str, str] = {
 }
 
 
-def extract_and_store_virt_facts(db: Session, server) -> int:
-    """Inventory sync sonrası VM Server satırından yapısal virt fact'leri upsert eder."""
+# Değişmeyen bir fact'in "son onay" damgası bu süreden sık güncellenmez (sync her turda ~12 satırı
+# boşuna UPDATE ediyordu: 1000 VM'de ~12.000 UPDATE, kayıt fazının ~%45'i). Değer değişirse hemen yazılır.
+FACT_CONFIRM_MIN_INTERVAL = timedelta(hours=1)
+
+
+def _confirm_or_update_fact(existing, value_str: str, now: datetime, source: str) -> bool:
+    """Var olan fact'i onayla/güncelle. Satıra yazıldıysa True; sıklık sınırı yüzünden atlandıysa False."""
+    if existing.value == value_str:
+        last = existing.last_confirmed_at
+        if last is not None and last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        if existing.source == source and last is not None and (now - last) < FACT_CONFIRM_MIN_INTERVAL:
+            return False
+        existing.last_confirmed_at = now
+        existing.times_confirmed = (existing.times_confirmed or 1) + 1
+    else:
+        existing.value = value_str
+        existing.first_learned_at = now
+        existing.last_confirmed_at = now
+        existing.times_confirmed = 1
+    existing.source = source
+    return True
+
+
+def extract_and_store_virt_facts(db: Session, server, *, commit: bool = True) -> int:
+    """Inventory sync sonrası VM Server satırından yapısal virt fact'leri upsert eder.
+
+    `commit=False`: çağıran toplu commit yapar (sync döngüsü 10 VM'de bir); fact yazımı SAVEPOINT içindedir,
+    hata yalnız fact'leri geri alır, çağıranın bekleyen işini bozmaz.
+    """
     if not server or not getattr(server, "id", None):
         return 0
     if not getattr(server, "hypervisor_id", None) and (getattr(server, "server_type", "") or "").upper() != "VIRTUAL":
@@ -349,6 +377,9 @@ def extract_and_store_virt_facts(db: Session, server) -> int:
     try:
         from app.models.learned_fact import LearnedFact
 
+        # (category, key, value) — önce hepsi toplanır, mevcut satırlar TEK sorguda okunur
+        # (eskiden fact başına bir SELECT: VM başına ~14 sorgu).
+        wanted: List[Tuple[str, str, str]] = []
         for attr, category in VIRT_STABLE_SERVER_FIELDS.items():
             raw = getattr(server, attr, None)
             if raw is None or raw == "":
@@ -356,38 +387,7 @@ def extract_and_store_virt_facts(db: Session, server) -> int:
             value_str = _stringify(raw)[:_MAX_VALUE_CHARS]
             if not value_str:
                 continue
-            key = f"virt.{attr}"
-            existing = (
-                db.query(LearnedFact)
-                .filter(
-                    LearnedFact.server_id == server.id,
-                    LearnedFact.category == category,
-                    LearnedFact.key == key,
-                )
-                .first()
-            )
-            if existing:
-                if existing.value == value_str:
-                    existing.last_confirmed_at = now
-                    existing.times_confirmed = (existing.times_confirmed or 1) + 1
-                else:
-                    existing.value = value_str
-                    existing.first_learned_at = now
-                    existing.last_confirmed_at = now
-                    existing.times_confirmed = 1
-                existing.source = "virt_sync"
-            else:
-                db.add(LearnedFact(
-                    server_id=server.id,
-                    category=category,
-                    key=key,
-                    value=value_str,
-                    source="virt_sync",
-                    first_learned_at=now,
-                    last_confirmed_at=now,
-                    times_confirmed=1,
-                ))
-            touched += 1
+            wanted.append((category, f"virt.{attr}", value_str))
 
         if getattr(server, "hypervisor_id", None):
             hv_name = None
@@ -405,41 +405,49 @@ def extract_and_store_virt_facts(db: Session, server) -> int:
                 except Exception:
                     pass
             if hv_name:
-                key, category, value_str = "virt.hypervisor_name", "virt_cluster", str(hv_name)[:200]
-                existing = (
+                wanted.append(("virt_cluster", "virt.hypervisor_name", str(hv_name)[:200]))
+
+        def _apply() -> int:
+            n = 0
+            if wanted:
+                rows = (
                     db.query(LearnedFact)
                     .filter(
                         LearnedFact.server_id == server.id,
-                        LearnedFact.category == category,
-                        LearnedFact.key == key,
+                        LearnedFact.key.in_([k for _, k, _ in wanted]),
                     )
-                    .first()
+                    .all()
                 )
-                if existing:
-                    if existing.value == value_str:
-                        existing.last_confirmed_at = now
-                        existing.times_confirmed = (existing.times_confirmed or 1) + 1
+                existing_by = {(r.category, r.key): r for r in rows}
+                for category, key, value_str in wanted:
+                    existing = existing_by.get((category, key))
+                    if existing:
+                        if _confirm_or_update_fact(existing, value_str, now, "virt_sync"):
+                            n += 1
                     else:
-                        existing.value = value_str
-                        existing.first_learned_at = now
-                        existing.last_confirmed_at = now
-                        existing.times_confirmed = 1
-                    existing.source = "virt_sync"
-                else:
-                    db.add(LearnedFact(
-                        server_id=server.id, category=category, key=key, value=value_str,
-                        source="virt_sync", first_learned_at=now, last_confirmed_at=now, times_confirmed=1,
-                    ))
-                touched += 1
+                        db.add(LearnedFact(
+                            server_id=server.id, category=category, key=key, value=value_str,
+                            source="virt_sync", first_learned_at=now, last_confirmed_at=now, times_confirmed=1,
+                        ))
+                        n += 1
 
-        if touched:
+            return n
+
+        if commit:
+            touched = _apply()
+        else:
+            with db.begin_nested():
+                touched = _apply()
+
+        if touched and commit:
             db.commit()
     except Exception as e:
         logger.debug("Virt fact learning atlandi (%s): %s", getattr(server, "name", "?"), e)
-        try:
-            db.rollback()
-        except Exception:
-            pass
+        if commit:
+            try:
+                db.rollback()
+            except Exception:
+                pass
         return 0
     return touched
 
@@ -465,48 +473,53 @@ def store_live_datastore_facts(db: Session, datastores: List[Dict[str, Any]]) ->
             .filter(Server.vm_datastore.isnot(None), Server.vm_datastore != "")
             .all()
         )
+        # (server, [(key, category, value)]) — mevcut fact'ler sunucu başına değil, parça başına TEK sorguda
+        # okunur (eskiden fact başına SELECT: 1000 VM'de ~5000 sorgu + ~5000 UPDATE, sohbet isteğinde 7-9 sn).
+        work = []
         for s in servers:
             ds_name = (s.vm_datastore or "").strip()
             d = by_name.get(ds_name.lower())
             if not d:
                 continue
-            pairs = [
-                ("virt.datastore_name", "virt_storage", ds_name),
-                ("virt.datastore_usage_pct", "virt_storage", d.get("usage_pct")),
-                ("virt.datastore_free_gb", "virt_storage", d.get("free_gb")),
-                ("virt.datastore_capacity_gb", "virt_storage", d.get("capacity_gb")),
-                ("virt.datastore_accessible", "virt_storage", d.get("accessible")),
-            ]
-            for key, category, raw in pairs:
+            pairs = []
+            for key, raw in (
+                ("virt.datastore_name", ds_name),
+                ("virt.datastore_usage_pct", d.get("usage_pct")),
+                ("virt.datastore_free_gb", d.get("free_gb")),
+                ("virt.datastore_capacity_gb", d.get("capacity_gb")),
+                ("virt.datastore_accessible", d.get("accessible")),
+            ):
                 if raw is None or raw == "":
                     continue
-                value_str = _stringify(raw)[:_MAX_VALUE_CHARS]
-                existing = (
-                    db.query(LearnedFact)
-                    .filter(
-                        LearnedFact.server_id == s.id,
-                        LearnedFact.category == category,
-                        LearnedFact.key == key,
-                    )
-                    .first()
+                pairs.append((key, "virt_storage", _stringify(raw)[:_MAX_VALUE_CHARS]))
+            if pairs:
+                work.append((s, pairs))
+
+        chunk = 500
+        for off in range(0, len(work), chunk):
+            part = work[off:off + chunk]
+            rows = (
+                db.query(LearnedFact)
+                .filter(
+                    LearnedFact.server_id.in_([s.id for s, _ in part]),
+                    LearnedFact.key.in_(sorted({k for _, ps in part for k, _, _ in ps})),
                 )
-                if existing:
-                    if existing.value == value_str:
-                        existing.last_confirmed_at = now
-                        existing.times_confirmed = (existing.times_confirmed or 1) + 1
+                .all()
+            )
+            existing_by = {(r.server_id, r.category, r.key): r for r in rows}
+            for s, pairs in part:
+                for key, category, value_str in pairs:
+                    existing = existing_by.get((s.id, category, key))
+                    if existing:
+                        if _confirm_or_update_fact(existing, value_str, now, "vcenter_live"):
+                            touched += 1
                     else:
-                        existing.value = value_str
-                        existing.first_learned_at = now
-                        existing.last_confirmed_at = now
-                        existing.times_confirmed = 1
-                    existing.source = "vcenter_live"
-                else:
-                    db.add(LearnedFact(
-                        server_id=s.id, category=category, key=key, value=value_str,
-                        source="vcenter_live",
-                        first_learned_at=now, last_confirmed_at=now, times_confirmed=1,
-                    ))
-                touched += 1
+                        db.add(LearnedFact(
+                            server_id=s.id, category=category, key=key, value=value_str,
+                            source="vcenter_live",
+                            first_learned_at=now, last_confirmed_at=now, times_confirmed=1,
+                        ))
+                        touched += 1
         if touched:
             db.commit()
     except Exception as e:

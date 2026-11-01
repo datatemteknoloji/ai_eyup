@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, ORJSONResponse
-from starlette.middleware.gzip import GZipMiddleware
+from app.core.gzip_sse import SSEAwareGZipMiddleware as GZipMiddleware
 from app.core.config import settings
 from app.core.version import get_app_version
 import logging
@@ -51,6 +51,17 @@ def chat_ttft_metrics():
     from fastapi.responses import Response
 
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/metrics/chat-gate")
+def chat_gate_metrics():
+    """Prometheus metni — sohbet AI kapısı (Adım 13): slot/kuyruk/bekleme/ret sayaçları. Redis'ten okunur
+    (UVICORN_WORKERS>1'de doğru). Yalnız sayaç; kullanıcı/tur kimliği yok."""
+    from fastapi.responses import Response
+
+    from app.services.chat_orchestrator import ai_gate
+
+    return Response(ai_gate.render_prometheus(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 # Pydantic'in ham (İngilizce, errors.pydantic.dev linkli) validasyon hatalarını
@@ -194,6 +205,34 @@ async def startup_tasks():
     loop = asyncio.get_event_loop()
     loop.set_default_executor(_SSH_EXECUTOR)
     logger.info("SSH thread pool başlatıldı (max_workers=150)")
+
+    # Adım 11: event döngüsü tıkanma gözcüsü (SSE teslim gecikmesi tanısı; LOOP_WATCHDOG=0 ile kapanır)
+    try:
+        from app.core import loop_watchdog as _loop_watchdog
+        _loop_watchdog.start(loop)
+    except Exception as _e:
+        logger.warning("loop_watchdog başlatılamadı: %s", _e)
+
+    # DB kilit kuyruğu bekçisi: uzun «idle in transaction» + bekleyen AccessExclusive (Timescale retention)
+    # birleşimi tüm uygulamayı kilitlemesin (DB_LOCK_GUARD=0 ile kapanır)
+    try:
+        from app.core import db_lock_guard as _db_lock_guard
+        _db_lock_guard.start()
+    except Exception as _e:
+        logger.warning("db_lock_guard başlatılamadı: %s", _e)
+
+    # Sohbet varlık çözümleyici kataloğunu arka planda ısıt (ilk soru ~3 sn katalog yüklemesini beklemesin)
+    try:
+        from app.services.chat_quality import entity_gate as _entity_gate
+        _entity_gate.warm_up()
+    except Exception:
+        pass
+    # Sayım kuralları kapsam kataloğu + DB bağlantısı (ilk sayım sorusu ek yük taşımasın)
+    try:
+        from app.services.chat_quality import count_rules as _count_rules
+        _count_rules.warm_up()
+    except Exception:
+        pass
 
     # FastAPI'nin senkron `def` endpoint'leri (agent chat, hypervisor ask, ansible,
     # health check vb. — bkz. app/api/agent.py, hypervisors.py, ansible.py) Starlette'in
@@ -356,6 +395,23 @@ async def startup_tasks():
                 "ALTER TABLE servers ADD COLUMN IF NOT EXISTS hw_collected_at TIMESTAMPTZ",
                 "CREATE INDEX IF NOT EXISTS ix_servers_hw_serial ON servers (hw_serial)",
                 "CREATE INDEX IF NOT EXISTS ix_servers_hw_uuid ON servers (hw_uuid)",
+                # Faz 3a — host donanım logları (hw_log_entries genişler; mevcut kurulum bozulmaz)
+                "ALTER TABLE hw_log_entries ALTER COLUMN server_id DROP NOT NULL",
+                "ALTER TABLE hw_log_entries ADD COLUMN IF NOT EXISTS target_kind VARCHAR(16)",
+                "ALTER TABLE hw_log_entries ADD COLUMN IF NOT EXISTS target_id INTEGER",
+                "ALTER TABLE hw_log_entries ADD COLUMN IF NOT EXISTS source VARCHAR(24)",
+                "ALTER TABLE hw_log_entries ADD COLUMN IF NOT EXISTS category VARCHAR(32)",
+                "ALTER TABLE hw_log_entries ADD COLUMN IF NOT EXISTS event_key VARCHAR(64)",
+                "ALTER TABLE hw_log_entries ADD COLUMN IF NOT EXISTS occurrences INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE hw_log_entries ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ",
+                "ALTER TABLE hw_log_entries ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ",
+                # Faz C1 — firmware satırı: Installed/Available + ComponentId
+                "ALTER TABLE hw_firmware ADD COLUMN IF NOT EXISTS status VARCHAR(16)",
+                "ALTER TABLE hw_firmware ADD COLUMN IF NOT EXISTS component_id VARCHAR(64)",
+                "ALTER TABLE hw_firmware ADD COLUMN IF NOT EXISTS location VARCHAR(255)",
+                "CREATE INDEX IF NOT EXISTS ix_hw_log_entries_last_seen_at ON hw_log_entries (last_seen_at)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_hw_log_target_event "
+                "ON hw_log_entries (target_kind, target_id, source, event_key)",
                 "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS cluster_name VARCHAR(255)",
                 "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS cluster_ref VARCHAR(64)",
                 "ALTER TABLE hypervisor_host_metrics ADD COLUMN IF NOT EXISTS overall_status VARCHAR(32)",

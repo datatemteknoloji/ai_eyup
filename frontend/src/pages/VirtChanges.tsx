@@ -22,6 +22,17 @@ function ChangeRow({ c, base }: { c: any; base: InsightsBase }) {
       qc.invalidateQueries({ queryKey: [base] })
     } catch (err: any) { setMsg(err.message) }
   }
+  // Baseline kaldırma yalnız sanallaştırma API'sinde var (snapshot geçmişi korunur; sapma izleme durur).
+  const clearBaseline = async () => {
+    try {
+      const p = new URLSearchParams({
+        platform: c.platform, hypervisor_id: String(c.source_id), entity_kind: c.entity_kind, entity_ref: c.entity_ref,
+      })
+      await apiSend(base, `/baseline?${p}`, 'DELETE')
+      setMsg(t('vi_ch_baseline_cleared'))
+      qc.invalidateQueries({ queryKey: [base] })
+    } catch (err: any) { setMsg(err.message) }
+  }
   return (
     <>
       <tr className="border-b border-white/[0.04] hover:bg-white/[0.02] cursor-pointer" onClick={() => setOpen(!open)}>
@@ -32,8 +43,14 @@ function ChangeRow({ c, base }: { c: any; base: InsightsBase }) {
         <td className="px-3 py-2 text-xs text-slate-400 truncate max-w-[26rem]">{(c.changes || []).map((x: any) => x.path).join(', ')}</td>
         <td className="px-3 py-2 font-mono text-xs text-blue-300">{c.change_count}</td>
         <td className="px-3 py-2 text-right" onClick={e => e.stopPropagation()}>
-          {c.is_baseline ? <span className="text-[10px] text-emerald-400 border border-emerald-500/30 rounded px-1">baseline</span>
-            : isOperator && <GhostButton onClick={baseline}>{t('vi_ch_set_baseline')}</GhostButton>}
+          <div className="flex items-center justify-end gap-2">
+            {c.is_baseline || c.has_baseline
+              ? <span className="text-[10px] text-emerald-400 border border-emerald-500/30 rounded-sm px-1">baseline{c.baseline_at ? ` · ${new Date(c.baseline_at).toLocaleString()}` : ''}</span>
+              : isOperator && <GhostButton onClick={baseline}>{t('vi_ch_set_baseline')}</GhostButton>}
+            {isOperator && base !== 'ocp-insights' && (c.is_baseline || c.has_baseline) && (
+              <GhostButton onClick={clearBaseline}>{t('vi_ch_clear_baseline')}</GhostButton>
+            )}
+          </div>
           {msg && <div className="text-[10px] text-blue-300">{msg}</div>}
         </td>
       </tr>
@@ -130,6 +147,10 @@ export function ChangesView({ base }: { base: InsightsBase }) {
   const drift = useInsights<{ findings: Finding[] }>(base, '/findings?category=drift')
   const sum = useInsights<any>(base, '/summary')
   const rows: any[] = q.data?.changes || []
+  const baselineCount = typeof q.data?.baseline_count === 'number' ? q.data.baseline_count : null
+  const byKind = (q.data?.baseline_by_kind || {}) as Record<string, number>
+  const kindLine = Object.entries(byKind).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(', ')
+  const markedAt = q.data?.baseline_marked_at ? new Date(q.data.baseline_marked_at).toLocaleString() : ''
   return (
     <div className="space-y-5">
       <PageHeader title={t('vi_ch_page')} titleExtra={<PageInfo id={ocp ? 'oi_ch' : 'vi_ch'} titleKey="vi_ch_page" />} subtitle={ocp ? t('oi_ch_sub') : t('vi_ch_sub')} actions={<RunBar base={base} lastRun={sum.data?.last_run} />} />
@@ -158,6 +179,11 @@ export function ChangesView({ base }: { base: InsightsBase }) {
             <SearchInput value={entity} onChange={setEntity} placeholder={t('vi_col_entity')} />
             <div className="ml-auto"><BaselineAll base={base} /></div>
           </div>
+          {baselineCount != null && (
+            <div className="rounded-lg px-3 py-2 text-sm" style={{ color: 'var(--theme-foreground)', background: 'color-mix(in srgb, var(--theme-success-fg) 12%, var(--theme-card))', border: '1px solid color-mix(in srgb, var(--theme-success-fg) 45%, var(--theme-border))' }}>
+              {baselineCount > 0 ? t('vi_bl_marked', { n: baselineCount, k: kindLine, t: markedAt }) : t('vi_bl_marked_none')}
+            </div>
+          )}
           <Panel method="drift.changes">
             {q.isLoading ? <div className="p-6 text-sm text-slate-400">{t('loading')}</div> : rows.length === 0 ? (
               <div className="py-10 text-center text-sm text-slate-500 space-y-1">
@@ -185,7 +211,7 @@ export function ChangesView({ base }: { base: InsightsBase }) {
         </>
       )}
       {tab === 'drift' && (
-        <Panel><FindingsTable base={base} rows={drift.data?.findings || []} emptyText={t('vi_ch_no_drift')} showPlatform={!ocp} /></Panel>
+        <Panel><FindingsTable base={base} rows={drift.data?.findings || []} emptyText={(baselineCount ?? 0) > 0 ? t('vi_ch_no_drift_set') : t('vi_ch_no_drift')} showPlatform={!ocp} /></Panel>
       )}
     </div>
   )

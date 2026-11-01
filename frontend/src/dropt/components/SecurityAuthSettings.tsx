@@ -268,15 +268,15 @@ export function SecurityAuthSettings() {
         ))}
       </div>
 
-      {error ? <p className="text-sm text-[var(--color-destructive)]">{error}</p> : null}
+      {error ? <p className="text-sm text-(--color-destructive)">{error}</p> : null}
       {info ? <p className="text-sm text-emerald-300">{info}</p> : null}
 
       {subTab === "ad" ? (
         <form
           onSubmit={onSaveAd}
-          className="max-w-2xl space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm"
+          className="max-w-2xl space-y-4 rounded-2xl border border-(--color-border) bg-(--color-card) p-6 shadow-xs"
         >
-          <p className="text-sm text-[var(--color-muted-foreground)]">{t("portal_ad_help")}</p>
+          <p className="text-sm text-(--color-muted-foreground)">{t("portal_ad_help")}</p>
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
               checked={adForm.ad_enabled}
@@ -286,7 +286,7 @@ export function SecurityAuthSettings() {
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_ad_domain")} *
               </label>
               <Input
@@ -297,7 +297,7 @@ export function SecurityAuthSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_ad_host")} *
               </label>
               <Input
@@ -308,7 +308,7 @@ export function SecurityAuthSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_ad_port")} *
               </label>
               <Input
@@ -319,7 +319,7 @@ export function SecurityAuthSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_ad_ssl")}
               </label>
               <Select
@@ -343,7 +343,7 @@ export function SecurityAuthSettings() {
               </Select>
             </div>
             <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Base DN *</label>
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">Base DN *</label>
               <Input
                 className="font-mono"
                 placeholder="DC=datatem,DC=local"
@@ -352,7 +352,7 @@ export function SecurityAuthSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_ad_bind_user")} *
               </label>
               <Input
@@ -363,7 +363,7 @@ export function SecurityAuthSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_ad_bind_pass")} {identity?.ad_bind_password_set ? t("password_keep") : "*"}
               </label>
               <Input
@@ -373,7 +373,7 @@ export function SecurityAuthSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_admin_group")}
               </label>
               <Input
@@ -383,7 +383,7 @@ export function SecurityAuthSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_operator_group")}
               </label>
               <Input
@@ -396,7 +396,7 @@ export function SecurityAuthSettings() {
 
           <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sm">
             <p className="font-medium text-sky-100">{t("portal_ad_cert_title")}</p>
-            <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">{t("portal_ad_cert_help")}</p>
+            <p className="mt-1 text-xs text-(--color-muted-foreground)">{t("portal_ad_cert_help")}</p>
             <label className="mt-3 flex items-center gap-2 text-xs">
               <Checkbox
                 checked={adForm.ad_tls_verify}
@@ -405,7 +405,7 @@ export function SecurityAuthSettings() {
               {t("portal_ad_tls_verify")}
             </label>
             <textarea
-              className="mt-2 h-24 w-full rounded-md border border-[var(--color-border)] bg-[var(--theme-inset)] p-2 font-mono text-xs"
+              className="mt-2 h-24 w-full rounded-md border border-(--color-border) bg-(--theme-inset) p-2 font-mono text-xs"
               placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
               value={adForm.ad_ca_cert_pem}
               onChange={(e) => setAdForm({ ...adForm, ad_ca_cert_pem: e.target.value, ad_clear_ca: false })}
@@ -422,7 +422,7 @@ export function SecurityAuthSettings() {
             <p className="mt-2 text-[10px] text-amber-100/90">{t("portal_ad_cert_cn_hint")}</p>
           </div>
 
-          <p className="font-mono text-[10px] text-[var(--color-muted-foreground)]">
+          <p className="font-mono text-[10px] text-(--color-muted-foreground)">
             URL:{" "}
             {adForm.ad_use_ssl ? "ldaps" : "ldap"}://{adForm.ad_host || "…"}:{adForm.ad_port || "…"}
           </p>
@@ -436,7 +436,7 @@ export function SecurityAuthSettings() {
             </Button>
           </div>
 
-          <div className="border-t border-[var(--color-border)] pt-4">
+          <div className="border-t border-(--color-border) pt-4">
             <h4 className="text-sm font-medium">{t("portal_test_user")}</h4>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               <Input
@@ -468,9 +468,9 @@ export function SecurityAuthSettings() {
         <div className="max-w-xl space-y-4">
           <form
             onSubmit={onSaveKerberos}
-            className="space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm"
+            className="space-y-4 rounded-2xl border border-(--color-border) bg-(--color-card) p-6 shadow-xs"
           >
-            <p className="text-sm text-[var(--color-muted-foreground)]">{t("portal_sso_help")}</p>
+            <p className="text-sm text-(--color-muted-foreground)">{t("portal_sso_help")}</p>
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
                 checked={krbForm.sso_enabled}
@@ -479,7 +479,7 @@ export function SecurityAuthSettings() {
               {t("portal_sso_enable")}
             </label>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_krb_realm")} *
               </label>
               <Input
@@ -490,7 +490,7 @@ export function SecurityAuthSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_krb_spn")} *
               </label>
               <Input
@@ -501,7 +501,7 @@ export function SecurityAuthSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+              <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                 {t("portal_krb_keytab")}
               </label>
               <Input
@@ -510,7 +510,7 @@ export function SecurityAuthSettings() {
                 disabled={busy}
                 onChange={(e) => void onUploadKeytab(e.target.files?.[0] ?? null)}
               />
-              <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+              <p className="mt-1 text-xs text-(--color-muted-foreground)">
                 {identity?.kerberos_keytab_uploaded
                   ? t("portal_keytab_present")
                   : t("portal_keytab_missing")}
@@ -533,11 +533,11 @@ export function SecurityAuthSettings() {
             {showOidc ? (
               <form
                 onSubmit={onSaveOidc}
-                className="mt-2 space-y-3 rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-card)]/60 p-4"
+                className="mt-2 space-y-3 rounded-xl border border-dashed border-(--color-border) bg-(--color-card)/60 p-4"
               >
-                <p className="text-xs text-[var(--color-muted-foreground)]">{t("portal_oidc_help")}</p>
+                <p className="text-xs text-(--color-muted-foreground)">{t("portal_oidc_help")}</p>
                 <div>
-                  <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Issuer URL</label>
+                  <label className="mb-1 block text-xs text-(--color-muted-foreground)">Issuer URL</label>
                   <Input
                     className="font-mono"
                     value={oidcForm.sso_issuer}
@@ -546,7 +546,7 @@ export function SecurityAuthSettings() {
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Client ID</label>
+                    <label className="mb-1 block text-xs text-(--color-muted-foreground)">Client ID</label>
                     <Input
                       className="font-mono"
                       value={oidcForm.sso_client_id}
@@ -554,7 +554,7 @@ export function SecurityAuthSettings() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                    <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                       Client secret {identity?.sso_client_secret_set ? t("password_keep") : ""}
                     </label>
                     <Input
@@ -565,7 +565,7 @@ export function SecurityAuthSettings() {
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">Redirect URI</label>
+                  <label className="mb-1 block text-xs text-(--color-muted-foreground)">Redirect URI</label>
                   <Input
                     className="font-mono"
                     value={oidcForm.sso_redirect_uri}
@@ -573,7 +573,7 @@ export function SecurityAuthSettings() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-[var(--color-muted-foreground)]">
+                  <label className="mb-1 block text-xs text-(--color-muted-foreground)">
                     Frontend redirect
                   </label>
                   <Input

@@ -71,7 +71,7 @@ function PipelineFlow({ status }: { status?: AiopsStatus }) {
             </div>
             {i < stages.length - 1 && (
               <div className="flex items-center pt-6">
-                <svg width="24" height="20" viewBox="0 0 24 20" className="flex-shrink-0">
+                <svg width="24" height="20" viewBox="0 0 24 20" className="shrink-0">
                   <defs>
                     <linearGradient id={`flow-${i}`} x1="0" y1="0" x2="1" y2="0">
                       <stop offset="0%" stopColor={stages[i].color} stopOpacity="0.6" />
@@ -184,7 +184,7 @@ export function CorrelationTab() {
               <div key={m.metric} className="cyber-card p-4">
                 <div className="flex items-start gap-3 flex-wrap">
                   {/* Sol: Kronik göstergesi */}
-                  <div className="flex-shrink-0 mt-1">
+                  <div className="shrink-0 mt-1">
                     <div className="w-2.5 h-2.5 rounded-full"
                       style={{
                         background: m.is_very_chronic ? NEON.red : m.is_chronic ? NEON.orange : 'rgba(148,163,184,0.25)',
@@ -199,7 +199,7 @@ export function CorrelationTab() {
                     {/* Severity akışı */}
                     <div className="flex items-center gap-2 flex-wrap">
                       {/* Orijinal severity */}
-                      <span className="text-[11px] px-1.5 py-0.5 rounded font-semibold uppercase"
+                      <span className="text-[11px] px-1.5 py-0.5 rounded-sm font-semibold uppercase"
                         style={{ background: `color-mix(in srgb, ${origColor} 12%, transparent)`, color: origColor, border: `1px solid color-mix(in srgb, ${origColor} 20%, transparent)` }}>
                         {m.max_severity}
                       </span>
@@ -208,7 +208,7 @@ export function CorrelationTab() {
                       {degraded && (
                         <>
                           <span style={{ color: 'rgba(148,163,184,0.3)' }}>→</span>
-                          <span className="text-[11px] px-1.5 py-0.5 rounded font-semibold uppercase"
+                          <span className="text-[11px] px-1.5 py-0.5 rounded-sm font-semibold uppercase"
                             style={{ background: `color-mix(in srgb, ${effColor} 12%, transparent)`, color: effColor, border: `1px solid color-mix(in srgb, ${effColor} 20%, transparent)` }}>
                             {m.is_suppressed ? t('ana_suppressed_badge') : m.effective_severity}
                           </span>
@@ -217,12 +217,12 @@ export function CorrelationTab() {
 
                       {/* Kronik rozeti */}
                       {m.is_very_chronic && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(239,68,68,0.1)', color: NEON.red, border: '1px solid rgba(239,68,68,0.2)' }}>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(239,68,68,0.1)', color: NEON.red, border: '1px solid rgba(239,68,68,0.2)' }}>
                           {t('ana_chronic_n', { n: m.recurrence_days })}
                         </span>
                       )}
                       {m.is_chronic && !m.is_very_chronic && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251,191,36,0.1)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.2)' }}>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(251,191,36,0.1)', color: NEON.orange, border: '1px solid rgba(251,191,36,0.2)' }}>
                           {t('ana_repeat_n', { n: m.recurrence_days })}
                         </span>
                       )}
@@ -234,7 +234,7 @@ export function CorrelationTab() {
                         <ClipboardList size={12} strokeWidth={2} />
                         <span>{t('ana_rule_n', { id: m.suppression.id })}</span>
                         <span style={{ color: NEON.green }}>{m.suppression.reason || t('ana_suppression_active')}</span>
-                        {m.suppression.scope === 'global' && <span className="px-1 rounded text-[10px]" style={{ background: 'rgba(6,182,212,0.1)', color: NEON.cyan }}>global</span>}
+                        {m.suppression.scope === 'global' && <span className="px-1 rounded-sm text-[10px]" style={{ background: 'rgba(6,182,212,0.1)', color: NEON.cyan }}>global</span>}
                       </div>
                     )}
 
@@ -247,10 +247,10 @@ export function CorrelationTab() {
                   </div>
 
                   {/* Sağ: Aksiyonlar */}
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     {m.last_event_id && (
                       <a href={`/events?highlight=${m.last_event_id}`}
-                        className="text-xs px-2 py-1 rounded transition-colors"
+                        className="text-xs px-2 py-1 rounded-sm transition-colors"
                         style={{ color: NEON.cyan, border: '1px solid rgba(6,182,212,0.2)', background: 'rgba(6,182,212,0.05)' }}>
                         {t('ana_events_link')}
                       </a>
@@ -259,7 +259,7 @@ export function CorrelationTab() {
                       <button
                         onClick={() => suppress(m.metric, m.last_server_id, m.last_event_id)}
                         disabled={markLoading === m.last_event_id}
-                        className="text-xs px-2 py-1 rounded transition-colors"
+                        className="text-xs px-2 py-1 rounded-sm transition-colors"
                         style={{ color: NEON.orange, border: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.06)' }}>
                         {markLoading === m.last_event_id ? '...' : t('ana_mark_normal')}
                       </button>
@@ -382,7 +382,7 @@ export function LogHeatmapPanel({
           <span style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_scale')}</span>
           {[{ c: 'rgba(255,255,255,0.04)', l: t('ana_scale_normal') }, { c: 'rgba(234,179,8,0.4)', l: t('ana_scale_low') }, { c: 'rgba(245,200,11,0.6)', l: t('ana_scale_med') }, { c: 'rgba(245,158,11,0.8)', l: t('ana_scale_high') }, { c: 'rgba(239,68,68,0.85)', l: t('status_critical') }].map(s => (
             <span key={s.l} className="inline-flex items-center gap-1" style={{ color: 'rgba(148,163,184,0.7)' }}>
-              <span className="w-3 h-3 rounded" style={{ background: s.c, border: '1px solid rgba(99,130,194,0.2)' }} />{s.l}
+              <span className="w-3 h-3 rounded-sm" style={{ background: s.c, border: '1px solid rgba(99,130,194,0.2)' }} />{s.l}
             </span>
           ))}
         </div>
@@ -601,7 +601,7 @@ const AnomalyDetection: React.FC<PlatformAiopsProps> = ({ platform = 'linux' }) 
             <span style={{ color: 'rgba(148,163,184,0.5)' }}>{t('ana_scale')}</span>
             {[{ c: 'rgba(255,255,255,0.04)', l: t('ana_scale_normal') }, { c: 'rgba(234,179,8,0.4)', l: t('ana_scale_low') }, { c: 'rgba(245,200,11,0.6)', l: t('ana_scale_med') }, { c: 'rgba(245,158,11,0.8)', l: t('ana_scale_high') }, { c: 'rgba(239,68,68,0.85)', l: t('status_critical') }].map(s => (
               <span key={s.l} className="inline-flex items-center gap-1" style={{ color: 'rgba(148,163,184,0.7)' }}>
-                <span className="w-3 h-3 rounded" style={{ background: s.c, border: '1px solid rgba(99,130,194,0.2)' }} />{s.l}
+                <span className="w-3 h-3 rounded-sm" style={{ background: s.c, border: '1px solid rgba(99,130,194,0.2)' }} />{s.l}
               </span>
             ))}
           </div>

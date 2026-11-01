@@ -189,16 +189,16 @@ export const BulkJobOverlay: React.FC<{
 
   if (minimized) {
     return (
-      <div className="fixed bottom-4 right-4 z-[60] max-w-sm w-[min(100vw-2rem,22rem)]">
+      <div className="fixed bottom-4 right-4 z-60 max-w-sm w-[min(100vw-2rem,22rem)]">
         <button
           type="button"
           onClick={reopen}
           title={t('job_bring_front')}
-          className="w-full text-left bg-slate-800/95 backdrop-blur border border-slate-600 rounded-xl shadow-2xl shadow-black/50 p-3 hover:border-blue-500/50 transition-colors"
+          className="w-full text-left bg-slate-800/95 backdrop-blur-sm border border-slate-600 rounded-xl shadow-2xl shadow-black/50 p-3 hover:border-blue-500/50 transition-colors"
         >
           <div className="flex items-center gap-3">
             <div
-              className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
                 job.status === 'error'
                   ? 'bg-red-500/15'
                   : job.status === 'done'
@@ -228,7 +228,7 @@ export const BulkJobOverlay: React.FC<{
                 {done ? kindLabel(job.kind, t) : `${pct}% · ${job.message || t('job_processing')}`}
               </div>
             </div>
-            <Maximize2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
+            <Maximize2 className="w-4 h-4 text-slate-400 shrink-0" />
           </div>
           {!done && (
             <div className="h-1.5 rounded-full bg-slate-900 overflow-hidden mt-2.5">
@@ -270,11 +270,11 @@ export const BulkJobOverlay: React.FC<{
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-60 p-4">
       <div className="bg-cyber-card rounded-2xl border border-white/[0.08] w-full max-w-lg shadow-2xl p-6">
         <div className="flex items-start gap-4 mb-5">
           <div
-            className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+            className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
               job.status === 'error'
                 ? 'bg-red-500/15'
                 : job.status === 'done'
@@ -307,7 +307,7 @@ export const BulkJobOverlay: React.FC<{
         <div className="mb-4">
           <div className="flex justify-between text-xs text-slate-400 mb-1.5">
             <span className="truncate pr-2">{job.message || t('job_processing')}</span>
-            <span className="font-mono text-slate-300 flex-shrink-0">{pct}%</span>
+            <span className="font-mono text-slate-300 shrink-0">{pct}%</span>
           </div>
           <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden">
             <div

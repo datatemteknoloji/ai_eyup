@@ -39,6 +39,71 @@ def _days_since(since: Since, kind: str, ref: str, key: str) -> Optional[int]:
 
 # ── VMware ───────────────────────────────────────────────────────────────────
 
+# Boş sayılma eşiği: erişilemeyen bir datastore'da kapasite değeri eski olabilir; yalnız ipucu.
+_EMPTY_FREE_PCT = 99.0
+
+
+def _datastore_accessible(ds: Dict[str, Any], ref: str, host_name: Dict[str, str]) -> FindingDraft:
+    """`vmw.datastore.accessible` — vCenter `summary.accessible` + bağlam.
+
+    Aynı "erişilemiyor" sonucu üç farklı durumdan gelir; önem derecesi bağlama göre ayrılır:
+    - hiçbir host'a bağlı değil (unmount edilmiş artık): `low`
+    - NFS, bağlı tüm host'larda erişilemiyor (sunucu/ağ): `medium`
+    - diğer (SAN/vSAN, kısmi host): katalog varsayılanı `critical`
+    """
+    st, cfg = ds["state"], ds.get("config") or {}
+    name = ds["name"]
+    if st.get("accessible"):
+        return FindingDraft("vmw.datastore.accessible", "datastore", ref, name, RESULT_PASS,
+                            evidence={"inaccessible_mounts": []})
+
+    mounted = list(cfg.get("mounted_hosts") or [])
+    inacc = [host_name.get(x, x) for x in st.get("inaccessible_mounts") or []]
+    dtype = str(cfg.get("type") or "")
+    cap, free = st.get("capacity_gb"), st.get("free_gb")
+    free_pct = round(100.0 * free / cap, 1) if cap and free is not None else None
+    evidence: Dict[str, Any] = {
+        "inaccessible_mounts": inacc,
+        "mounted_hosts": len(mounted),
+        "type": dtype,
+        "capacity_gb": cap,
+        "free_pct": free_pct,
+    }
+    is_nfs = dtype.upper().startswith("NFS")
+
+    if not mounted:
+        evidence["scenario"] = "unmounted"
+        empty = free_pct is not None and free_pct >= _EMPTY_FREE_PCT
+        detail = "Hiçbir host'a bağlı değil (unmount edilmiş)"
+        if empty:
+            detail += f"; boş görünüyor (%{free_pct:.0f} boş)"
+        if inacc:
+            detail += f"; {len(inacc)} host'ta mount kaydı erişilemiyor"
+        return FindingDraft(
+            "vmw.datastore.accessible", "datastore", ref, name, RESULT_FAIL,
+            evidence=evidence, detail=detail, severity="low",
+            recommendation=("Datastore hiçbir host'a bağlı değil; kullanılmıyorsa LUN'u host'lardan "
+                            "ayırıp vCenter'dan kaldırın (decommission artığı olabilir). Kullanılıyorsa "
+                            "host'lara yeniden mount edin."),
+        )
+    if is_nfs and len(inacc) >= len(mounted):
+        evidence["scenario"] = "nfs_unreachable"
+        return FindingDraft(
+            "vmw.datastore.accessible", "datastore", ref, name, RESULT_FAIL,
+            evidence=evidence,
+            detail=f"NFS datastore bağlı {len(mounted)} host'ta erişilemiyor (NFS sunucusu/ağ yolu)",
+            severity="medium",
+            recommendation=("NFS sunucusunun ve ağ yolunun erişilebilirliğini kontrol edin. Sunucu "
+                            "kalıcı olarak kaldırıldıysa (ör. yedekleme yazılımı artığı) datastore'u "
+                            "host'lardan unmount edin; takılı NFS mount'ları ESXi'de yavaşlık yaratabilir."),
+        )
+    evidence["scenario"] = "inaccessible"
+    return FindingDraft(
+        "vmw.datastore.accessible", "datastore", ref, name, RESULT_FAIL, evidence=evidence,
+        detail=(f"{len(inacc)}/{len(mounted)} host'ta erişilemiyor" if inacc else "Erişilemiyor"),
+    )
+
+
 def _vmware(col: Dict[str, Any], since: Since, hw: Dict[str, Any]) -> List[FindingDraft]:
     out: List[FindingDraft] = []
     hosts = col.get("hosts") or []
@@ -150,14 +215,26 @@ def _vmware(col: Dict[str, Any], since: Since, hw: Dict[str, Any]) -> List[Findi
         vm_nics = cfg.get("vmotion_vmknics") or []
         out.append(FindingDraft("vmw.host.vmotion_vmknic", "host", ref, name, RESULT_PASS if vm_nics else RESULT_FAIL,
                                 evidence={"vmknics": vm_nics}, cluster_name=cl))
-        single = [
-            {"switch": s.get("name"), "kind": s.get("kind"), "uplinks": s.get("uplinks")}
-            for s in cfg.get("vswitches") or []
-            if (s.get("kind") == "distributed" or (s.get("portgroups") or 0) > 0) and len(s.get("uplinks") or []) < 2
-        ]
+        # Tek uplink = yedeksizlik. Uplink'siz STANDART switch dış bağlantısı olmayan (izole/dahili)
+        # bir switch'tir (ör. varsayılan boş vSwitch0); yedeksizlik bulgusu değil, kanıtta ayrıca listelenir.
+        single = []
+        isolated = []
+        for s in cfg.get("vswitches") or []:
+            n_up = len(s.get("uplinks") or [])
+            row_ = {"switch": s.get("name"), "kind": s.get("kind"), "uplinks": s.get("uplinks")}
+            if s.get("kind") == "distributed":
+                if n_up < 2:
+                    single.append(row_)
+            elif (s.get("portgroups") or 0) > 0:
+                if n_up == 0:
+                    isolated.append(row_)
+                elif n_up < 2:
+                    single.append(row_)
         out.append(FindingDraft("vmw.host.uplink_redundancy", "host", ref, name, RESULT_FAIL if single else RESULT_PASS,
-                                evidence={"switches": single},
-                                detail=", ".join(f"{s['switch']} ({len(s['uplinks'] or [])})" for s in single),
+                                evidence={"switches": single, "isolated_switches": isolated},
+                                detail=", ".join(
+                                    f"{s['switch']} ({len(s['uplinks'] or [])} uplink)" for s in single
+                                ),
                                 cluster_name=cl))
         luns = cfg.get("luns") or []
         san = [x for x in luns if x.get("san")]
@@ -195,10 +272,7 @@ def _vmware(col: Dict[str, Any], since: Since, hw: Dict[str, Any]) -> List[Findi
     for ds in col.get("datastores") or []:
         st = ds["state"]
         ref = f"datastore:{ds['ref']}"
-        acc = st.get("accessible")
-        out.append(FindingDraft("vmw.datastore.accessible", "datastore", ref, ds["name"],
-                                RESULT_PASS if acc else RESULT_FAIL, evidence={"inaccessible_mounts":
-                                                                     [host_name.get(x, x) for x in st.get("inaccessible_mounts") or []]}))
+        out.append(_datastore_accessible(ds, ref, host_name))
         cap, free, unc = st.get("capacity_gb"), st.get("free_gb"), st.get("uncommitted_gb")
         if cap:
             prov = 100.0 * ((cap - (free or 0)) + (unc or 0)) / cap
@@ -478,3 +552,56 @@ def evaluate(platform: str, collected: Dict[str, Any], *, since: Optional[Since]
 def summarize(drafts: List[FindingDraft]) -> Dict[str, int]:
     c = Counter(d.result for d in drafts)
     return {"pass": c.get("pass", 0), "fail": c.get("fail", 0), "not_measurable": c.get("not_measurable", 0)}
+
+
+# ── Envanter senkronu bayatlığı (platform bağımsız) ──────────────────────────
+
+SYNC_STALE_MIN_HOURS = 6.0
+SYNC_STALE_INTERVAL_FACTOR = 3.0
+
+
+def _as_utc(dt: Any) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def sync_stale_draft(hv: Any, *, interval_minutes: int, now: Optional[datetime] = None) -> FindingDraft:
+    """`inv.sync.stale` — son BAŞARILI envanter senkronu eşikten eskiyse FAIL.
+
+    Eşik = max(6 saat, 3 × envanter senkron aralığı). Başarılı zaman: `meta_data.sync_job.last_success_at` ile
+    `last_sync` değerlerinin yeni olanı. Hiç senkron yoksa `not_measurable` (yeni eklenmiş hypervisor).
+    """
+    now = now or datetime.now(timezone.utc)
+    job = ((getattr(hv, "meta_data", None) or {}).get("sync_job") or {})
+    cands = [t for t in (_as_utc(getattr(hv, "last_sync", None)), _as_utc(job.get("last_success_at"))) if t]
+    last_ok = max(cands) if cands else None
+    threshold_h = max(SYNC_STALE_MIN_HOURS, SYNC_STALE_INTERVAL_FACTOR * max(1, int(interval_minutes)) / 60.0)
+    ref, name = f"hypervisor:{hv.id}", getattr(hv, "name", None) or f"#{hv.id}"
+    if (getattr(hv, "meta_data", None) or {}).get("fake_seed"):
+        return FindingDraft("inv.sync.stale", "platform", ref, name, RESULT_NOT_MEASURABLE,
+                            detail="Sahte (test) envanter — gerçek senkron yok")
+    if last_ok is None:
+        return FindingDraft("inv.sync.stale", "platform", ref, name, RESULT_NOT_MEASURABLE,
+                            evidence={"last_success": None, "threshold_hours": round(threshold_h, 1)},
+                            detail="Henüz başarılı senkron yok")
+    age_h = (now - last_ok).total_seconds() / 3600.0
+    evidence: Dict[str, Any] = {
+        "last_success": last_ok.isoformat(), "age_hours": round(age_h, 1), "threshold_hours": round(threshold_h, 1),
+        "last_error": job.get("error") if job.get("status") == "error" else None,
+        "last_error_at": job.get("last_error_at"),
+    }
+    if age_h <= threshold_h:
+        return FindingDraft("inv.sync.stale", "platform", ref, name, RESULT_PASS, evidence=evidence)
+    days = age_h / 24.0
+    return FindingDraft(
+        "inv.sync.stale", "platform", ref, name, RESULT_FAIL, evidence=evidence,
+        detail=(f"Son başarılı senkron {days:.0f} gün önce" if days >= 1 else f"Son başarılı senkron {age_h:.0f} saat önce")
+               + (f"; son hata: {evidence['last_error'][:120]}" if evidence["last_error"] else ""),
+        severity="high" if age_h >= 72 else "medium",
+    )

@@ -28,6 +28,7 @@ ONEVIEW_LOGOUT = ("DELETE", "/rest/login-sessions")
 ONEVIEW_GET: List[str] = [
     r"^/rest/version$",
     r"^/rest/server-hardware$",
+    r"^/rest/server-hardware/[0-9A-Za-z_-]+/firmware$",      # tek sunucunun firmware envanteri (API ≥ 300)
     r"^/rest/enclosures$",
     r"^/rest/alerts$",
 ]
@@ -43,6 +44,20 @@ OVGD_GET: List[str] = [
     r"^/rest/enclosures$",
 ]
 
+# ── Redfish (iLO / iDRAC; Faz 3b) — YALNIZ GET; oturum/POST/DELETE YOK (Basic auth), `Actions` yasak ───────────────
+# Yollar kökten bağlantı izlenerek bulunur (üretici yolu sabit değil); izlenebilecek şekiller aşağıda sınırlıdır:
+#   kök → Systems|Managers koleksiyonu → üye → LogServices → log servisi → Entries (+ tek kayıt)
+_RF = r"^/redfish/v1"
+REDFISH_GET: List[str] = [
+    _RF + r"/?$",
+    _RF + r"/(Systems|Managers)/?$",
+    _RF + r"/(Systems|Managers)/[^/]+/?$",
+    _RF + r"/(Systems|Managers)/[^/]+/LogServices/?$",
+    _RF + r"/(Systems|Managers)/[^/]+/LogServices/[^/]+/?$",
+    _RF + r"/(Systems|Managers)/[^/]+/LogServices/[^/]+/Entries/?$",
+    _RF + r"/(Systems|Managers)/[^/]+/LogServices/[^/]+/Entries/[^/]+/?$",
+]
+
 # Her durumda reddedilen kalıplar (konsol / SSO / güç / sanal medya / oturum anahtarı / yazma)
 FORBIDDEN = re.compile(
     r"(VirtualSession|BlinkStatus|/Actions|remoteConsole|javaRemoteConsole|iloSsoUrl|oaSsoUrl|/sso\b|"
@@ -54,6 +69,7 @@ GET_PATTERNS: Dict[str, List[re.Pattern]] = {
     "ome": [re.compile(p) for p in OME_GET],
     "oneview": [re.compile(p) for p in ONEVIEW_GET],
     "ovgd": [re.compile(p) for p in OVGD_GET],
+    "redfish": [re.compile(p) for p in REDFISH_GET],
 }
 LOGIN: Dict[str, Tuple[str, str]] = {"ome": OME_LOGIN, "oneview": ONEVIEW_LOGIN, "ovgd": OVGD_LOGIN}
 LOGOUT: Dict[str, Tuple[str, object]] = {"ome": OME_LOGOUT, "oneview": ONEVIEW_LOGOUT, "ovgd": OVGD_LOGOUT}
@@ -67,8 +83,12 @@ def allowed(product: str, method: str, path: str) -> bool:
     if method == "GET":
         return any(p.match(path) for p in GET_PATTERNS.get(product, []))
     if method == "POST":
+        if product not in LOGIN:
+            return False
         return path.rstrip("/") == LOGIN[product][1].rstrip("/") and method == LOGIN[product][0]
     if method == "DELETE":
+        if product not in LOGOUT:
+            return False
         m, pat = LOGOUT[product]
         if m != method:
             return False

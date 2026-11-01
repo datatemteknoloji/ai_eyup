@@ -50,7 +50,7 @@ def _patch_agent_tools(monkeypatch):
 def test_llm_error_after_tool_success_preserves_partial_result(monkeypatch):
     calls = {"n": 0}
 
-    def _fake_chat_with_tools(model, messages, tools, timeout=90):
+    def _fake_chat_with_tools(model, messages, tools, timeout=90, **kw):
         calls["n"] += 1
         if calls["n"] == 1:
             return {
@@ -83,7 +83,7 @@ def test_llm_error_after_tool_success_preserves_partial_result(monkeypatch):
 def test_llm_error_before_any_tool_call_still_skips(monkeypatch):
     """Hiç tool çağrılmadan LLM hata verirse eski davranış (skipped) korunmalı —
     kaybedilecek bir sonuç yok."""
-    def _fake_chat_with_tools(model, messages, tools, timeout=90):
+    def _fake_chat_with_tools(model, messages, tools, timeout=90, **kw):
         return {"content": "", "tool_calls": [], "error": "Ollama'ya bağlanılamadı."}
 
     monkeypatch.setattr("app.services.agent.llm.chat_with_tools", _fake_chat_with_tools)

@@ -252,9 +252,9 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
 
   return (
     <div className="space-y-5">
-      <div className="bg-gradient-to-r from-indigo-900/25 to-slate-900/40 border border-indigo-700/30 rounded-xl p-4">
+      <div className="bg-linear-to-r from-indigo-900/25 to-slate-900/40 border border-indigo-700/30 rounded-xl p-4">
         <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center flex-shrink-0">
+          <div className="w-9 h-9 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
             <GitCompare size={18} className="text-indigo-300" />
           </div>
           <div>
@@ -301,7 +301,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={copy.searchPh}
-                className="w-full bg-slate-800/60 border border-slate-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                className="w-full bg-slate-800/60 border border-slate-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:border-indigo-500"
               />
             </div>
             <div className="max-h-80 overflow-y-auto border border-slate-700/60 rounded-lg divide-y divide-slate-800/80 bg-slate-900/40">
@@ -325,7 +325,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-white font-medium truncate">{c.name}</span>
-                      {on && <Check size={14} className="text-indigo-300 flex-shrink-0" />}
+                      {on && <Check size={14} className="text-indigo-300 shrink-0" />}
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5 truncate">
                       {[c.ip_address, c.hostname, c.os || c.type, c.hypervisor]
@@ -344,7 +344,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
                 type="checkbox"
                 checked={withAi}
                 onChange={(e) => setWithAi(e.target.checked)}
-                className="rounded border-slate-600"
+                className="rounded-sm border-slate-600"
               />
               {t('cmp_ai')}
             </label>
@@ -352,7 +352,7 @@ export default function ServerComparePanel({ platform }: { platform: PlatformKey
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               placeholder={t('cmp_q_ph')}
-              className="w-full bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:border-indigo-500"
             />
             <button
               onClick={runCompare}

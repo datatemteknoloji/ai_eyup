@@ -7,17 +7,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, delete
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from app.services.chat_text_norm import normalize_user_text
 from typing import Optional, List, Any, Dict
 from datetime import datetime, timezone, timedelta
 import asyncio
+import time
 import json as _json
 import logging
 import httpx
 
-from app.services.chat_rules import NUMBER_RULE_TR
+from app.core.chat_executor import run_chat_io
+from app.services.chat_quality import trace as _cq_trace
+from app.services.chat_rules import NUMBER_RULE_TR, ADVICE_RULE_TR
 from app.core.auth import get_current_user, get_current_user_optional
-from app.core.database import get_db
+from app.core.database import get_db, release_txn
 from app.core.config import settings, get_active_model, remote_llm_enabled
 from app.models.server import Server
 from app.models.chat_session import ChatSession, ChatMessage
@@ -43,6 +47,12 @@ router = APIRouter()
 
 
 from app.services.llm_external import detect_provider as _detect_provider
+from app.services.chat_live_final import (   # Adım 17: ortak canlı akış yardımcıları
+    LiveFinal as _LiveFinal,
+    final_think_level as _final_think_level,
+    live_loop_kwargs as _live_loop_kwargs,
+    thinking_allowed as _thinking_allowed,
+)
 
 
 async def _stream_external_openai(client, url: str, api_key: str, model: str, prompt: str, extra_headers: dict = None):
@@ -93,7 +103,8 @@ def _windows_event_context(db: Session, selected_servers: List[Server], hours: i
     if not selected_servers:
         return ""
     ids = [s.id for s in selected_servers]
-    since = datetime.utcnow() - timedelta(hours=hours)
+    from app.services.chat_quality import clock as _clk
+    since = _clk.default_since(hours / 24.0)  # tz-aware (naif utcnow timestamptz'e bağlanınca pencere 3 sa genişliyordu)
     events = (
         db.query(SystemEvent)
         .filter(
@@ -122,6 +133,12 @@ def _windows_event_context(db: Session, selected_servers: List[Server], hours: i
 
 class ChatRequest(BaseModel):
     message: str
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def _normalize_message(cls, v):
+        # Adım 19: modelin yazdığı kırılmaz tire (U+2011) vb. kopyalanıp sorulunca ad eşleşmesi bozulmasın
+        return normalize_user_text(v) if isinstance(v, str) else v
     server_ids: Optional[List[int]] = None
     server_id: Optional[int] = None
     session_id: Optional[int] = None
@@ -399,7 +416,7 @@ def _build_prompt(message: str, context_str: str, winrm_collected: bool,
     system_block = "\n\n".join(
         [identity]
         + (["TOPLAMA DURUMU:\n" + collection_summary] if collection_summary else [])
-        + [rules, NUMBER_RULE_TR]
+        + [rules, NUMBER_RULE_TR, ADVICE_RULE_TR]
     )
     tail_parts = ["KULLANICI SORUSU: " + message]
     if _dir_add:
@@ -597,7 +614,8 @@ async def chat_message(request: ChatRequest, db: Session = Depends(get_db), user
     if request.use_rag is not False:
         try:
             from app.services.rag_service import get_rag_context_for_message
-            rag_ctx = await get_rag_context_for_message(message)
+            from app.services.rag_scope import modules_for_platform
+            rag_ctx = await get_rag_context_for_message(message, modules=modules_for_platform("windows"))
             if rag_ctx.get("runbook"):
                 context_parts.append("RUNBOOK / DOKÜMANTASYON:\n" + rag_ctx["runbook"].strip())
             if rag_ctx.get("incidents"):
@@ -657,6 +675,9 @@ async def chat_stream(
 
         async def event_generator():
             try:
+                # Sohbet LLM çağrıları arka plan işlerinden önceliklidir (llm_scheduler; genel varsayılan değişmez)
+                from app.services import llm_scheduler as _llm_sched
+                _llm_sched.mark_chat()
                 raw_message = request.message.strip()
                 if not raw_message:
                     yield _sse({"error": "Mesaj boş"})
@@ -739,7 +760,7 @@ async def chat_stream(
                 from app.services.chat_chitchat_policy import canned_chitchat_answer
                 _pending_fs = get_full_scan_pending(session_id, platform="windows")
                 _cc = None if (_fs.get("full_scan") or _pending_fs) else canned_chitchat_answer(
-                    message, platform="windows",
+                    message, platform="windows", session_id=session_id,
                 )
                 if _cc:
                     yield _sse({"phase": "answering"})
@@ -747,9 +768,11 @@ async def chat_stream(
                     _timing.note_ttft()
                     for i in range(0, len(_cc), 8):
                         yield _sse({"token": _cc[i:i + 8]})
+                    from app.services.chat_quality.count_followup import pop_context as _pop_cc
+                    _cc_ctx = _pop_cc()
                     db.add(ChatMessage(
                         session_id=session_id, role="assistant", content=_cc,
-                        meta={"intents": ["chitchat"]},
+                        meta={"intents": ["chitchat"], **({"count_context": _cc_ctx} if _cc_ctx else {})},
                     ))
                     db.commit()
                     _timing.finish(cache_hit=False, extra={"path": "chitchat"})
@@ -773,6 +796,8 @@ async def chat_stream(
                 from app.services.chat_cache_service import get_cached_answer, save_to_cache
 
                 _is_followup = has_prior_messages(db, session_id)
+                from app.services.chat_history import has_real_prior_messages
+                _cache_followup = has_real_prior_messages(db, session_id)   # Adım 9: user mesajı önceden kayıtlı → _is_followup hep True
                 history_block = format_history_block(fetch_recent_history(db, session_id, limit=8)) if _is_followup else ""
 
                 # ── Sunucu seçimi (Dalga 1 filo politikası) ───────────────────
@@ -832,8 +857,10 @@ async def chat_stream(
                     return
 
                 cache_ids = [s.id for s in selected_servers] if has_explicit else []
-                cached = None if (_is_followup or _has_directive) else get_cached_answer(
-                    db, message, cache_ids, platform="windows",
+                from app.services.chat_cache_service import rbac_signature as _rbac_sig
+                _cache_sig = _rbac_sig(_auth_user, db)
+                cached = None if (_cache_followup or _has_directive) else get_cached_answer(
+                    db, message, cache_ids, platform="windows", rbac_sig=_cache_sig,
                 )
                 _timing.mark("cache")
                 if cached:
@@ -947,15 +974,18 @@ async def chat_stream(
                     try:
                         from app.services.rag_service import get_rag_context_for_message
                         from app.services.chat_source_planner import plan_sources
-                        _plan = plan_sources(message, scope="windows", skip_ctx=bool(request.skip_server_context), use_rag=True)
-                        return await get_rag_context_for_message(message, collections=_plan.rag_collections or None)
+                        _plan = await run_chat_io(plan_sources, message, scope="windows", skip_ctx=bool(request.skip_server_context), use_rag=True)
+                        from app.services.rag_scope import modules_for_platform
+                        return await get_rag_context_for_message(
+                            message, collections=_plan.rag_collections or None, modules=modules_for_platform("windows"),
+                        )
                     except Exception:
                         return {}
 
                 async def _collect_prom():
                     try:
                         from app.services.chat_source_planner import plan_sources
-                        _plan = plan_sources(message, scope="windows", skip_ctx=bool(request.skip_server_context), use_rag=request.use_rag is not False)
+                        _plan = await run_chat_io(plan_sources, message, scope="windows", skip_ctx=bool(request.skip_server_context), use_rag=request.use_rag is not False)
                         if not _plan.need_prometheus:
                             return ""
                         from app.services.monitoring.prometheus_metrics import PrometheusMetricsService
@@ -1055,6 +1085,8 @@ async def chat_stream(
                     pass
 
                 # ── Agentic READ_ONLY WinRM (Dalga 2 XOR) ─────────────────────
+                _lf = _LiveFinal(timing=_timing)       # Adım 17: canlı tek geçiş + düşünme akışı
+                _think_ok = _thinking_allowed(_auth_user, provider)
                 if _live_path.run_agentic:
                     yield _sse({"phase": "tools"})
                     _timing.mark("agentic_start")
@@ -1073,6 +1105,7 @@ async def chat_stream(
                             domains=domains_for_platform("windows"),
                             platform="windows",
                             output_directive=output_directive,
+                            **_live_loop_kwargs(_auth_user, provider),
                         )
 
                         def _next_item(g):
@@ -1083,7 +1116,7 @@ async def chat_stream(
 
                         tool_context_text = ""
                         while True:
-                            item = await loop.run_in_executor(None, _next_item, gen)
+                            item = await loop.run_in_executor(None, _cq_trace.run_in_trace, _cq_trace.current(), _next_item, gen)
                             if item is None:
                                 break
                             itype = item.get("type")
@@ -1091,8 +1124,12 @@ async def chat_stream(
                                 yield _sse({"type": "tool_call", "tool": item.get("tool"), "label": item.get("label")})
                             elif itype == "tool_result":
                                 yield _sse({"type": "tool_result", "tool": item.get("tool")})
+                            elif itype in ("thinking", "answer_start", "token", "answer_reset"):
+                                for _raw in _lf.on_item(item):
+                                    yield _raw
                             elif itype == "final":
                                 tool_context_text = item.get("tool_text") or ""
+                                _lf.on_item(item)
                                 break
                             elif itype in ("skipped", "error"):
                                 if itype == "error":
@@ -1105,8 +1142,14 @@ async def chat_stream(
                                 + "\n\nARAÇ SONUÇLARI (modelin çağırdığı READ_ONLY WinRM/canlı sorgular):\n"
                                 + tool_context_text
                             )
+                        async for _raw in _lf.settle():
+                            yield _raw
                     except Exception as e:
                         logger.warning(f"[WindowsChat] agentic tool loop devre dışı: {e}")
+                        if _lf.live_text:      # yarım canlı cevap kalmasın
+                            _lf.live_text = ""
+                            _lf.use_loop_final = False
+                            yield _sse({"replace_answer": True})
                     _timing.mark("agentic_end")
 
                 try:
@@ -1144,12 +1187,17 @@ async def chat_stream(
                 )
 
                 # Kullanıcı mesajı stream başında kaydedildi; burada yalnızca AI yanıtı
-                yield _sse({"phase": "answering"})
+                release_txn(db)   # LLM akışı boyunca DB işlemi açık kalmasın (idle in transaction)
+                if not _lf.use_loop_final:
+                    yield _sse({"phase": "answering"})
                 full_response = ""
-                _ttft_sent = False
+                _ttft_sent = _lf.ttft_noted
 
                 async with httpx.AsyncClient(timeout=180.0) as client:
-                    if provider == "groq" and settings.GROQ_API_KEY:
+                    if _lf.use_loop_final:
+                        # Adım 17: cevap araç turunda zaten canlı akıtıldı → ikinci üretim YOK
+                        full_response = _lf.loop_text
+                    elif provider == "groq" and settings.GROQ_API_KEY:
                         async for token in _stream_external_openai(client, settings.GROQ_API_URL, settings.GROQ_API_KEY, model, prompt):
                             full_response += token
                             if not _ttft_sent and token:
@@ -1175,11 +1223,21 @@ async def chat_stream(
                             yield _sse({"token": token})
                     else:
                         llm_err = None
-                        async for chunk in llm_gateway.stream_generate(client, model=model, prompt=prompt, timeout=180.0):
+                        _gt_buf, _gt_last = "", time.monotonic()
+                        async for chunk in llm_gateway.stream_generate(
+                            client, model=model, prompt=prompt, timeout=180.0, think=_final_think_level(model),
+                        ):
                             if chunk.get("error"):
                                 llm_err = str(chunk["error"])
                                 yield _sse({"error": llm_err})
                                 break
+                            _gth = chunk.get("thinking")
+                            if _gth and _think_ok and not full_response:
+                                _gt_buf += str(_gth)
+                                _gnow = time.monotonic()
+                                if len(_gt_buf) >= 40 or _gnow - _gt_last >= 0.3:
+                                    yield _sse({"type": "thinking", "text": _gt_buf})
+                                    _gt_buf, _gt_last = "", _gnow
                             token = chunk.get("response", "")
                             if token:
                                 full_response += token
@@ -1216,12 +1274,17 @@ async def chat_stream(
                     s.updated_at = datetime.now(timezone.utc)
                 db.commit()
 
-                if full_response and not _is_followup and not needs_winrm and not _has_directive:
-                    save_to_cache(db, message, full_response, cache_ids, platform="windows")
+                _cache_res = "not_attempted"
+                if full_response:
+                    _cache_res = save_to_cache(
+                        db, message, full_response, cache_ids, platform="windows", rbac_sig=_cache_sig,
+                        live_data=bool(needs_winrm),
+                        followup=_cache_followup, directive=_has_directive,
+                    )
 
                 _timing.finish(
                     cache_hit=False,
-                    extra={"path": getattr(_live_path, "reason", ""), "targets": len(selected_servers)},
+                    extra={"path": getattr(_live_path, "reason", ""), "targets": len(selected_servers), "cache": _cache_res},
                 )
                 yield _sse({"done": True, "session_id": session_id, **_evid_sse})
 
@@ -1255,8 +1318,9 @@ async def chat_stream(
         async for chunk in event_generator():
             yield chunk
 
-    from app.services.chat_orchestrator.http_bridge import attach_and_stream
-    return attach_and_stream(
+    from app.services.chat_orchestrator.http_bridge import attach_and_stream_async
+    # Adım 11: create_turn → plan_sources (yönlendirme ipucu LLM'i, senkron, ≤8 sn) event döngüsünü bloklamasın
+    _stream_resp = await attach_and_stream_async(
         platform="windows",
         payload=payload,
         message=payload.get("message") or "",
@@ -1264,3 +1328,5 @@ async def chat_stream(
         pipeline=pipeline,
         user_id=getattr(_auth_user, "id", None),
     )
+    release_txn(db, keep_loaded=True)   # istek oturumu tur boyunca idle in transaction kalmasın
+    return _stream_resp

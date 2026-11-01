@@ -4311,6 +4311,189 @@ class VCenterClient:
             }
         return out
 
+    # ── Host donanım logları (Faz 3a; SALT-OKUNUR) ────────────────────────────
+    #
+    # Yalnız `FetchSystemEventLog` (IPMI SEL) ve `BrowseDiagnosticLog` (vmkernel/vmkwarning) okunur.
+    # `ClearSystemEventLog`/`ResetSystemHealthInfo` ASLA çağrılmaz (perf_catalog.SOAP_MUTATE_DENY).
+    # Sahada doğrulanmadı: bazı ESXi/vCenter sürümlerinde SEL boş döner veya fault verir → host başına hata notu.
+
+    HW_LOG_KEYS = ("vmkernel", "vmkwarning")
+
+    # SOAPAction başlığı OLMADAN vCenter/ESXi istekleri en eski API sürümüyle (vim25/2.5u2) çözer;
+    # `FetchSystemEventLog` gibi sonradan eklenen metotlar "Unable to resolve WSDL method name" fault'u verir
+    # (sahada doğrulandı: ESXi 8.0.1). 6.7 başlığı 6.7/7.x/8.x'te çalışır.
+    HW_LOG_SOAP_ACTION = '"urn:vim25/6.7"'
+
+    def _soap_text_call(self, soap_session, soap_url: str, body: str, timeout: int = 45):
+        """Yanıt XML kökünü döner; HTTP/SOAP fault'ta RuntimeError(faultstring) fırlatır (host hata notuna girer)."""
+        import re
+        import xml.etree.ElementTree as ET
+        resp = soap_session.post(
+            soap_url,
+            data=body.encode("utf-8"),
+            headers={"Content-Type": "text/xml; charset=utf-8", "SOAPAction": self.HW_LOG_SOAP_ACTION},
+            verify=self.verify_ssl,
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            m = re.search(r"<faultstring>(.*?)</faultstring>", resp.text or "", re.S)
+            reason = (m.group(1) if m else (resp.text or ""))[:140].replace("\n", " ")
+            raise RuntimeError(f"HTTP {resp.status_code}: {reason}")
+        return ET.fromstring(resp.text)
+
+    def _query_log_keys(self, soap_session, soap_url: str, diag_ref: str, host_ref: str) -> List[str]:
+        """DiagnosticManager.QueryDescriptions → host'ta bulunan log anahtarları (ESXi 8: fdm, hostd, vmkernel, vpxa)."""
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:QueryDescriptions>
+      <vim25:_this type="DiagnosticManager">{diag_ref}</vim25:_this>
+      <vim25:host type="HostSystem">{host_ref}</vim25:host>
+    </vim25:QueryDescriptions>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        root = self._soap_text_call(soap_session, soap_url, body)
+        return [(el.text or "").strip() for el in root.iter() if self._soap_tag(el) == "key" and (el.text or "").strip()]
+
+    def _parse_sel(self, root) -> List[Dict[str, Any]]:
+        """FetchSystemEventLogResponse → [{record_id, when, sel_type, message, sensor}]."""
+        out: List[Dict[str, Any]] = []
+        if root is None:
+            return out
+        for rv in root.iter():
+            if self._soap_tag(rv) != "returnval":
+                continue
+            rec: Dict[str, Any] = {}
+            for ch in rv:
+                rec[self._soap_tag(ch)] = (ch.text or "").strip()
+            if not rec.get("message"):
+                continue
+            out.append({
+                "record_id": rec.get("recordId"),
+                "when": rec.get("when"),
+                "sel_type": rec.get("selType"),
+                "message": rec.get("message"),
+                "sensor": rec.get("sensorNumber"),
+            })
+        return out
+
+    def _parse_diag_log(self, root) -> Dict[str, Any]:
+        """BrowseDiagnosticLogResponse → {line_start, line_end, lines[]}."""
+        res: Dict[str, Any] = {"line_start": None, "line_end": None, "lines": []}
+        if root is None:
+            return res
+        for rv in root.iter():
+            if self._soap_tag(rv) != "returnval":
+                continue
+            for ch in rv:
+                tag = self._soap_tag(ch)
+                if tag == "lineText":
+                    res["lines"].append(ch.text or "")
+                elif tag in ("lineStart", "lineEnd"):
+                    try:
+                        res["line_start" if tag == "lineStart" else "line_end"] = int((ch.text or "").strip())
+                    except ValueError:
+                        pass
+            break
+        return res
+
+    def _browse_log_body(self, diag_ref: str, host_ref: str, key: str, lines: int,
+                         start: Optional[int] = None) -> str:
+        start_xml = f"<vim25:start>{int(start)}</vim25:start>" if start is not None else ""
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:BrowseDiagnosticLog>
+      <vim25:_this type="DiagnosticManager">{diag_ref}</vim25:_this>
+      <vim25:host type="HostSystem">{host_ref}</vim25:host>
+      <vim25:key>{key}</vim25:key>
+      {start_xml}
+      <vim25:lines>{int(lines)}</vim25:lines>
+    </vim25:BrowseDiagnosticLog>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+
+    def _browse_tail(self, soap_session, soap_url: str, diag_ref: str, host_ref: str, key: str,
+                     lines: int) -> List[str]:
+        """Log dosyasının SON `lines` satırı.
+
+        Sahada doğrulandı (ESXi 8.0.1): `start` verilmezse dosyanın BAŞI (satır 1..N) döner; aralık dışı bir
+        `start` (çok büyük) ise satır içermeyen yanıtta `lineEnd` = toplam satır sayısı verir (1 tabanlı).
+        Bu yüzden: (1) toplam satırı sorgula, (2) son `lines` satırı iste."""
+        probe = self._parse_diag_log(self._soap_text_call(
+            soap_session, soap_url, self._browse_log_body(diag_ref, host_ref, key, 1, start=100000000)))
+        total = probe["line_end"]
+        if not total:
+            return probe["lines"]
+        tail_start = max(1, int(total) - int(lines) + 1)
+        return self._parse_diag_log(self._soap_text_call(
+            soap_session, soap_url, self._browse_log_body(diag_ref, host_ref, key, lines, start=tail_start)))["lines"]
+
+    def get_host_hw_logs(self, *, kernel_lines: int = 2000, warning_lines: int = 1000,
+                         max_hosts: int = 500) -> Dict[str, Any]:
+        """ESXi host başına donanım log ham verisi (SEL + vmkernel/vmkwarning kuyruğu).
+
+        Tek SOAP oturumu (başarısızsa HİÇ yeniden denenmez → `login_failed`). Host başına hata diğerlerini durdurmaz.
+        Döner: {login_failed: bool, hosts: {host_ref: {host_name, sel: [...], logs: {key: [lines]}, errors: [str]}}}
+        """
+        soap_url = f"https://{self.host}:{self.port}/sdk"
+        soap_session = self._soap_login()
+        if not soap_session:
+            return {"login_failed": True, "hosts": {}}
+        try:
+            rows = self.retrieve_properties(
+                "HostSystem",
+                ["name", "runtime.connectionState", "configManager.healthStatusSystem"],
+                limit=max_hosts, soap_session=soap_session, soap_url=soap_url,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("get_host_hw_logs: host listesi alınamadı: %s", exc)
+            return {"login_failed": False, "list_failed": True, "hosts": {}}
+        refs = self._get_service_content_refs(soap_session, soap_url)
+        diag_ref = refs.get("diagnosticManager") or ""
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            href = row.get("_ref")
+            if not href:
+                continue
+            ent: Dict[str, Any] = {"host_name": row.get("name"), "sel": [], "logs": {}, "errors": []}
+            out[href] = ent
+            if str(row.get("runtime.connectionState") or "").lower() not in ("connected", ""):
+                ent["errors"].append("host bağlı değil")
+                continue
+            hs_ref = row.get("configManager.healthStatusSystem")
+            if isinstance(hs_ref, str) and hs_ref:
+                body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25">
+  <soapenv:Body>
+    <vim25:FetchSystemEventLog>
+      <vim25:_this type="HostHealthStatusSystem">{hs_ref}</vim25:_this>
+    </vim25:FetchSystemEventLog>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+                try:
+                    ent["sel"] = self._parse_sel(self._soap_text_call(soap_session, soap_url, body))
+                except Exception as exc:  # noqa: BLE001
+                    ent["errors"].append(f"SEL: {type(exc).__name__}: {str(exc)[:140]}")
+            else:
+                ent["errors"].append("SEL: healthStatusSystem yok")
+            if diag_ref:
+                try:
+                    avail = set(self._query_log_keys(soap_session, soap_url, diag_ref, href))
+                except Exception as exc:  # noqa: BLE001
+                    avail = {"vmkernel"}          # anahtar listesi alınamazsa yalnız vmkernel denenir
+                    ent["errors"].append(f"QueryDescriptions: {type(exc).__name__}: {str(exc)[:140]}")
+                for key, n in (("vmkernel", kernel_lines), ("vmkwarning", warning_lines)):
+                    if key not in avail:          # ESXi 8'de vmkwarning yok → InvalidArgument yerine atla
+                        continue
+                    try:
+                        ent["logs"][key] = self._browse_tail(soap_session, soap_url, diag_ref, href, key, n)
+                    except Exception as exc:  # noqa: BLE001
+                        ent["errors"].append(f"{key}: {type(exc).__name__}: {str(exc)[:140]}")
+            else:
+                ent["errors"].append("diagnosticManager yok")
+        return {"login_failed": False, "hosts": out}
+
     def _enrich_vms_running(self, soap_session, soap_url: str,
                             root_folder: str, results: List[Dict]):
         """Her host'ta poweredOn VM sayısını ekler."""
@@ -5292,6 +5475,7 @@ class VCenterClient:
             "alarmManager": "alarmManager",
             "viewManager": "ViewManager",
             "rootFolder": "group-d1",
+            "diagnosticManager": "DiagnosticManager",   # Faz 3a: BrowseDiagnosticLog (gerçek değer yanıttan okunur)
         }
         if root is None:
             return refs
@@ -5928,6 +6112,8 @@ class VCenterClient:
             return {
                 "events": events,
                 "errors": [],
+                "truncated": len(events) >= max_events,
+                "max_events": max_events,
                 "collected_at": datetime.now(timezone.utc).isoformat(),
                 "reference_time": None,
             }

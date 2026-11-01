@@ -69,6 +69,15 @@ def list_changes(db: Session, *, days: int = 30, platform: Optional[str] = None,
     if entity:
         q = q.filter(VirtConfigSnapshot.entity_name.ilike(f"%{entity}%"))
     rows = q.order_by(VirtConfigSnapshot.captured_at.desc()).limit(max(1, min(limit, 2000))).all()
+    # Varlık düzeyinde baseline var mı (satır baseline snapshot'ın kendisi olmayabilir; "kaldır" için).
+    bq = db.query(VirtConfigSnapshot.platform, VirtConfigSnapshot.source_id, VirtConfigSnapshot.entity_kind,
+                  VirtConfigSnapshot.entity_ref, VirtConfigSnapshot.baseline_at).filter(
+                      VirtConfigSnapshot.is_baseline.is_(True))
+    if platform:
+        bq = bq.filter(VirtConfigSnapshot.platform == platform)
+    if source_id is not None:
+        bq = bq.filter(VirtConfigSnapshot.source_id == source_id)
+    baselined = {tuple(r[:4]): r[4] for r in bq.all()}
     out = []
     for s in rows:
         prev = (
@@ -94,6 +103,12 @@ def list_changes(db: Session, *, days: int = 30, platform: Optional[str] = None,
             "captured_at": s.captured_at.isoformat() if s.captured_at else None,
             "previous_at": prev.captured_at.isoformat() if prev.captured_at else None,
             "changes": diff, "change_count": len(diff), "is_baseline": bool(s.is_baseline),
+            "has_baseline": (s.platform, s.source_id, s.entity_kind, s.entity_ref) in baselined,
+            "baseline_at": (
+                baselined[(s.platform, s.source_id, s.entity_kind, s.entity_ref)].isoformat()
+                if (s.platform, s.source_id, s.entity_kind, s.entity_ref) in baselined
+                and baselined[(s.platform, s.source_id, s.entity_kind, s.entity_ref)] else None
+            ),
         })
     return out
 
@@ -122,6 +137,27 @@ def set_baseline(db: Session, *, platform: str, source_id: Optional[int], entity
         n += 1
     db.flush()
     return n
+
+
+def clear_baseline(db: Session, *, platform: str, source_id: Optional[int], entity_kind: Optional[str] = None,
+                   entity_ref: Optional[str] = None) -> int:
+    """Seçilen varlık(lar)ın baseline işaretini kaldırır (snapshot geçmişi SİLİNMEZ).
+
+    Değişiklik geçmişi korunur; yalnız `is_baseline` kalkar, böylece sapma izleme o varlık için durur
+    ve mevcut sapma bulguları bir sonraki karar katmanı turunda çözülür.
+    """
+    q = db.query(VirtConfigSnapshot).filter(VirtConfigSnapshot.platform == platform,
+                                            VirtConfigSnapshot.is_baseline.is_(True))
+    if source_id is not None:
+        q = q.filter(VirtConfigSnapshot.source_id == source_id)
+    if entity_kind:
+        q = q.filter(VirtConfigSnapshot.entity_kind == entity_kind)
+    if entity_ref:
+        q = q.filter(VirtConfigSnapshot.entity_ref == entity_ref)
+    n = q.update({VirtConfigSnapshot.is_baseline: False, VirtConfigSnapshot.baseline_by: None,
+                  VirtConfigSnapshot.baseline_at: None}, synchronize_session=False)
+    db.flush()
+    return int(n or 0)
 
 
 def drift_findings(db: Session, platform: str, source_id: Optional[int]) -> List[FindingDraft]:

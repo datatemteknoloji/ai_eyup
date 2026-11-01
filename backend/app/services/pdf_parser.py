@@ -8,6 +8,13 @@ from typing import List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
+def clean_extracted_text(text):
+    """PDF çıkarma çıktısından Postgres'in reddettiği NUL (0x00) karakterlerini temizler (OCP-4.18-Storage kök nedeni)."""
+    if not text:
+        return text
+    return text.replace("\x00", "")
+
+
 def extract_pages_from_pdf(pdf_bytes: bytes, max_pages: Optional[int] = None) -> List[Tuple[int, str]]:
     """Sayfa numarası (1-based) + metin. Boş sayfalar atlanır."""
     if not pdf_bytes or len(pdf_bytes) < 100:
@@ -21,7 +28,7 @@ def extract_pages_from_pdf(pdf_bytes: bytes, max_pages: Optional[int] = None) ->
         out: List[Tuple[int, str]] = []
         for i, page in enumerate(pages):
             try:
-                text = page.extract_text()
+                text = clean_extracted_text(page.extract_text())
                 if text and text.strip():
                     out.append((i + 1, text.strip()))
             except Exception as e:

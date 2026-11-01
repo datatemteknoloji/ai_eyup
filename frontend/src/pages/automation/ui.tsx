@@ -162,7 +162,7 @@ export function HintInfo({ text, title }: { text: string; title?: string }) {
     <span ref={ref} className="relative inline-flex shrink-0 align-middle">
       <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); setOpen(o => !o) }}
         title={title || 'Bu veri neyi gösterir?'}
-        className="rounded p-0.5 text-slate-500 hover:bg-slate-700/60 hover:text-blue-300"
+        className="rounded-sm p-0.5 text-slate-500 hover:bg-slate-700/60 hover:text-blue-300"
         aria-label="Açıklama">
         <Info size={13} />
       </button>
@@ -209,7 +209,7 @@ export function ErrorNote({ error }: { error: unknown }) {
   const msg = error instanceof Error ? error.message : String(error)
   return (
     <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-start gap-2">
-      <XCircle size={16} className="mt-0.5 flex-shrink-0" /> <span>{msg}</span>
+      <XCircle size={16} className="mt-0.5 shrink-0" /> <span>{msg}</span>
     </div>
   )
 }
@@ -532,7 +532,7 @@ export function WorkflowTree({ nodes, systemId }: { nodes: Record<string, any>[]
     <div className="space-y-1">
       {nodes.map(n => (
         <div key={`${n.client}-${n.run_id}`} className="flex items-center gap-2 rounded-lg border border-slate-700/50 bg-slate-900/40 px-2.5 py-1.5 text-xs">
-          <GitBranch size={12} className="text-slate-500 flex-shrink-0" />
+          <GitBranch size={12} className="text-slate-500 shrink-0" />
           <span className="min-w-0 flex-1 truncate">
             {systemId ? <ObjectLink systemId={systemId} name={n.object_name} /> : n.object_name}
             <span className="ml-1.5 text-slate-500">{n.object_type}</span>
@@ -556,7 +556,7 @@ export function NoticeBox({ tone, text }: { tone?: string; text: string }) {
   const Icon = tone === 'critical' ? XCircle : tone === 'warning' ? AlertTriangle : tone === 'ok' ? CheckCircle2 : Info
   return (
     <div className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${cls}`}>
-      <Icon size={14} className="mt-0.5 flex-shrink-0" /><span className="font-mono break-all">{text}</span>
+      <Icon size={14} className="mt-0.5 shrink-0" /><span className="font-mono break-all">{text}</span>
     </div>
   )
 }
@@ -817,7 +817,7 @@ export function AutomicInfoButton({ systemId }: { systemId?: number }) {
                         <ul className="space-y-2">
                           {g.items.map((it, i) => (
                             <li key={i} className="flex gap-2 text-[13px] leading-snug">
-                              <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${it.must ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/10 text-amber-200'}`}>
+                              <span className={`mt-0.5 shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${it.must ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/10 text-amber-200'}`}>
                                 {it.must ? 'zorunlu' : 'öneri'}
                               </span>
                               <span className="text-slate-300">{it.text}</span>

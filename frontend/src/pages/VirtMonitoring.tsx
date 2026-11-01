@@ -177,7 +177,7 @@ function VirtChart({
           <Tooltip
             contentStyle={{ backgroundColor: '#131c2f', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
             labelStyle={{ color: '#c5d0e8' }}
-            formatter={(value: number, name: string) => [
+            formatter={(value, name) => [
               `${Number(value).toFixed(2)}${unit ? ` ${unit}` : ''}`,
               name,
             ]}
@@ -247,6 +247,12 @@ const VirtMonitoring: React.FC<{
   const [range, setRange] = useState<string>('30m')
   const [slots, setSlots] = useState<string[]>(DEFAULT_METRICS.vm)
   const [search, setSearch] = useState('')
+  // Arama sunucuda yapılır (liste 200 ile sınırlı; istemci filtresi kesilmiş listede arar).
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedSearch(search.trim()), 400)
+    return () => window.clearTimeout(id)
+  }, [search])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [hvIds, setHvIds] = useState<string[]>([])
   const [hvPickerOpen, setHvPickerOpen] = useState(false)
@@ -358,9 +364,10 @@ const VirtMonitoring: React.FC<{
   })
 
   const objects = useQuery({
-    queryKey: ['virt-monitoring-objects', kind, hvKey, clusterFilter],
+    queryKey: ['virt-monitoring-objects', kind, hvKey, clusterFilter, debouncedSearch],
     queryFn: async () => {
       const p = new URLSearchParams({ kind, limit: '200' })
+      if (debouncedSearch) p.set('q', debouncedSearch)
       if (hvKey) p.set('hypervisor_ids', hvKey)
       if (clusterFilter) p.set('cluster', clusterFilter)
       const r = await fetch(`${API_BASE_URL}/hypervisors/monitoring/objects?${p}`)
@@ -369,6 +376,7 @@ const VirtMonitoring: React.FC<{
     },
     enabled: pickerOpen && (hvIds.length > 0 || (hypervisors.isFetched && vcenters.length === 0)),
     staleTime: 60_000,
+    placeholderData: (prev) => prev,
   })
 
   // Cluster dropdown — host envanterinden
@@ -389,14 +397,15 @@ const VirtMonitoring: React.FC<{
     enabled: hvIds.length > 0 || (hypervisors.isFetched && vcenters.length === 0),
     staleTime: 60_000,
   })
+  // Sunucu `q` ile süzülmüş liste; yazma anında (debounce bitene kadar) eski liste istemcide daraltılır.
   const filteredObjects = useMemo(() => {
     const items = objects.data?.items || []
     const q = search.trim().toLowerCase()
-    if (!q) return items
+    if (!q || q === debouncedSearch.toLowerCase()) return items
     return items.filter((o: any) =>
       [o.name, o.hint, o.host, o.cluster, o.status, o.hypervisor_name].some((x) => String(x || '').toLowerCase().includes(q)),
     )
-  }, [objects.data, search])
+  }, [objects.data, search, debouncedSearch])
 
   const hasSel = selected.length > 0
   const metricList: { id: string; unit: string }[] = metrics.data?.metrics || []
@@ -635,7 +644,7 @@ const VirtMonitoring: React.FC<{
                     onChange={(e) => setSearch(e.target.value)}
                     onMouseDown={(e) => e.stopPropagation()}
                     placeholder={t('vmn_search')}
-                    className="flex-1 bg-transparent text-sm text-white outline-none"
+                    className="flex-1 bg-transparent text-sm text-white outline-hidden"
                   />
                 </div>
                 <div className="flex gap-2 p-2 border-b border-white/[0.06]">
@@ -667,7 +676,7 @@ const VirtMonitoring: React.FC<{
                     const on = selected.includes(o.id)
                     const idx = selected.indexOf(o.id)
                     return (
-                      <label key={o.id} className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-white/[0.04] cursor-pointer">
+                      <label key={o.id} className="flex items-start gap-2 px-2 py-1.5 rounded-sm hover:bg-white/[0.04] cursor-pointer">
                         <input type="checkbox" checked={on} onChange={() => toggle(o.id, objectLabel(o))} />
                         <span
                           className="mt-1 w-2 h-2 rounded-full shrink-0"
@@ -718,7 +727,7 @@ const VirtMonitoring: React.FC<{
                       next[i] = e.target.value
                       return next
                     })}
-                    className="flex-1 bg-[#0d1422] text-sm text-white outline-none"
+                    className="flex-1 bg-[#0d1422] text-sm text-white outline-hidden"
                   >
                     {metricList.map((m) => (
                       <option key={m.id} value={m.id}>{METRIC_LABEL[m.id] || m.id}</option>

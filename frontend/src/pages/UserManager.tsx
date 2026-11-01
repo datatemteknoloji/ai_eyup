@@ -10,7 +10,7 @@ import {
   UserPlus, Pencil, Trash2, KeyRound, Check, X, AlertTriangle,
   ShieldCheck, Eye, Search, RefreshCw, CheckCircle2, UserX, UserCheck,
   Package, Server, Shield, Cloud, Brain, Bot, FileUp, Wrench, Database,
-  FileBarChart2, Activity,
+  FileBarChart2, Activity, HardDrive, Crown, Boxes, Workflow,
 } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useAuth } from '../auth/AuthContext'
@@ -51,18 +51,20 @@ const MODULE_ICONS: Record<string, React.ReactNode> = {
   Brain: <Brain size={14} />, Bot: <Bot size={14} />, FileUp: <FileUp size={14} />,
   Wrench: <Wrench size={14} />, Package: <Package size={14} />, Database: <Database size={14} />,
   FileBarChart2: <FileBarChart2 size={14} />, Activity: <Activity size={14} />,
+  HardDrive: <HardDrive size={14} />, Crown: <Crown size={14} />, Boxes: <Boxes size={14} />,
+  KeyRound: <KeyRound size={14} />, Workflow: <Workflow size={14} />,
 }
 const MOD_COLOR_TEXT: Record<string, string> = {
   green: 'text-green-400', blue: 'text-blue-400', indigo: 'text-indigo-400',
   purple: 'text-sky-400', cyan: 'text-cyan-400', orange: 'text-orange-400', teal: 'text-teal-400',
   lime: 'text-lime-400', sky: 'text-sky-400', amber: 'text-amber-400', rose: 'text-rose-400',
-  violet: 'text-violet-400', pink: 'text-pink-400',
+  violet: 'text-violet-400', pink: 'text-pink-400', slate: 'text-slate-300',
 }
 const MOD_COLOR_DOT: Record<string, string> = {
   green: 'bg-green-400', blue: 'bg-blue-400', indigo: 'bg-indigo-400',
   purple: 'bg-sky-400', cyan: 'bg-cyan-400', orange: 'bg-orange-400', teal: 'bg-teal-400',
   lime: 'bg-lime-400', sky: 'bg-sky-400', amber: 'bg-amber-400', rose: 'bg-rose-400',
-  violet: 'bg-violet-400', pink: 'bg-pink-400',
+  violet: 'bg-violet-400', pink: 'bg-pink-400', slate: 'bg-slate-300',
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -166,26 +168,26 @@ function UserModal({ user, modules, currentModuleIds, onClose, onSaved }: {
                 <label className="text-xs font-medium text-slate-400 mb-1.5 block">{t('username_star')}</label>
                 <input value={form.username} onChange={e => set('username', e.target.value)}
                   placeholder="jdoe" required autoFocus
-                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
+                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
               </div>
             )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-slate-400 mb-1.5 block">{t('usr_fullname')}</label>
                 <input value={form.full_name} onChange={e => set('full_name', e.target.value)} placeholder="John Doe"
-                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
+                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-400 mb-1.5 block">{t('usr_email')}</label>
                 <input value={form.email} onChange={e => set('email', e.target.value)} type="email" placeholder="jdoe@example.com"
-                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
+                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-slate-400 mb-1.5 block">{t('usr_role')}</label>
                 <select value={form.role} onChange={e => set('role', e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50">
+                  className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50">
                   <option value="operator">Operator</option>
                   <option value="viewer">Viewer</option>
                   <option value="admin">Admin</option>
@@ -196,7 +198,7 @@ function UserModal({ user, modules, currentModuleIds, onClose, onSaved }: {
                   <label className="text-xs font-medium text-slate-400 mb-1.5 block">{t('password_star')}</label>
                   <input value={form.password} onChange={e => set('password', e.target.value)}
                     type="password" placeholder={t('usr_pw_short')} required
-                    className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+                    className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50" />
                 </div>
               ) : (
                 <div className="flex items-end pb-0.5">
@@ -204,7 +206,7 @@ function UserModal({ user, modules, currentModuleIds, onClose, onSaved }: {
                     <span className="text-sm text-slate-300">{t('active_label')}</span>
                     <button type="button" onClick={() => set('is_active', !form.is_active)}
                       className={`w-10 h-5 rounded-full relative transition-colors ${form.is_active ? 'bg-cyan-500' : 'bg-slate-700'}`}>
-                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.is_active ? 'left-[22px]' : 'left-0.5'}`} />
+                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${form.is_active ? 'left-[22px]' : 'left-0.5'}`} />
                     </button>
                   </div>
                 </div>
@@ -308,9 +310,9 @@ function ResetPasswordModal({ user, onClose }: { user: UserItem; onClose: () => 
         ) : (
           <form onSubmit={submit} className="p-6 space-y-4">
             <input value={pw} onChange={e => setPw(e.target.value)} type="password" placeholder={t('usr_new_pw')} required autoFocus
-              className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+              className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50" />
             <input value={pw2} onChange={e => setPw2(e.target.value)} type="password" placeholder={t('usr_repeat')} required
-              className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
+              className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50" />
             {error && <p className="text-sm text-red-400 flex items-center gap-1.5"><AlertTriangle size={13} /> {error}</p>}
             <div className="flex gap-3">
               <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-400 hover:bg-slate-800 text-sm">{t('cancel')}</button>
@@ -516,7 +518,7 @@ export default function UserManager() {
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('usr_search')}
-            className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-4 py-2 w-52 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
+            className="bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-9 pr-4 py-2 w-52 focus:outline-hidden focus:ring-2 focus:ring-cyan-500/50 placeholder-slate-600" />
         </div>
         <button onClick={invalidateAll} title={t('refresh_action')}
           className="ml-auto p-2 rounded-xl border border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600 transition-colors">
@@ -536,18 +538,9 @@ export default function UserManager() {
                   <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider min-w-[200px]">
                     {t('usr_col_user')}
                   </th>
-                  {modules.map(m => (
-                    <th key={m.id} className="px-3 py-3 text-center min-w-[72px]">
-                      <div className="flex flex-col items-center gap-1.5">
-                        <span className={MOD_COLOR_TEXT[m.color] ?? 'text-slate-400'}>
-                          {MODULE_ICONS[m.icon] ?? <Package size={14} />}
-                        </span>
-                        <span className="text-[10px] text-slate-500 leading-tight max-w-[60px] text-center break-words">
-                          {m.name.replace('Yönetimi', '').replace('Level 1', 'L1').trim()}
-                        </span>
-                      </div>
-                    </th>
-                  ))}
+                  <th className="text-left px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    {t('usr_col_modules')}
+                  </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider min-w-[100px]">
                     {t('actions')}
                   </th>
@@ -556,7 +549,7 @@ export default function UserManager() {
               <tbody className="divide-y divide-slate-800/60">
                 {filteredUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={modules.length + 2} className="text-center py-12 text-slate-600 text-sm">
+                    <td colSpan={3} className="text-center py-12 text-slate-600 text-sm">
                       {search ? t('usr_no_results') : t('usr_none')}
                     </td>
                   </tr>
@@ -599,41 +592,44 @@ export default function UserManager() {
                         </div>
                       </td>
 
-                      {/* Modül toggle'ları */}
-                      {modules.map(m => {
-                        const active = isAdmin || mods.has(m.id)
-                        const isPending = toggleMutation.isPending &&
-                          toggleMutation.variables?.userId === u.id
-
-                        return (
-                          <td key={m.id} className="px-3 py-3">
-                            <div className="flex justify-center">
-                              {isAdmin ? (
-                                <span title={t('usr_admin_full')}>
-                                  <CheckCircle2 size={15} className="text-slate-600" />
-                                </span>
-                              ) : (
+                      {/* Modül chip'leri: tümü tek hücrede, sarılarak görünür (yatay kaydırma yok) */}
+                      <td className="px-3 py-3">
+                        {isAdmin ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-400" title={t('usr_admin_full')}>
+                            <CheckCircle2 size={14} className="text-slate-500" /> {t('usr_admin_full')}
+                          </span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {modules.map(m => {
+                              const active = mods.has(m.id)
+                              const isPending = toggleMutation.isPending &&
+                                toggleMutation.variables?.userId === u.id
+                              return (
                                 <button
+                                  key={m.id}
+                                  type="button"
+                                  data-testid={`usr-mod-${u.id}-${m.id}`}
+                                  aria-pressed={active}
                                   onClick={() => handleToggle(u, m.id)}
                                   disabled={isPending}
                                   title={active ? t('usr_mod_off', { name: m.name }) : t('usr_mod_on', { name: m.name })}
-                                  className={`w-9 h-5 rounded-full relative transition-colors duration-150 focus:outline-none disabled:opacity-60 ${
-                                    active ? 'bg-cyan-500' : 'bg-slate-700 hover:bg-slate-600'
+                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] leading-none transition-colors disabled:opacity-60 ${
+                                    active
+                                      ? 'bg-cyan-500/15 border-cyan-500/50 text-cyan-100'
+                                      : 'bg-slate-800/40 border-slate-700/60 text-slate-500 hover:text-slate-300 hover:border-slate-600'
                                   }`}
                                 >
-                                  {isPending ? (
-                                    <span className="absolute inset-0 flex items-center justify-center">
-                                      <RefreshCw size={10} className="text-white animate-spin" />
-                                    </span>
-                                  ) : (
-                                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-150 ${active ? 'left-[18px]' : 'left-0.5'}`} />
-                                  )}
+                                  <span className={active ? (MOD_COLOR_TEXT[m.color] ?? 'text-slate-300') : 'text-slate-600'}>
+                                    {MODULE_ICONS[m.icon] ?? <Package size={12} />}
+                                  </span>
+                                  {m.name.replace('Yönetimi', '').replace('Level 1', 'L1').trim()}
+                                  {active && <Check size={11} className="text-cyan-300" />}
                                 </button>
-                              )}
-                            </div>
-                          </td>
-                        )
-                      })}
+                              )
+                            })}
+                          </div>
+                        )}
+                      </td>
 
                       {/* İşlemler */}
                       <td className="px-4 py-3">

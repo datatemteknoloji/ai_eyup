@@ -74,14 +74,14 @@ const Log: React.FC = () => {
                         {e.created_at ? new Date(e.created_at).toLocaleString('tr-TR') : '-'}
                       </td>
                       <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded bg-slate-600 text-slate-300 text-xs">
+                        <span className="px-2 py-0.5 rounded-sm bg-slate-600 text-slate-300 text-xs">
                           {e.event_type}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-white">{e.title}</td>
                       <td className="py-3 px-4 text-slate-400">{e.server_name || '-'}</td>
                       <td className="py-3 px-4">
-                        <span className={`px-2 py-0.5 rounded text-xs ${
+                        <span className={`px-2 py-0.5 rounded-sm text-xs ${
                           e.severity === 'critical' ? 'bg-red-500/20 text-red-400' :
                           e.severity === 'warning' ? 'bg-yellow-500/20 text-yellow-400' :
                           'bg-green-500/20 text-green-400'
@@ -99,10 +99,10 @@ const Log: React.FC = () => {
                 <span className="text-slate-500 text-sm">{total.toLocaleString('tr-TR')} kayıt</span>
                 <div className="flex gap-2">
                   <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-                    className="px-3 py-1 rounded bg-slate-700 text-slate-300 disabled:opacity-50 text-sm">Önceki</button>
+                    className="px-3 py-1 rounded-sm bg-slate-700 text-slate-300 disabled:opacity-50 text-sm">Önceki</button>
                   <span className="px-3 py-1 text-slate-400 text-sm">{page + 1} / {totalPages}</span>
                   <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
-                    className="px-3 py-1 rounded bg-slate-700 text-slate-300 disabled:opacity-50 text-sm">Sonraki</button>
+                    className="px-3 py-1 rounded-sm bg-slate-700 text-slate-300 disabled:opacity-50 text-sm">Sonraki</button>
                 </div>
               </div>
             )}
