@@ -11,6 +11,12 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.44] - 2026-11-01
+
+### Level 1 (Dropt): oturum köprüsü düzeltmesi
+- **Düzeltme:** Dropt bağımlılık yükseltmesinden (`sqlmodel` 0.0.48) sonra `/api/auth/bridge` 500 dönüyor, ainew Level 1 dashboard'u ve Dropt oturumu açılmıyordu (`Datetime values must have timezone information`). Dropt modellerindeki tarih alanları `NaiveDatetime` ile işaretlendi; veritabanı şeması değişmedi.
+- **Dropt yığını:** Dropt imajı Python 3.14 ve güncel bağımlılıklarla (FastAPI, PyJWT, cryptography, celery vb.) yeniden derlendi.
+
 ## [1.0.9.43] - 2026-11-01
 
 ### Donanım: şasi/blade görünümü, firmware karşılaştırma, tablo sütunları ve giriş ekranı
