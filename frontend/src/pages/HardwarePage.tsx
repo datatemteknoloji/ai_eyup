@@ -229,7 +229,9 @@ const ServerRow: React.FC<{ s: any }> = ({ s }) => {
 
 export default function HardwarePage() {
   const t = useT()
-  const { hasHw } = useCapabilities()
+  const { hasHw, hasHwLogs } = useCapabilities()
+  // Faz 3c: portal (OME/OneView) yok ama log kaynağı açık / log kaydı var → yalnız Loglar + BMC sekmeleri.
+  const logsOnly = !hasHw && !!hasHwLogs
   const [tab, setTab] = useState<Tab>('servers')
   const [q, setQ] = useState('')
   const [health, setHealth] = useState('')
@@ -240,7 +242,7 @@ export default function HardwarePage() {
   // asc → desc → sıralamasız (varsayılan ad sırası)
   const toggleSort = (by: string) => setSort(cur => (!cur || cur.by !== by ? { by, dir: 'asc' } : cur.dir === 'asc' ? { by, dir: 'desc' } : null))
 
-  const summary = useQuery<any>({ queryKey: ['hw-summary'], queryFn: () => get('/summary'), refetchInterval: 60_000 })
+  const summary = useQuery<any>({ queryKey: ['hw-summary'], enabled: !logsOnly, queryFn: () => get('/summary'), refetchInterval: 60_000 })
   const enabled = !!summary.data?.enabled
   const servers = useQuery<any>({
     queryKey: ['hw-servers', q, health, vendor, matched, hostClass, sort?.by ?? '', sort?.dir ?? ''],
@@ -273,6 +275,22 @@ export default function HardwarePage() {
 
   const sm = summary.data
   const hdr = <PageHeader title={t('hw_title')} subtitle={t('hw_sub')} actions={<Link to="/integrations/hardware" className="text-xs text-slate-400 hover:text-white">{t('hw_none_link')}</Link>} />
+
+  if (logsOnly) {
+    const lt: Tab = tab === 'bmc' ? 'bmc' : 'logs'
+    return (
+      <div className="p-6 space-y-5" data-testid="hw-logs-only">
+        {hdr}
+        <div className="text-xs text-slate-400 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2" data-testid="hw-logs-only-note">{t('hw_logs_only_note')}</div>
+        <Tabs active={lt} onChange={id => setTab(id as Tab)} tabs={[
+          { id: 'logs', label: t('hw_tab_logs') },
+          { id: 'bmc', label: t('hw_tab_bmc') },
+        ]} />
+        {lt === 'logs' && <HwLogsTab />}
+        {lt === 'bmc' && <HwBmcTab />}
+      </div>
+    )
+  }
 
   if (summary.isLoading) return <div className="p-6 text-sm text-slate-500">{t('hw_loading')}</div>
   if (!hasHw || !enabled) {

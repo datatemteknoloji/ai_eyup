@@ -50,9 +50,15 @@ def capabilities_payload() -> Dict[str, Any]:
     from app.services.hw.demo_gate import BANNER_TR as HW_BANNER_TR, DEMO_CAPABILITY as HW_DEMO_CAPABILITY
     demo = DEMO_CAPABILITY in caps
     hw_demo = HW_DEMO_CAPABILITY in caps
+    # Faz 3c: portal (OME/OneView) olmadan da log odaklı Donanım sayfası — bayrak açık veya log kaydı var.
+    try:
+        from app.services.hw.host_logs import logs_available
+        has_hw_logs = bool(logs_available())
+    except Exception:  # noqa: BLE001
+        has_hw_logs = False
     return {"ok": True, "capabilities": caps, "has_backup": "backup" in caps,
             "demo_active": demo, "demo_banner": BANNER_TR if demo else None,
-            "has_hw": "hw" in caps, "hw_demo_active": hw_demo,
+            "has_hw": "hw" in caps, "hw_demo_active": hw_demo, "has_hw_logs": has_hw_logs,
             "hw_demo_banner": HW_BANNER_TR if hw_demo else None,
             "has_automic": "automic" in caps, "has_centrify": "centrify" in caps}
 

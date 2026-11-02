@@ -296,9 +296,10 @@ const RequireModule: React.FC<{ moduleId: string; children: React.ReactNode }> =
 
 /** Donanım entegrasyonu (gerçek veya etiketli DEMO) yoksa `/hardware` doğrudan açılsa bile ana sayfaya yönlendirir. */
 const RequireHwCapability: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { hasHw, isLoading } = useCapabilities()
+  const { hasHw, hasHwLogs, isLoading } = useCapabilities()
   if (isLoading) return null
-  if (!hasHw) return <Navigate to="/" replace />
+  // Portal yoksa bile log kaynağı açık / log kaydı varsa sayfa (yalnız log sekmeleriyle) açılır.
+  if (!hasHw && !hasHwLogs) return <Navigate to="/" replace />
   return <>{children}</>
 }
 

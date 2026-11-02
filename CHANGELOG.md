@@ -11,6 +11,10 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### Donanım: portalsız (OME/OneView olmadan) log modu
+- **Donanım sayfası artık portal şartı olmadan açılabilir:** portal bağlı değilken bile bir donanım log kaynağı açıksa (Host donanım logları, in-band ipmitool, BMC logları) veya log kaydı varsa menüde «Donanım» görünür; sayfa yalnız **Donanım Logları** ve **BMC** sekmeleriyle açılır (KPI/sunucu/şasi/alarm/garanti/firmware gizli, portal uçlarına istek atılmaz) ve «portal bağlı değil» notu gösterir. Portal eklenince tam sayfa gelir (değişiklik yok). `hardware` modülü RBAC'ı aynen geçerli.
+- `GET /capabilities` yeni `has_hw_logs` alanı. Yeni port/firewall/hesap yok; yeni toplama başlatılmaz.
+
 ## [1.0.9.44] - 2026-11-01
 
 ### Level 1 (Dropt): oturum köprüsü düzeltmesi

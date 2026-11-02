@@ -199,3 +199,26 @@ Deterministik, en özelden genele: **host'a özel profil > portal (entegrasyon) 
 - **Gerçek BMC / fiziksel sunucu bu ortamda YOK** → B ve D yalnız sahte yanıtlarla doğrulandı.
 - Bekleyen İH: (a) gerçek fiziksel Linux hostta `hw_ipmi_inband_enabled` açıp `ipmi_sel` kaydı veya açık neden (`no_ipmitool|no_device|no_sudo`) görmek; (b) gerçek iLO/iDRAC'te Redfish ile ≥1 log veya açık neden (`auth_failed|unreachable|unsupported`) görmek. Kimlik hatası olursa BMC durur; yalnız başarılı «Bağlantıyı test et» sürdürür.
 - Yapılmadı: «Linux sunucusu eklerken isteğe bağlı BMC IP/profil sorusu» (şimdilik Hardware → BMC sekmesinden elle girilir / ipmitool ile keşfedilir).
+
+## Faz 3c — Portalsız «Donanım Logları» modu (2026-11-02)
+
+**Amaç:** Dell OME / HPE OneView entegrasyonu OLMADAN da Donanım sayfası yalnız log odaklı (Loglar + BMC sekmeleri) açılabilsin.
+Log kaynaklarının çoğu zaten portala bağlı değil (ESXi vCenter SEL/vmkernel, Linux/Windows olayları, in-band `ipmitool`, iLO/iDRAC Redfish).
+Yeni port/firewall/hesap YOK; yalnız görünürlük kapısı ve boş durumlar değişir.
+
+### Kapanış kriterleri (kod ÖNCE bunlara göre)
+1. `GET /capabilities` yeni `has_hw_logs` alanı döner: `true` ⇔ (`hw_host_logs_enabled` | `hw_ipmi_inband_enabled` | `hw_bmc_logs_enabled` açık) VEYA `hw_log_entries`'te kayıt var. Hesap hatası/DB yok → `false` (500 değil). Salt-okunur; yeni hiçbir toplama başlatmaz.
+2. Menü ve `/hardware` rotası: `hasHw || hasHwLogs` ile açılır (`hardware` modülü RBAC'ı AYNEN geçerli; varsayılan yalnız Admin). İkisi de yoksa mevcut davranış (menüde yok, rota `/`'e yönlendirir).
+3. Portal YOK + log var (`logsOnly`): sayfa KPI, sağlayıcı satırı ve portal sekmelerini (Sunucular, Şasiler, Alarmlar, Garanti, Eşleşmeyenler, Firmware, Bulgular) GÖSTERMEZ; yalnız **Loglar** (varsayılan) ve **BMC** sekmeleri + «portal bağlı değil» bilgi notu. `/hw/summary` ve portal uçlarına istek ATILMAZ.
+4. Portal VAR (`hasHw`): sayfa BİREBİR eskisi gibi (regresyon yok; mevcut hardware*.test.tsx değişmeden geçer).
+5. `GET /hw/log-overview` ve `GET /hw/bmc/overview` portal yokken (`hw_mode=none`) 200 + boş/kaynak bazlı yanıt verir (500/404 değil); `portal_alert` kaynağı bayrağı kapalı görünür.
+6. Testler: backend `has_hw_logs` (bayrak/kayıt/hiçbiri) + portalsız `log-overview`/`bmc overview`; frontend logsOnly sayfa (yalnız 2 sekme, `/summary` çağrılmaz), menü/rota kapısı. Tam backend + frontend paketi yeşil.
+7. Belge: bu bölüm + `docs/guides/{tr,en}/modules/settings.md`/entegrasyon notu + CHANGELOG [Unreleased]. AI sohbet/tool yaşam döngüsü DEĞİŞMEZ (ai-architecture belgeleri etkilenmez).
+
+**İH (insan testi):** (a) portalsız ortamda bir log bayrağı açıp menüde «Donanım»ın göründüğünü, yalnız Loglar/BMC sekmelerini açtığını görmek; (b) portal eklenince tam sayfanın geldiğini görmek. **İH yapılmadan «Kapandı» yazılmaz.**
+
+### Durum — Faz 3c (2026-11-02): **Uygulandı, İH bekliyor** (Kapandı DEĞİL)
+
+- Kod kriterlerden SONRA yazıldı (keşif/ön inceleme sırasında kod önce yazılmadı). `host_logs.logs_available`, `capabilities.has_hw_logs`, `useCapabilities.hasHwLogs`, Layout menü + `RequireHwCapability`, `HardwarePage` `logsOnly` kolu, `hw_logs_only_note` (TR/EN).
+- Doğrulama: backend `test_hw_logs_only.py` (9: bayrak/kayıt/hata, payload, portalsız `log-overview` ve `bmc/overview`); frontend `hardwareLogsOnly.test.tsx` (4: yalnız 2 sekme, `/summary` yok, portal varken tam sayfa, ikisi de yokken hw_none); mevcut hardware*.test.tsx değişmeden geçer. Kriter 1–7'nin kod/test kısmı tamam.
+- Bekleyen İH: kriter bölümündeki (a) ve (b).

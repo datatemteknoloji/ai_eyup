@@ -3,7 +3,7 @@ import { API_BASE_URL } from '../config/api'
 
 /** Backend capability registry (GET /capabilities). Opsiyonel entegrasyon yoksa küme boş döner. */
 export function useCapabilities() {
-  const q = useQuery<{ capabilities: string[]; has_backup: boolean; demo_active?: boolean; has_hw?: boolean; hw_demo_active?: boolean; has_automic?: boolean; has_centrify?: boolean }>({
+  const q = useQuery<{ capabilities: string[]; has_backup: boolean; demo_active?: boolean; has_hw?: boolean; has_hw_logs?: boolean; hw_demo_active?: boolean; has_automic?: boolean; has_centrify?: boolean }>({
     queryKey: ['capabilities'],
     queryFn: async () => {
       const r = await fetch(`${API_BASE_URL}/capabilities`)
@@ -22,6 +22,8 @@ export function useCapabilities() {
   return {
     capabilities: caps,
     hasHw: caps.includes('hw') || hwDemoActive,
+    // Portal (OME/OneView) YOK ama donanım log kaynağı açık/log kaydı var → log odaklı Donanım sayfası (Faz 3c).
+    hasHwLogs: !!q.data?.has_hw_logs,
     hwDemoActive,
     hasBackup: caps.includes('backup') || demoActive,
     hasAutomic: !!q.data?.has_automic || caps.includes('automic'),

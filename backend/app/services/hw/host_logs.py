@@ -333,6 +333,29 @@ def any_enabled() -> bool:
     return enabled() or ipmi_inband.enabled() or bmc_logs.enabled()
 
 
+def logs_available(db: Optional[Session] = None) -> bool:
+    """Portalsız «Donanım Logları» modu kapısı: log bayraklarından biri açık VEYA `hw_log_entries`'te kayıt var.
+
+    Salt-okunur; hiçbir toplama başlatmaz. Hata (DB/tablo yok) → False (yükseltme/ilk boot'ta 500 üretmez).
+    """
+    try:
+        if any_enabled():
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    own = None
+    try:
+        if db is None:
+            from app.core.database import SessionLocal
+            own = db = SessionLocal()
+        return db.query(HwLogEntry.id).limit(1).first() is not None
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        if own is not None:
+            own.close()
+
+
 def run_host_log_sync(db: Session, *, force: bool = False, client_factory=None, ipmi_runner=None,
                       bmc_factory=None) -> Dict[str, Any]:
     """Zamanlayıcı girişi. Bayrakların HEPSİ kapalıyken hiçbir şey yapmaz (vCenter/SSH/BMC'ye ek çağrı yok).

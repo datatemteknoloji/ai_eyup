@@ -171,7 +171,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { theme, toggleTheme } = useTheme()
   const { t, locale, setLocale } = useLocale()
   const { appName, logoUrl, version } = useBranding()
-  const { hasBackup, hasHw, hasAutomic, hasCentrify } = useCapabilities()
+  const { hasBackup, hasHw, hasHwLogs, hasAutomic, hasCentrify } = useCapabilities()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -399,7 +399,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ],
     },
     // Donanım (Dell OME / HPE OneView): yalnız entegrasyon varken ve `hardware` modülü atanmışken (varsayılan Admin)
-    ...(hasHw ? [{ type: 'link' as const, path: '/hardware', name: t('nav_hardware'), icon: <Cpu size={18} />, moduleId: 'hardware' }] : []),
+    ...(hasHw || hasHwLogs ? [{ type: 'link' as const, path: '/hardware', name: t('nav_hardware'), icon: <Cpu size={18} />, moduleId: 'hardware' }] : []),
     { type: 'link', path: '/applications', name: t('nav_applications'), icon: <Package size={18} />, moduleId: 'applications' },
     { type: 'link', path: '/knowledge-base', name: t('nav_knowledge'), icon: <Brain size={18} />, moduleId: 'knowledge' },
     { type: 'link', path: '/custom-reports', name: t('nav_custom_reports'), icon: <BarChart3 size={18} />, moduleId: 'custom_reports' },
