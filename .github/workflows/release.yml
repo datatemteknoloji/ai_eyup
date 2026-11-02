@@ -2,41 +2,44 @@ name: Release check
 
 # Offline müşteri paketleri git `dist/` içinden üretilmez.
 # Yayın: scripts/build-distribution.sh → scripts/publish-github-release.sh
-# (veya scripts/release.sh). Tag push yalnızca Release'in varlığını doğrular.
+# (veya scripts/release.sh).
+#
+# Neden `push: tags` DEĞİL, `release: published`?
+#   `gh release create <tag> <1.5 GB tar>` release'i önce TASLAK (draft) açar,
+#   yükleme bitince (~30 dk) yayınlar. Tag push'a bağlı kontrol 3 dk bekleyip
+#   «release bulunamadı» ile kırmızıya düşüyordu (v1.0.9.42–44). Bu workflow
+#   release yayınlandığı anda çalışır; asset zaten yüklenmiş olur.
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 jobs:
   confirm-release:
-    name: Confirm GitHub Release
+    name: Confirm GitHub Release assets
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for release assets
+      - name: Check release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          # publish-github-release.sh önce tag push eder, sonra gh release create —
-          # kısa bir yarış penceresi olabilir; birkaç kez dene.
-          for i in $(seq 1 18); do
-            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              echo "Release bulundu: $TAG"
-              gh release view "$TAG" --repo "$GITHUB_REPOSITORY"
-              # En az bir ainew-*.tar.gz asset'i olmalı
-              assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')"
-              echo "$assets" | grep -E '^ainew-.*\.tar\.gz$' >/dev/null \
-                || { echo "Uyarı: ainew-*.tar.gz asset yok (henüz yükleniyor olabilir)."; exit 1; }
+          # Yayın olayı geldiğinde asset'ler yüklenmiştir; yine de kısa bir tolerans.
+          for i in $(seq 1 6); do
+            assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' || true)"
+            if echo "$assets" | grep -E '^ainew-.*\.tar\.gz$' >/dev/null; then
+              echo "Release $TAG asset'leri:"
+              echo "$assets"
+              echo "$assets" | grep -E '\.sha256$' >/dev/null \
+                || echo "::warning::$TAG için .sha256 asset'i yok."
               exit 0
             fi
-            echo "Deneme $i/18 — release henüz yok, 10s bekleniyor..."
+            echo "Deneme $i/6 — ainew-*.tar.gz henüz listede yok, 10s bekleniyor..."
             sleep 10
           done
-          echo "::error::Release $TAG bulunamadı. scripts/publish-github-release.sh ile yayınlayın."
+          echo "::error::Release $TAG içinde ainew-*.tar.gz asset'i yok."
           exit 1

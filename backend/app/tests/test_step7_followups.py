@@ -1,5 +1,6 @@
 """Adım 7 sonrası: DB işlemi bırakma, error_state_count, v11 kapsamı, bayat node, bench truth kuralı."""
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,13 @@ from app.services.chat_quality import count_rules as cr
 from app.services.chat_quality import count_extra as cx
 from app.services.chat_quality import ocp_pod_stats as ps
 from app.services.chat_quality.count_scope import HV, Scope, ScopeCatalog
+
+_BACKEND = Path(__file__).resolve().parents[2]  # .../backend (konteynerde /app, CI'da repo/backend)
+
+
+def _src(rel: str) -> str:
+    """Kaynak dosyayı çalışma dizininden bağımsız oku (CI'da cwd repo kökü)."""
+    return (_BACKEND / rel).read_text(encoding="utf-8")
 
 
 # ── release_txn ──────────────────────────────────────────────────────────────────
@@ -47,20 +55,20 @@ def test_release_txn_swallows_errors_and_rolls_back():
 
 @pytest.mark.parametrize("path", ["app/api/unified_chat.py", "app/api/chat.py", "app/api/windows_chat.py"])
 def test_chat_pipelines_release_txn_before_llm_stream(path):
-    src = open("/app/" + path, encoding="utf-8").read()
+    src = _src(path)
     i = src.index("release_txn(db)")
     assert 'yield _sse({"phase": "answering"})' in src[i:i + 400]
 
 
 def test_run_turn_releases_txn_in_loop():
-    src = open("/app/app/services/chat_orchestrator/service.py", encoding="utf-8").read()
+    src = _src("app/services/chat_orchestrator/service.py")
     assert "release_txn(db)" in src and "_last_release" in src
 
 
 def test_engines_have_application_names():
     from app.core import database
     assert database.engine.dialect.name == "postgresql"
-    src = open("/app/app/core/database.py", encoding="utf-8").read()
+    src = _src("app/core/database.py")
     assert "ainew-api" in src and "ainew-thread" in src
 
 
@@ -244,7 +252,7 @@ def test_count_nodes_answer_path(monkeypatch):
 @pytest.mark.parametrize("path", ["app/api/unified_chat.py", "app/api/chat.py",
                                   "app/api/windows_chat.py", "app/api/hypervisors.py"])
 def test_request_session_released_after_attach_and_stream(path):
-    src = open(path, encoding="utf-8").read()
+    src = _src(path)
     # Adım 11: çağrı event döngüsünü bloklamamak için `_stream_resp = await attach_and_stream_async(...)`
     i = src.index("_stream_resp = await attach_and_stream_async(") if "_stream_resp = await attach_and_stream_async(" in src else src.index("_stream_resp = attach_and_stream(")
     j = src.index("return _stream_resp", i)
@@ -254,7 +262,7 @@ def test_request_session_released_after_attach_and_stream(path):
 def test_sse_endpoints_release_request_session():
     for path, marker in (("app/api/chat_turns.py", "async def turn_events"),
                          ("app/api/platform_status.py", "async def platform_container_logs_stream")):
-        src = open(path, encoding="utf-8").read()
+        src = _src(path)
         body = src[src.index(marker):]
         assert "release_txn(db, keep_loaded=True)" in body[:1500]
 
@@ -271,7 +279,7 @@ def test_llm_gateway_release_hook_runs_before_call_and_unbinds():
 
 def test_llm_gateway_entrypoints_call_hook_and_hook_errors_are_swallowed():
     from app.services import llm_gateway as gw
-    src = open("app/services/llm_gateway.py", encoding="utf-8").read()
+    src = _src("app/services/llm_gateway.py")
     assert src.count("    _before_llm_call()\n") == 5
     tok = gw.bind_release_hook(lambda: 1 / 0)
     try:

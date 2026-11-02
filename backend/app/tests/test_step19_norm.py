@@ -117,9 +117,10 @@ def test_guard_flow_rejects_live_answer_then_streams_retry(monkeypatch):
     try:
         from app.core.database import SessionLocal
         db = SessionLocal()
-        db.execute(__import__("sqlalchemy").text("select 1"))
+        # CI'da DB var ama şema yok → "servers" tablosunu da yokla
+        db.execute(__import__("sqlalchemy").text("select 1 from servers limit 1"))
     except Exception:
-        pytest.skip("DB yok")
+        pytest.skip("DB/şema yok")
     from app.services import hypervisor_intelligence as hi, qa_cache
     from app.services.chat_live_final import LiveSink, live_sink_var
     monkeypatch.setattr(qa_cache, "get_cached_answer", lambda *a, **k: None)
