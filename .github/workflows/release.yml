@@ -20,7 +20,7 @@ permissions:
 jobs:
   confirm-release:
     name: Confirm GitHub Release assets
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check release assets
         env:
