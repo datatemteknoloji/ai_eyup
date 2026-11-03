@@ -11,6 +11,8 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+## [1.0.9.45] - 2026-11-03
+
 ### OpenShift Access / RBAC: profesyonel okuma + yalnız-Admin OLUŞTURMA
 - **Okuma** (`openshift` modülü yetkilileri): gruplu sekmeler (Genel / Kimlikler / Roller / Bağlamalar / Araçlar); sıralanabilir, aranabilir, sayfalı listeler (ortak `ColumnTable`); Role/ClusterRole **izin matrisi** (kaynak × fiil, wildcard ve `resourceNames` kısıtı işaretli); **etkin yetki** (doğrudan + grup üyeliği + örtük `system:authenticated`); **risk paneli** (cluster-admin sahipleri, özel wildcard roller, `system:authenticated` yetkisi, yetim binding/özne); ainew'in oluşturduğu nesneler rozetli ve süzülebilir.
 - **Düzeltme:** liste uçları `continue` token'ını izlemiyordu (büyük cluster'da ilk sayfada kesilip sessizce eksik sayı/arama dönüyordu) — tüm sayfalar okunur; Özet/risk/etkin yetki 60 sn önbellekli ortak anlık görüntü kullanır.
