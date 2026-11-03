@@ -122,6 +122,9 @@ class VirtConfigSnapshot(Base):
     is_baseline = Column(Boolean, default=False, index=True)
     baseline_by = Column(String(100))
     baseline_at = Column(DateTime(timezone=True))
+    # «Gözden geçirildi»: değişiklik listesinde gizlenir ama geçmiş korunur (silme yok); sapma hesabını ETKİLEMEZ.
+    ack_by = Column(String(100))
+    ack_at = Column(DateTime(timezone=True))
 
     __table_args__ = (
         Index(

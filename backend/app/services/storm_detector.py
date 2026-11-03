@@ -140,12 +140,14 @@ def get_or_create_storm_incident(
             Incident.source == "storm_detector",
             Incident.title.ilike(f"%{metric}%"),
             Incident.created_at >= cooldown_since,
-            Incident.status != "resolved",
+            # Kapatılmış ("closed") fırtına incident'ı yeniden canlanmasın: yalnız aktif olanlar.
+            Incident.status.in_(["open", "investigating"]),
         )
         .first()
     )
     if existing:
-        # Mevcut storm incident'ı güncelle
+        # Mevcut storm incident'ı güncelle (süren fırtına: updated_at tazelenir → sessiz sayılmaz)
+        existing.updated_at = utc_now()
         existing.affected_servers = list(set(
             (existing.affected_servers or []) + storm["server_ids"]
         ))

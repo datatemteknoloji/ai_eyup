@@ -90,7 +90,7 @@ export function VMStatusPie({ poweredOn, poweredOff }: { poweredOn: number; powe
               <Pie data={data} cx="50%" cy="50%" innerRadius={30} outerRadius={45} paddingAngle={3} dataKey="value">
                 {data.map((entry, i) => <Cell key={i} fill={entry.color} />)}
               </Pie>
-              <Tooltip formatter={(v) => [`${v} VM`, '']} />
+              <Tooltip formatter={(v) => [`${v} VM`, '']} contentStyle={{ background: 'var(--bg-overlay)', border: '1px solid var(--border-strong)', borderRadius: 8, fontSize: 12, color: 'var(--text-primary)' }} />
             </PieChart>
           </ResponsiveContainer>
           <div className="absolute inset-0 flex items-center justify-center">
@@ -156,7 +156,7 @@ export function ResourceBarsChart({ title, rows, series, labelWidth = 80, maxLab
           <XAxis type="number" domain={[0, 100]} allowDataOverflow tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
           <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 10 }} width={labelWidth} axisLine={false} tickLine={false} />
           <Tooltip
-            contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+            contentStyle={{ background: 'var(--bg-overlay)', border: '1px solid var(--border-strong)', borderRadius: 8, fontSize: 12, color: 'var(--text-primary)' }}
             labelFormatter={(_l, payload) => (payload?.[0]?.payload as { full?: string } | undefined)?.full ?? String(_l)}
             formatter={(v) => [`${v}%`, '']}
           />

@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from app.core.timeutil import utc_now
+from app.core.timeutil import ensure_utc, utc_now
 from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
 
 from app.models.event import SystemEvent
 from app.models.openshift import OpenShiftCluster
+from app.services.event_lifecycle import parse_event_timestamp
 from app.services.incident_auto import auto_create_or_link_incident
 
 logger = logging.getLogger(__name__)
@@ -37,10 +38,27 @@ def _upsert_openshift_event(db: Session, cluster: OpenShiftCluster, item: Dict[s
         .first()
     )
     if existing:
-        existing.last_seen = now
-        existing.occurrence_count = (existing.occurrence_count or 1) + 1
-        if item.get("severity"):
-            existing.severity = item["severity"]
+        # Tekrar = Kubernetes'in raporladığı lastTimestamp'in İLERLEMESİ (veya türetilmiş koşulun sürmesi: o zaman
+        # damgası her senkronda «şimdi»dir). 48 saatlik pencere yeniden döküldüğünde zaman damgası aynı kalır →
+        # last_seen/occurrence artmaz; sorun bitince olay event_lifecycle tarafından sessizlikte çözülür.
+        item_ts = parse_event_timestamp(item.get("timestamp"))
+        prev = existing.last_seen or existing.created_at
+        if item_ts is not None and (prev is None or item_ts > ensure_utc(prev)):
+            existing.last_seen = min(item_ts, now)
+            existing.occurrence_count = (existing.occurrence_count or 1) + 1
+            if item.get("severity"):
+                existing.severity = item["severity"]
+            # Çözülmüş (elle veya sessizlikten) olay için GERÇEK tekrar geldi → yeniden aç ve (kritikse) incident'a bağla.
+            resolved_at = ensure_utc(existing.resolved_at)
+            if existing.resolved and (resolved_at is None or item_ts > resolved_at):
+                existing.resolved = False
+                existing.resolved_at = None
+                if existing.severity in ("critical", "emergency"):
+                    db.flush()
+                    try:
+                        auto_create_or_link_incident(db, existing)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("[AutoIncident] OpenShift event #%s: %s", existing.id, exc)
         return False
 
     title = item.get("title") or "OpenShift olayı"

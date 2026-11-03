@@ -5,7 +5,7 @@ alwaysApply: true
 
 # ainew — AI-Powered Infrastructure Management
 
-Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvance/app`, sürüm `VERSION` (şu an 1.0.9.42). Repo: `datatemteknoloji/ai_eyup`.
+Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvance/app`, sürüm `VERSION` (şu an 1.0.9.44; yayımlanmamış değişiklikler `CHANGELOG.md` → [Unreleased]). Repo: `datatemteknoloji/ai_eyup`.
 
 ## Yığın
 
@@ -44,6 +44,8 @@ Self-hosted altyapı yönetim platformu. Ürün adı **ainew**, dizin `/dttadvan
 - AI: yerel Ollama veya `REMOTE_LLM_*`; harici cloud varsayılan değil
 - Sohbet Prometheus: **yalnızca PromQL**; scrape / `prometheus.yml` / target JSON’a dokunma. Context = instance JOIN tablosu (preset / aile detayı / `node_*`).
 - UI ve API hataları çoğunlukla Türkçe
+- **OpenShift Access/RBAC (`/openshift/access`):** okuma `openshift` modül yetkililerine açık; yazma YALNIZ Admin (`require_role("admin")`) ve YALNIZ OLUŞTURMA (RoleBinding/ClusterRoleBinding/Role/ClusterRole). Düzenleme, silme, kullanıcı/grup yönetimi ve `oc delete` çalıştırma EKLEME; sohbet aracı `ocp_access_query` READ-ONLY kalır. Ham YAML + IdP ayrıntısı Admin'e özel; SA token/Secret değeri hiçbir yerde okunmaz/gösterilmez. Ayrıntı: `ainew-backend.mdc`
+- **Olay/Incident sayıları** çözülmemiş kayıtları sayar; sorun giderilince düşmesi `services/event_lifecycle.py` kuralıyla sağlanır (tür tablosu `ainew-backend.mdc`). Yeni toplayıcı eklerken «replay ≠ tekrar» kuralına uy
 - Ürün asistan prompt’ları: `.cursor/rules/ainew-assistant-prompts.mdc`
 - Sohbet kalite programı (Adım 0–20; durum `docs/chat-quality/plan.md`) kuralı: kapanış kriteri koddan ÖNCE `docs/chat-quality/plan.md`'ye yazılır; «Kapandı» İH (insan testi) olmadan yazılmaz; Automic (`services/automic/*`, `api/automation.py`) dokunulmaz; her adımda yedek (`/root/backup-stepN-*`); keşif/hata düzeltmesi sırasında kod kriterden önce yazıldıysa plan.md'de bunu AÇIKÇA belirt
 - `async def` yolunda SENKRON iş (LLM `generate_sync`, SQL arama, Redis SCAN, OCP/vCenter HTTP) YOK → `core/chat_executor.run_chat_io` (sohbet) veya `asyncio.to_thread` (arka plan). Ayrıntı: `ainew-backend.mdc`

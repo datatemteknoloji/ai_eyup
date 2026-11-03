@@ -46,8 +46,8 @@ def _upsert(db: Session, hypervisor: Hypervisor, item: Dict[str, Any], now: date
     ext_key = f"ovirt-hv{hypervisor.id}-{item.get('id') or item.get('event_key')}"
     ev = find_existing_event(db, OVIRT_SOURCE, ext_key, index)  # Adım 11: tüm satırları yükleme yok
     if ev is not None:
-        ev.last_seen = now
-        ev.occurrence_count = (ev.occurrence_count or 1) + 1
+        # Aynı oVirt olay id'si akış penceresinde yeniden görünür — tekrar değildir; last_seen/occurrence
+        # artırılmaz (aksi halde olay pencere bitene kadar «aktif» kalır, bkz. event_lifecycle.py).
         return False
     server_id = _resolve_server_id(
         db, hypervisor.id, item.get("vm_ref"), item.get("host_ref"), item.get("entity_name"),

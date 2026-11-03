@@ -11,6 +11,29 @@ Yeni bir release oluştururken bu dosyaya da bir madde eklemek için
 
 ## [Unreleased]
 
+### OpenShift Access / RBAC: profesyonel okuma + yalnız-Admin OLUŞTURMA
+- **Okuma** (`openshift` modülü yetkilileri): gruplu sekmeler (Genel / Kimlikler / Roller / Bağlamalar / Araçlar); sıralanabilir, aranabilir, sayfalı listeler (ortak `ColumnTable`); Role/ClusterRole **izin matrisi** (kaynak × fiil, wildcard ve `resourceNames` kısıtı işaretli); **etkin yetki** (doğrudan + grup üyeliği + örtük `system:authenticated`); **risk paneli** (cluster-admin sahipleri, özel wildcard roller, `system:authenticated` yetkisi, yetim binding/özne); ainew'in oluşturduğu nesneler rozetli ve süzülebilir.
+- **Düzeltme:** liste uçları `continue` token'ını izlemiyordu (büyük cluster'da ilk sayfada kesilip sessizce eksik sayı/arama dönüyordu) — tüm sayfalar okunur; Özet/risk/etkin yetki 60 sn önbellekli ortak anlık görüntü kullanır.
+- **Yazma — YALNIZ Admin, YALNIZ OLUŞTURMA:** RoleBinding, ClusterRoleBinding, Role, ClusterRole (form veya YAML; «mevcut rolden kopyala»). **Düzenleme, silme ve kullanıcı/grup yönetimi yoktur** (rota düzeyinde de yok). Güvenlik: girdi doğrulama; riskli içerik uyarıları (cluster-admin, wildcard, `escalate/bind/impersonate`, Secret okuma, `system:authenticated`) — kritikte nesne adını yazarak onay (sunucu da doğrular); `dryRun=All` ön izleme; audit kaydı (`openshift/access.create`, oluşturulan YAML ile; başarısız denemeler dahil); nesneye `app.kubernetes.io/managed-by: ainew` etiketi; 409 «aynı isimde zaten var»; Kubernetes yetki-yükseltme engeli Türkçe açıklanır; cluster token'ının `create` yetkisi türe göre sorgulanır (yetkisizse düğme gerekçeli pasif). Eşdeğer `oc delete …` komutu yalnız bilgi olarak gösterilir, ainew çalıştırmaz.
+- **Admin'e özel okuma:** ham YAML görünümü ve OAuth IdP ayrıntıları (mapping/token). `access/get` artık ham nesne döndürmez. Sohbet aracı `ocp_access_query` **READ-ONLY** kalır.
+- Yeni uçlar: `GET …/access/{capabilities,matrix,effective,risks,yaml}`, `POST …/access/create/preview`, `POST …/access/create`. Test: `test_ocp_access_write.py` (35), `openshiftAccess.test.tsx` (10).
+
+### Değişiklikler (Virt + OpenShift): baseline görünürlüğü, canlı sapma, gözden geçirme
+- **Baseline artık belli:** banner baseline'ı kim, ne zaman, kaç varlık için işaretlediğini gösterir; satırda baseline sahibi/tarihi; yeni **Baseline'lar** sekmesi her baseline'lı varlığı baseline↔son farkıyla listeler (canlı hesap).
+- **«Sapma neden hep 0?» açıklandı:** sapma yalnız baseline'lı varlıklar için baseline↔son farktır; baseline son değişiklikten sonra alınmışsa veya değişen tür (ör. VM) baseline'lı değilse 0'dır. Ekranda bu iki durum açıkça yazılır; geçmiş (ardışık fark) ile sapma ayrıdır.
+- **Silinemeyen değişiklikler:** «gözden geçirildi» (tekil/toplu, geri alınabilir) değişikliği silmeden varsayılan görünümden gizler; `POST /changes/prune` (admin, varsayılan dry-run; 365 gün + varlık başına son 20; latest/baseline korunur) eski anlık görüntüleri temizler. Yeni sütunlar `virt_config_snapshots.ack_by/ack_at` (otomatik, yalnız ekleme).
+- **OpenShift parite:** `/ocp-insights` `/baseline`, `/baseline/compare`, `DELETE /baseline`, `/changes/ack`, `/changes/prune`. Toplu baseline mevcut baseline'ı ezecekse onay kutusu zorunlu.
+
+### Olay / Incident sayıları: sorun düzelince düşer
+- **Sorun:** çözülmüş sayılan olaylar akış toplayıcılarının 48 saatlik pencere tekrarı yüzünden `last_seen`/`occurrence_count` artırıp yeniden açılıyor; bazı türler hiç çözülmüyor, incident'ler bağlı olaylar düzelse de açık kalıyordu.
+- **Yaşam döngüsü (`services/event_lifecycle.py`):** durum olayları (`vcenter_alarm`) 4 sa, nokta olayları önem derecesine göre (info 2 sa, warning 12 sa, error/critical 24 sa) sessiz kalınca otomatik çözülür; `metric_anomaly`/`hw_*` kendi yaşam döngüsünde, `manual` dokunulmaz; **hiçbir kayıt silinmez**. Atanmamış `auto_*`/fırtına incident'i bağlı tüm olaylar düzelince (≥15 dk) kapanır; sorun sürerken kapanmaz; kapanmış fırtına incident'i yeniden açılmaz; kritik anomaliler açık incident'e bağlanır.
+- **Toplayıcı düzeltmesi:** vCenter, oVirt, OCP-Virt, virt_log ve OCP olay toplayıcılarında yeniden okunan (replay) olay artık tekrar sayılmaz/yeniden açmaz.
+
+### OpenShift Dashboard ve açık tema
+- **Açık tema:** rapor KPI sayıları (MTV Migrasyon dahil tüm raporlar) beyaz-üstü-mavi nedeniyle okunmuyordu; geniş `.text-white` kuralı yalnız düz mavi dolgulara daraltıldı (düğmeler beyaz metinli kalır), KPI değerleri tema renkli. Recharts eksen/ızgara/tooltip açık tema uyumlu. Kilit testi: `lightThemeContrast.test.ts`.
+- **OpenShift Dashboard:** ortak sıralanabilir `ColumnTable` + `UsageBar`; node tablosu CPU/Memory çubukları (eşik renk, tooltip, açıklama), kaydırmalı ve sıralı «riskli pod» listesi (gerçek toplam: `/openshift/risks` artık `total` döner; önem filtresi; satıra tıklayınca ayrıntı çekmecesi), hazır olmayan node kutusu yalnız sorun varsa, VM namespace özeti kopyası kaldırıldı.
+- `ColumnTable`: `pageSize` (sayfalama), `defaultSort`, `onRowClick`, `maxHeightClass`, `toolbar`, `countLabel` eklendi (geriye uyumlu).
+
 ### Donanım: portalsız (OME/OneView olmadan) log modu
 - **Donanım sayfası artık portal şartı olmadan açılabilir:** portal bağlı değilken bile bir donanım log kaynağı açıksa (Host donanım logları, in-band ipmitool, BMC logları) veya log kaydı varsa menüde «Donanım» görünür; sayfa yalnız **Donanım Logları** ve **BMC** sekmeleriyle açılır (KPI/sunucu/şasi/alarm/garanti/firmware gizli, portal uçlarına istek atılmaz) ve «portal bağlı değil» notu gösterir. Portal eklenince tam sayfa gelir (değişiklik yok). `hardware` modülü RBAC'ı aynen geçerli.
 - `GET /capabilities` yeni `has_hw_logs` alanı. Yeni port/firewall/hesap yok; yeni toplama başlatılmaz.

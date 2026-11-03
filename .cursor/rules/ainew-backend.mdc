@@ -48,6 +48,30 @@ alwaysApply: false
 - Tanı: `core/loop_watchdog.py` (`[LoopWatchdog]` yığın + CPU iş parçacığı; `LOOP_WATCHDOG=0`), `[SSELag]` (`subscribe_sse`)
 - ORM ile «tüm satırı yükle, Python'da ara» YASAK (GIL tutar): tekilleştirme/arama SQL tarafında — `services/event_dedupe.py` (`ExternalKeyIndex`, `find_existing_event`)
 
+## Olay / Incident yaşam döngüsü (`services/event_lifecycle.py`)
+
+- Sayılar çözülmemiş (`resolved=False`) kayıtlardır; düzelen sorun kendiliğinden düşmeli. `aiops_engine` her döngüde `run_lifecycle(db, now)` çalıştırır (sweep + incident uzlaştırma + dashboard cache geçersiz). Hiçbir kayıt SİLİNMEZ; yalnız `resolved/resolved_at`.
+- Sınıflar: yönetilen (`metric_anomaly`, `hw_*` → kendi TTL'i; sweep dokunmaz) · durum (`vcenter_alarm`: `last_seen` + 4 sa) · nokta (log/stream: info 2 sa, warning 12 sa, error/critical/emergency 24 sa) · elle (`source=manual` dokunulmaz). Yeni olay türü eklenirse hangi sınıfa girdiğini `event_lifecycle` sabitlerinde BELİRT; aksi halde «nokta» sayılır.
+- Incident: `auto_*`/`storm_detector`, atanmamış, açık incident'in bağlı tüm olayları ≥15 dk önce çözülmüşse kapanır; çözülmemiş bağlı olay varken `auto_close_quiet_incidents` kapatmaz; kapanmış fırtına incident'i yeniden açılmaz.
+- **Replay ≠ tekrar:** stream toplayıcılar 48 sa'lik pencereyi her senkronda yeniden okur; yeniden okunan olay `last_seen`/`occurrence_count` artırmaz, elle çözülmüş olayı yeniden açmaz. Yalnız gerçekten yeni zaman damgası (OCP: `parse_event_timestamp(item) > last_seen`) veya durum-yenileme (`vcenter_alarm`, `virt_resource`) sayar. Testler: `test_event_lifecycle.py`, `test_step11_event_dedupe.py`.
+
+## Değişiklikler / baseline (`services/virt_config_drift.py`)
+
+- **Geçmiş** (ardışık anlık görüntü farkı) ≠ **sapma** (baseline ↔ latest; yalnız baseline'lı varlık). Sapma canlı hesaplanır (`baseline_overview`), bulgu (`infra_findings`) ayrıca findings runner ile yazılır. «Sapma 0» her zaman açıklanabilir olmalı (baseline son değişiklikten sonra mı / değişen tür baseline'lı mı: `changes_payload.empty_reason`, `changed_unbaselined`).
+- Gözden geçirildi (`ack_by/ack_at`) silmez, gizler; kalıcı temizlik yalnız `prune_snapshots` (admin, dry-run varsayılan; latest + baseline + varlık başına son N korunur). Virt (`virt_insights.py`) ve OCP (`ocp_insights.py`) aynı uç setine sahip: `/changes`, `/baseline`, `/baseline/compare`, `POST /changes/ack`, `POST /changes/prune` (+ OCP `DELETE /baseline`).
+- Şema eklemesi `findings/schema_ensure.py` içinde `ADD COLUMN IF NOT EXISTS` (yalnız ekleme; Alembic yok).
+
+## OpenShift Access / RBAC (`services/openshift/ocp_access*.py`)
+
+- Okuma (`ocp_access.py`): listeler `continue` token'ıyla TÜM sayfaları okur (`_get_all`; ilk sayfada kesmek yanlış sayım/arama üretir). `load_snapshot(client, cache_key)` 60 sn önbellekli (overview/risk/etkin yetki aynı 7 listeyi paylaşır; `invalidate_snapshot` oluşturma sonrası). `get_access` `raw` döndürmez (`include_raw` yalnız `raw_yaml` → Admin ucu). IdP ayrıntısı (mapping/token) yalnız Admin.
+- Yazma (`ocp_access_write.py`): YALNIZ OLUŞTURMA — RoleBinding, ClusterRoleBinding, Role, ClusterRole. Düzenleme (PUT/PATCH), silme, kullanıcı/grup/identity yönetimi EKLEME; `…/access*` altında DELETE/PUT/PATCH rotası olmamalı (test kilitler). Uçlar `require_role("admin")`: `…/access/create`, `…/create/preview`, `…/yaml`, `…/identity-providers`.
+- Akış: `build_manifest` doğrular (YAML modu `spec_from_yaml` ile yalnız ad/namespace/roleRef/subjects/rules alır; labels/finalizers vb. yok sayılır) → `analyze_warnings` (critical → `confirm_name` nesne adıyla eşleşmeli, SUNUCU doğrular) → `?dryRun=All` → gerçek POST → `record_audit(category="openshift", action="access.create", detail.yaml)`; başarısız deneme `failed` audit. Etiket `app.kubernetes.io/managed-by: ainew`; 409 → Türkçe «zaten var»; 403 escalation → açıklayıcı mesaj. `capabilities` token'ın tür bazlı `create` yetkisini SelfSubjectAccessReview ile sorar.
+- Silme komutu (`equivalent_delete_command`) yalnız metin; ASLA çalıştırma. Chat aracı `ocp_access_query` yalnız okuma modlarını çağırır. Testler: `test_ocp_access.py`, `test_ocp_access_write.py`.
+
+## OpenShift `/risks`
+
+- `list_risk_workloads_page` gerçek toplamı (`total_untruncated`) döner; `/openshift/risks` → `{risks, total, returned}`. UI başlığındaki sayı `total`'dır (liste uzunluğu değil).
+
 ## Sohbet kalite katmanı
 
 - Kapı sırası ve iz: `chat_orchestrator/service.py` `run_turn` + `chat_quality/trace.py` (`TurnTrace`, `debug_trace` yalnız admin + bayrak)

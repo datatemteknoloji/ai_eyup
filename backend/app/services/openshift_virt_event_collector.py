@@ -41,9 +41,9 @@ def _upsert_openshift_virt_event(
     ext_key = f"hv{hypervisor.id}-{item.get('source_object')}-{item.get('reason')}-{item.get('timestamp')}"
     ev = find_existing_event(db, OPENSHIFT_VIRT_SOURCE, ext_key, index)  # Adım 11: tüm satırları yükleme yok
     if ev is not None:
-        ev.last_seen = now
-        ev.occurrence_count = (ev.occurrence_count or 1) + 1
-        if item.get("severity"):
+        # Anahtar zaman damgasını içerir → aynı anahtar = aynı olay (pencere yeniden dökümü), tekrar değil.
+        # last_seen/occurrence artırılmaz (bkz. event_lifecycle.py).
+        if item.get("severity") and not ev.resolved:
             ev.severity = item["severity"]
         return False
 

@@ -731,6 +731,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             ) && (
               <Activity size={18} className="shrink-0 text-blue-400" aria-hidden />
             )}
+            {location.pathname.replace(/\/$/, '') === '/openshift/access' && (
+              <Shield size={18} className="shrink-0 text-blue-400" aria-hidden />
+            )}
             <h1 className="shrink-0 text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{pageTitle}</h1>
             <button
               type="button"

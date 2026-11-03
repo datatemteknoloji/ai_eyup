@@ -23,7 +23,7 @@ OpenShift komuta merkezi / OCP envanteri ve oVirt bağlantı adımlarının tam 
 | Kapasite | `/virt/capacity` | Sekmeler: Cluster, Datastore, What-if (yeni VM sığar mı?), **Host devre dışı kalırsa (N+1)**, Geri kazanım simülasyonu, Toplu yerleşim, Yerleşim, Eşikler |
 | Geri kazanım | `/virt/reclaim` | Kapalı / atıl / oversized VM, snapshot, sahipsiz disk, ISO, kullanılmayan datastore |
 | Sağlık kontrolleri | `/virt/health` | Sağlık, uyum (ISO 27001), donanım, CVE/KB, yükseltme bulguları; istisna, komut taslağı, onaylı düzeltme |
-| Değişiklikler | `/virt/changes` | Host/cluster yapılandırma geçmişi (diff), baseline, sapma bulguları |
+| Değişiklikler | `/virt/changes` | Host/cluster yapılandırma geçmişi (diff), baseline (kim/ne zaman/kaç varlık), canlı sapma + «sapma 0» açıklaması, Baselines sekmesi (baseline↔son fark), «gözden geçirildi» ile gizleme (silmez), toplu baseline için ezme onayı |
 | Yedek & DR | `/virt/backup` | **Yalnız yedek sağlayıcısı (Veeam) bağlıysa görünür.** RPO/koruma, işler, depolar, eşleşmeyenler, RPO hedefleri, kanıt |
 
 ```diagram

@@ -23,6 +23,22 @@ React 19 + Vite 8 + TypeScript 6 + Tailwind 4 + TanStack Query + react-router-do
 - Auth: `AuthContext` (`hasModule`); marka: `BrandingContext` + `/api/v1/public`
 - API: `src/config/api.ts` → same-origin `/api/v1` (`:8000` hardcode yok)
 
+## Ortak bileşenler
+
+- **`components/ColumnTable.tsx`** — proje geneli sıralanabilir/aranabilir tablo (`filterSortRows`). Yeni liste ekranında elle `<table>` YAZMA; `ColumnTable` kullan: `columns` (`text` arama/metin sıralama, `num` sayısal sıralama, `sortable`, `hint`), `maxHeightClass` (kaydırma + yapışkan başlık), `pageSize` (sayfalama; büyük listeler), `defaultSort`, `onRowClick`/`rowClass`, `toolbar`, `countLabel`, `hideSearch`, `bare`. testId'ler `${testId}-search|sort-<col>|count|page|prev|next`.
+- **`components/openshift/UsageBar.tsx`** — CPU/Memory çubuğu (≥90 crit, ≥75 warn). Eşik rengi tek yerde (`LOAD_COLORS`).
+- Grafikler `components/dashboard/ResourceCharts.tsx` (Recharts; tooltip/eksen renkleri CSS değişkenleriyle tema uyumlu). Yeni grafik aynı bileşenleri kullanmalı.
+- **Access/RBAC** (`pages/OpenShiftAccessPage.tsx` + `components/openshift/access/*`): gruplu sekmeler (Genel / Kimlikler / Roller / Bağlamalar / Araçlar), `PermissionMatrix`, `RiskPanel`, `EffectivePanel`, `CreateDialog` (form|YAML → ön izle [dry-run] → onay → oluştur). Yazma düğmeleri Admin değilse HİÇ render edilmez (`useRole().isAdmin`); token yetkisi olmayan tür gerekçeli pasif. Düzenle/sil düğmesi EKLEME. Ham YAML düğmesi ve IdP ayrıntısı yalnız Admin.
+
+## Açık tema (light)
+
+- Açık tema `index.css` içindeki `html[data-theme="light"] …` geçersiz kılmalarıyla yapılır (`!important`). `.text-white → #fff` kuralları YALNIZ düz mavi dolgulara (`.bg-blue-500/600/700/800`, `.from-blue-*`) uygulanır. `[class*="bg-blue-"] .text-white` / `[class*="from-blue"] .text-white` / `[class*="bg-gradient"] .text-white` gibi geniş kuralları EKLEME — mavi tonlu kartlardaki (KPI) beyaz metni okunmaz yapar (rapor KPI sayıları bu yüzden kayboldu). Kilit: `src/test/lightThemeContrast.test.ts`.
+- KPI/sayı değerleri `text-slate-100` (tema değişkeniyle eşlenir) kullanır; sabit `text-white` kullanma. Recharts eksen/ızgara/tooltip açık tema kuralları `index.css` sonunda.
+
+## Doğrulama araç zinciri (bu host)
+
+- Host `frontend/node_modules` bayat olabilir; tip/test için temiz kurulum kullan (örn. `node:26-alpine` + `npm ci` hacmi, kaynak kopyalanıp `npx tsc --noEmit -p tsconfig.json`, `npx vitest run`). Görsel doğrulama için `docker compose build frontend && docker compose up -d frontend`.
+
 ## Chat UI (`nlChatUi.tsx`, `chatMarkdown.tsx`)
 
 - Sütun: `nlChatColumnClass` (`max-w-7xl`); asistan `w-full`; kullanıcı balonu dar
@@ -40,7 +56,8 @@ React 19 + Vite 8 + TypeScript 6 + Tailwind 4 + TanStack Query + react-router-do
 
 ## Diğer
 
-- OpenShift Dashboard: hook’lar early `return` **öncesinde** (Rules of Hooks)
+- OpenShift Dashboard (`OpenShiftHome.tsx`): hook’lar early `return` **öncesinde** (Rules of Hooks); node tablosu `ColumnTable` + `UsageBar`; riskli pod listesi `/openshift/risks?limit=200` gerçek toplamıyla, kaydırmalı + sıralı + önem filtreli; hazır olmayan node kutusu yalnız sorun varsa; VM namespace özeti yalnız küme başına (global kopya yok)
+- Değişiklikler (`pages/VirtChanges.tsx`, Virt + OCP ortak `ChangesView`): Değişiklikler | Sapma | Baseline'lar sekmeleri, baseline banner'ı (kim/ne zaman/kaç), «sapma 0» ve baseline'sız değişiklik açıklamaları, gözden geçirildi (tekil/toplu), mevcut baseline'ı ezen toplu işlem için onay kutusu. Kilit: `src/test/virtChanges.test.tsx`
 - vCenter sync overlay süresi: sunucu `started_at`, `Date.now()` değil
 - DESIGN.md: mor/neon yok; accent blue-600; DM Sans/Mono
 - Bu host’ta FE baked: rebuild + recreate; HMR yok

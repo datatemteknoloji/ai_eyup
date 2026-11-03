@@ -165,7 +165,7 @@ function KpiCard({ label, value, sub, color = 'slate', icon, trend }: {
           {icon && <span className="text-slate-500">{icon}</span>}
         </div>
       </div>
-      <div className="mt-2 text-2xl font-bold text-white">{value}</div>
+      <div className="mt-2 text-2xl font-bold text-slate-100">{value}</div>
       {sub && <div className="text-slate-500 text-xs mt-1">{sub}</div>}
     </div>
   )

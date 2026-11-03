@@ -320,7 +320,10 @@ html[data-theme="light"] a.text-white[class*="bg-blue"],
 html[data-theme="light"] a.text-white[class*="from-blue"],
 html[data-theme="light"] a.text-white[class*="bg-gradient"],
 html[data-theme="light"] a.text-white[class*="from-"],
-html[data-theme="light"] [class*="bg-blue-"].text-white,
+html[data-theme="light"] .bg-blue-500.text-white,
+html[data-theme="light"] .bg-blue-600.text-white,
+html[data-theme="light"] .bg-blue-700.text-white,
+html[data-theme="light"] .bg-blue-800.text-white,
 html[data-theme="light"] [class*="bg-emerald"].text-white,
 html[data-theme="light"] [class*="bg-green"].text-white,
 html[data-theme="light"] [class*="bg-red"].text-white,
@@ -328,9 +331,16 @@ html[data-theme="light"] [class*="bg-amber"].text-white,
 html[data-theme="light"] [class*="bg-orange"].text-white,
 html[data-theme="light"] [class*="bg-sky"].text-white,
 html[data-theme="light"] [class*="bg-cyan"].text-white,
-html[data-theme="light"] [class*="from-blue"] .text-white,
-html[data-theme="light"] [class*="bg-blue-"] .text-white,
-html[data-theme="light"] [class*="bg-gradient"] .text-white,
+/* Descendant kuralları YALNIZ dolu (solid) mavi zeminde geçerlidir. Eskiden `[class*="bg-blue-"] .text-white`
+   kullanılıyordu; bu `bg-blue-500/5` gibi şeffaf pastel kartları da yakalayıp içindeki sayıları beyaza
+   boyuyordu (rapor KPI kartları white temada okunmuyordu). Şeffaf (/NN) zeminler bilerek dışarıda. */
+html[data-theme="light"] .bg-blue-500 .text-white,
+html[data-theme="light"] .bg-blue-600 .text-white,
+html[data-theme="light"] .bg-blue-700 .text-white,
+html[data-theme="light"] .bg-blue-800 .text-white,
+html[data-theme="light"] .from-blue-500 .text-white,
+html[data-theme="light"] .from-blue-600 .text-white,
+html[data-theme="light"] .from-blue-700 .text-white,
 html[data-theme="light"] .bg-red-500 .text-white,
 html[data-theme="light"] .bg-amber-500 .text-white,
 html[data-theme="light"] .bg-amber-600.text-white,
@@ -1290,3 +1300,17 @@ html .chat-msg-body .chat-md-inline-code,
 html .chat-msg-body code { font-size: 0.88em; }
 html .chat-msg-body .chat-md-pre,
 html .chat-msg-body pre { font-size: 0.9em; }
+
+/* ── Recharts — beyaz tema okunabilirliği ──────────────────────────────────
+   Grafikler eksen/tooltip rengini koyu tema için sabit hex ile veriyor (#94a3b8, #1e293b).
+   Beyaz temada eksen etiketleri ve tooltip kutusu tema değişkenlerine bağlanır. */
+html[data-theme="light"] .recharts-cartesian-axis-tick-value,
+html[data-theme="light"] .recharts-polar-angle-axis-tick-value { fill: var(--text-muted); }
+html[data-theme="light"] .recharts-cartesian-grid line { stroke: var(--border); }
+html[data-theme="light"] .recharts-default-tooltip {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-strong) !important;
+  color: var(--text-primary) !important;
+}
+html[data-theme="light"] .recharts-tooltip-label,
+html[data-theme="light"] .recharts-tooltip-item { color: var(--text-primary) !important; }

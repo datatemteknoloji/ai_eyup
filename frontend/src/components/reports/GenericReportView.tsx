@@ -85,7 +85,8 @@ function Kpi({ k }: { k: GenericKpi }) {
   return (
     <div className={`rounded-xl border p-4 ${box}`}>
       <div className="text-slate-400 text-xs">{k.label}</div>
-      <div className="mt-2 text-2xl font-bold text-white break-words">{v}</div>
+      {/* text-slate-100: white temada koyu mürekkebe eşlenir; text-white şeffaf mavi kartta tema kuralına takılıyordu. */}
+      <div className="mt-2 text-2xl font-bold text-slate-100 break-words" data-testid="kpi-value">{v}</div>
       {k.sub && <div className="text-slate-500 text-xs mt-1">{k.sub}</div>}
     </div>
   )

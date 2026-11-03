@@ -38,11 +38,13 @@ def _upsert_virt_event(db: Session, log: Dict[str, Any], event_type: str, now: d
         .first()
     )
     if ev is not None:
-        ev.last_seen = now
-        ev.occurrence_count = (ev.occurrence_count or 1) + 1
-        ev.severity = log.get("severity") or ev.severity
-        if not ev.resolved and log.get("severity") in ("critical", "emergency"):
-            ev.resolved = False
+        # Kaynak izleyici (`virt_resource`) koşul-tabanlıdır: koşul sürdükçe her senkronda görünür → last_seen yenilenir.
+        # Platform günlükleri (`virt_collector`) 48 saatlik pencerenin yeniden dökümüdür → tekrar sayılmaz.
+        if ev.source == "virt_resource" and not ev.resolved:
+            ev.last_seen = now
+            ev.occurrence_count = (ev.occurrence_count or 1) + 1
+        if not ev.resolved:
+            ev.severity = log.get("severity") or ev.severity
         return False
 
     title = log.get("title") or log.get("action") or "Sanallaştırma olayı"

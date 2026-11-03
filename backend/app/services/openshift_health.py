@@ -145,12 +145,17 @@ def build_health_board(db: Session, cluster_id: Optional[int] = None) -> Dict[st
     return {"overall": overall, "totals": totals, "clusters": board}
 
 
-def list_risk_workloads(
+def list_risk_workloads_page(
     db: Session,
     *,
     cluster_id: Optional[int] = None,
     limit: int = 100,
-) -> List[OpenShiftWorkload]:
+) -> Tuple[List[OpenShiftWorkload], int]:
+    """Risk pod'ları (önem sırasıyla) + KESİTSİZ gerçek toplam.
+
+    `total` limit uygulanmadan önceki risk sayısıdır; UI «24 / 61» gibi gösterebilsin diye
+    (önceden `total` = döndürülen satır sayısıydı → sayaç hep limit'e eşit görünüyordu).
+    """
     q = db.query(OpenShiftWorkload).filter(OpenShiftWorkload.kind == "pod")
     if cluster_id:
         q = q.filter(OpenShiftWorkload.cluster_id == cluster_id)
@@ -162,7 +167,16 @@ def list_risk_workloads(
         w.project or "",
         w.name or "",
     ))
-    return risks[:limit]
+    return risks[:limit], len(risks)
+
+
+def list_risk_workloads(
+    db: Session,
+    *,
+    cluster_id: Optional[int] = None,
+    limit: int = 100,
+) -> List[OpenShiftWorkload]:
+    return list_risk_workloads_page(db, cluster_id=cluster_id, limit=limit)[0]
 
 
 def paginate_query(q, page: int, page_size: int) -> Tuple[list, int]:

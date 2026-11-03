@@ -188,12 +188,15 @@ def _backfill_existing_event(
         ev.raw_data = raw
         flag_modified(ev, "raw_data")
 
-    ev.last_seen = now
-    ev.occurrence_count = (ev.occurrence_count or 1) + 1
-    if item.get("severity"):
+    # Yeniden görülme ≠ tekrar. vCenter akışı 48 saatlik pencereyi her senkronda yeniden döker; eski kod her
+    # senkronda last_seen/occurrence_count'u artırıyor ve kritik olayı yeniden AÇIYORDU → elle çözülen olay geri
+    # geliyor, sayaç şişiyor, olay pencere (48 sa) bitene kadar «aktif» görünüyordu.
+    # Yalnız alarm (koşul-tabanlı) için last_seen «hâlâ tetikte» sinyali olarak yenilenir; alarm vCenter'dan
+    # kalkınca last_seen eskir ve event_lifecycle sessizlikte çözer. Çözülmüş olay yeniden AÇILMAZ.
+    if ev.event_type == "vcenter_alarm" and not ev.resolved:
+        ev.last_seen = now
+    if item.get("severity") and not ev.resolved:
         ev.severity = item.get("severity") or ev.severity
-    if item.get("severity") in ("critical", "emergency"):
-        ev.resolved = False
 
 
 def _upsert_vcenter_event(

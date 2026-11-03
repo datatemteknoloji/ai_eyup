@@ -25,6 +25,10 @@ from app.core.config import settings, get_active_model
 from app.models.event import SystemEvent, Incident
 from app.models.server import Server
 from app.services.incident_auto import auto_create_or_link_incident
+from app.services.event_lifecycle import (
+    run_lifecycle,
+    unresolved_linked_event_ids,
+)
 from app.services.baseline_engine import apply_baseline_filter
 from app.services.storm_detector import apply_tier_filter, check_and_handle_storm, auto_resolve_by_ttl
 from app.services.platform_scope import platform_for_server
@@ -69,6 +73,18 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
     updated = 0
     incidents_touched = set()
     now = utc_now()
+
+    # Açık incident'lara zaten bağlı event id'leri: SÜREN kritik anomali bir incident'a bağlı değilse
+    # (incident elle/otomatik kapanmış) tekrarda yeniden bağlanır/açılır.
+    linked_event_ids: set = set()
+    try:
+        for (rel,) in db.query(Incident.related_events).filter(
+            Incident.status.in_(["open", "investigating"])
+        ).all():
+            linked_event_ids.update(int(x) for x in (rel or []) if x is not None)
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        logger.debug("[AIOps] bağlı event kümesi okunamadı: %s", exc)
 
     _platform_cache: Dict[int, str] = {}
     from app.services.platform_scope import get_exadata_server_id_set
@@ -175,10 +191,13 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
                     match.severity = severity
                 db.commit()
                 updated += 1
-                if escalated:
+                # Yükselen VEYA süren kritik anomali açık bir incident'a bağlı değilse bağla/aç
+                # (incident_auto problem_key ile tekilleştirir → çift incident oluşmaz).
+                if escalated or (match.severity == "critical" and match.id not in linked_event_ids):
                     inc_id = auto_create_or_link_incident(db, match)
                     if inc_id:
                         incidents_touched.add(inc_id)
+                        linked_event_ids.add(match.id)
                 continue
 
             # Yeni event oluştur
@@ -207,6 +226,7 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
                 inc_id = auto_create_or_link_incident(db, event)
                 if inc_id:
                     incidents_touched.add(inc_id)
+                    linked_event_ids.add(event.id)
 
         except Exception as e:
             db.rollback()
@@ -217,6 +237,10 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
     # TTL bazlı otomatik kapanma (severity bazlı)
     ttl_resolved = auto_resolve_by_ttl(db)
     resolved += ttl_resolved
+    # Metrik-dışı türler (log, vCenter/oVirt/OCP olayı, alarm) için sessizlik tabanlı çözüm +
+    # bağlı tüm olayları çözülen otomatik incident'ları kapatma (event_lifecycle.py).
+    lifecycle = run_lifecycle(db, now)
+    resolved += lifecycle["events_swept"]
 
     if created or updated or resolved:
         logger.warning(
@@ -229,6 +253,7 @@ def persist_anomalies_as_events(db: Session, anomalies: List[Dict[str, Any]]) ->
         "updated": updated,
         "resolved": resolved,
         "incidents": len(incidents_touched),
+        "incidents_closed": lifecycle["incidents_closed"],
     }
 
 
@@ -362,16 +387,24 @@ def auto_close_quiet_incidents(db: Session, now: Optional[datetime] = None) -> i
     """
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=AUTO_INCIDENT_CLOSE_AFTER_HOURS)
-    quiet = (
+    candidates = (
         db.query(Incident)
         .filter(
             Incident.status == "open",
-            Incident.source.ilike("auto_%"),
+            or_(Incident.source.ilike("auto_%"), Incident.source == "storm_detector"),
             or_(Incident.assigned_to.is_(None), Incident.assigned_to == ""),
             func.coalesce(Incident.updated_at, Incident.created_at) < cutoff,
         )
         .all()
     )
+    # Sorun SÜRÜYORSA (bağlı olaylardan biri hâlâ çözülmemiş) incident yalnız sessiz kaldı diye kapanmaz.
+    still_open = unresolved_linked_event_ids(
+        db, [e for i in candidates for e in (i.related_events or [])]
+    )
+    quiet = [
+        inc for inc in candidates
+        if not (set(int(e) for e in (inc.related_events or []) if e is not None) & still_open)
+    ]
     for inc in quiet:
         inc.status = "resolved"
         inc.resolved_at = now

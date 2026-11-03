@@ -580,55 +580,72 @@ def finding_draft(finding_id: int, db: Session = Depends(get_db), user: User = D
 @router.get("/changes")
 def changes(days: int = 30, platform: Optional[str] = None, hypervisor_id: Optional[int] = None,
             entity_kind: Optional[str] = None, entity: Optional[str] = None, limit: int = 300,
+            ack: str = Query("hide", pattern="^(hide|only|all)$"),
             db: Session = Depends(get_db), user: User = Depends(_module)):
-    from app.services.virt_config_drift import list_changes
+    """Ardışık değişiklik geçmişi + baseline özeti. `ack=hide` «gözden geçirildi» satırları gizler."""
+    from app.services.virt_config_drift import changes_payload
     if platform:
         _platforms(platform)
-    rows = list_changes(db, days=days, platform=platform, source_id=hypervisor_id,
-                        entity_kind=entity_kind, entity=entity, limit=limit)
-    rows = [r for r in rows if r["platform"] in VIRT_PLATFORMS]
-    from app.models.infra_finding import VirtConfigSnapshot
-    from sqlalchemy import func
-    kind_rows = (
-        db.query(VirtConfigSnapshot.entity_kind, func.count(VirtConfigSnapshot.id))
-        .filter(
-            VirtConfigSnapshot.is_baseline.is_(True),
-            VirtConfigSnapshot.platform.in_(list(VIRT_PLATFORMS)),
-        )
-        .group_by(VirtConfigSnapshot.entity_kind)
-        .all()
-    )
-    baseline_by_kind = {str(k): int(n) for k, n in kind_rows}
-    baseline_count = sum(baseline_by_kind.values())
-    marked_at = (
-        db.query(func.max(VirtConfigSnapshot.baseline_at))
-        .filter(
-            VirtConfigSnapshot.is_baseline.is_(True),
-            VirtConfigSnapshot.platform.in_(list(VIRT_PLATFORMS)),
-        )
-        .scalar()
-    )
-    suggested = []
-    if baseline_count == 0:
-        # İlk senkron / baseline yok: kullanıcıya önerilen türler
-        suggested = [
-            {"entity_kind": "host", "note": "Önerilen: host baseline"},
-            {"entity_kind": "cluster", "note": "Önerilen: cluster baseline"},
-            {"entity_kind": "datastore", "note": "Önerilen: datastore baseline"},
-            {"entity_kind": "platform", "note": "Önerilen: platform baseline"},
-        ]
-    return {
-        "changes": rows,
-        "count": len(rows),
-        "baseline_count": baseline_count,
-        "baseline_by_kind": baseline_by_kind,
-        "baseline_marked_at": marked_at.isoformat() if marked_at else None,
-        "suggested_baseline": suggested,
-        "empty_reason": None if rows or baseline_count else (
-            "Henüz değişiklik yok. İlk taramada kayıtlar değişiklik sayılmaz; "
-            "baseline işaretleyerek sapma izlemeyi başlatın."
-        ),
-    }
+    return changes_payload(db, platforms=sorted(VIRT_PLATFORMS), days=days, platform=platform,
+                           source_id=hypervisor_id, entity_kind=entity_kind, entity=entity, limit=limit,
+                           ack=ack, suggested_kinds=("host", "cluster", "datastore", "platform"))
+
+
+@router.get("/baseline")
+def baseline_list(platform: Optional[str] = None, hypervisor_id: Optional[int] = None,
+                  entity_kind: Optional[str] = None, diff: bool = False,
+                  db: Session = Depends(get_db), user: User = Depends(_module)):
+    """Baseline'ı olan varlıklar: kim/ne zaman işaretledi + baseline'dan CANLI sapma (bulgu turunu beklemez)."""
+    from app.services.virt_config_drift import baseline_overview
+    if platform:
+        _platforms(platform)
+    return baseline_overview(db, platforms=[platform] if platform else sorted(VIRT_PLATFORMS),
+                             source_id=hypervisor_id, entity_kind=entity_kind, with_diff=diff)
+
+
+@router.get("/baseline/compare")
+def baseline_compare_api(platform: str, hypervisor_id: Optional[int] = None, entity_kind: str = "",
+                         entity_ref: str = "", db: Session = Depends(get_db), user: User = Depends(_module)):
+    """Tek varlık: baseline yapılandırması ↔ güncel yapılandırma (alan bazlı fark)."""
+    from app.services.virt_config_drift import baseline_compare
+    _platforms(platform)
+    res = baseline_compare(db, platform=platform, source_id=hypervisor_id, entity_kind=entity_kind,
+                           entity_ref=entity_ref)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Bu varlık için baseline işaretli değil")
+    return res
+
+
+class AckRequest(BaseModel):
+    ids: list[int] = Field(default_factory=list, max_length=2000)
+    undo: bool = False
+
+
+@router.post("/changes/ack")
+def changes_ack(body: AckRequest, request: Request, db: Session = Depends(get_db),
+                user: User = Depends(require_role("operator"))):
+    """Seçili değişiklik satırlarını «gözden geçirildi» işaretle (listeden gizlenir; geçmiş silinmez)."""
+    from app.services.virt_config_drift import ack_changes
+    n = ack_changes(db, body.ids, user.username, undo=body.undo, platforms=sorted(VIRT_PLATFORMS))
+    db.commit()
+    _audit(db, user, "virt_insights.changes_ack_undo" if body.undo else "virt_insights.changes_ack",
+           f"{n} değişiklik {'geri alındı' if body.undo else 'gözden geçirildi işaretlendi'}", request, ids=body.ids[:50])
+    return {"ok": True, "count": n}
+
+
+@router.post("/changes/prune")
+def changes_prune(request: Request, retention_days: int = Query(365, ge=30, le=3650),
+                  keep_last: int = Query(20, ge=2, le=500), dry_run: bool = True,
+                  db: Session = Depends(get_db), user: User = Depends(require_role("admin"))):
+    """Eski ardışık snapshot geçmişini temizle (Admin). Güncel + baseline + varlık başına en yeni `keep_last` korunur.
+    Varsayılan `dry_run=true` yalnız sayar; silme için `dry_run=false` gerekir."""
+    from app.services.virt_config_drift import prune_snapshots
+    res = prune_snapshots(db, retention_days=retention_days, keep_last=keep_last,
+                          platforms=sorted(VIRT_PLATFORMS), dry_run=dry_run)
+    db.commit()
+    if not dry_run:
+        _audit(db, user, "virt_insights.changes_prune", f"{res['deleted']} eski snapshot temizlendi", request, **res)
+    return {"ok": True, **res}
 
 
 class BaselineRequest(BaseModel):

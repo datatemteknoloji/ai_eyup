@@ -1,10 +1,14 @@
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRight, Server } from 'lucide-react'
+import { AlertTriangle, ChevronRight } from 'lucide-react'
 import { API_BASE_URL } from '../config/api'
 import { useT } from '../i18n/LocaleProvider'
 import { OcpClusterTree } from '../components/openshift/OcpClusterTree'
 import OcpInsightsStrip from '../components/insights/OcpInsightsStrip'
+import OcpResourceDetailDrawer from '../components/openshift/OcpResourceDetailDrawer'
+import { ColumnTable, type TableColumn } from '../components/ColumnTable'
+import UsageBar from '../components/openshift/UsageBar'
 import { HostResourceChart, RESOURCE_ACCENT, ResourceGauge, VMStatusPie } from '../components/dashboard/ResourceCharts'
 
 type OcpNode = {
@@ -48,9 +52,20 @@ type RiskPod = {
   project: string
   name: string
   status?: string | null
+  reason?: string | null
   node_name?: string | null
   restart_count?: number
+  ready?: string | null
+  owner_kind?: string | null
+  owner_name?: string | null
   risk_severity?: string | null
+}
+
+const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, warning: 2 }
+const SEV_TONE: Record<string, string> = {
+  critical: 'bg-red-500/15 text-red-300 border-red-500/30',
+  high: 'bg-orange-500/15 text-orange-300 border-orange-500/30',
+  warning: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
 }
 
 function pct(v: number | null | undefined): string {
@@ -64,9 +79,18 @@ function avg(nodes: OcpNode[], key: 'cpu_pct' | 'mem_pct'): number | null {
   return vals.reduce((a, b) => a + b, 0) / vals.length
 }
 
+function nodeTip(label: string, p: number | null | undefined, total: number | null | undefined, unit: string): string | undefined {
+  if (p == null) return undefined
+  if (!total) return `${label} ${pct(p)}`
+  const used = (total * p) / 100
+  return `${label} ${pct(p)} · ${used.toFixed(1)} / ${total} ${unit}`
+}
+
 /** OpenShift modülünün Dashboard'u: isimli küme özeti + küme altyapısı ağacı. */
 export default function OpenShiftHome() {
   const t = useT()
+  const [sevFilter, setSevFilter] = useState<'all' | 'critical' | 'high' | 'warning'>('all')
+  const [detail, setDetail] = useState<RiskPod | null>(null)
   const q = useQuery<{ clusters: OcpCluster[] }>({
     queryKey: ['ocp-hierarchy'],
     staleTime: 60_000,
@@ -89,7 +113,7 @@ export default function OpenShiftHome() {
     queryKey: ['openshift-risks', 'dashboard'],
     staleTime: 60_000,
     queryFn: async () => {
-      const r = await fetch(`${API_BASE_URL}/openshift/risks?limit=24`)
+      const r = await fetch(`${API_BASE_URL}/openshift/risks?limit=200`)
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       return r.json()
     },
@@ -101,16 +125,9 @@ export default function OpenShiftHome() {
   const notReady = clusters.flatMap(c =>
     c.nodes.filter(n => (n.status || '').toLowerCase() !== 'ready').map(n => ({ cluster: c.name, node: n.name, status: n.status })),
   )
-  const vmNs = clusters.flatMap(c =>
-    c.namespaces.filter(n => n.vms_total > 0).map(n => ({
-      cluster: c.name,
-      clusterId: c.cluster_id,
-      ns: n.display_name || n.name,
-      total: n.vms_total,
-      running: n.vms_running ?? 0,
-    })),
-  )
-  const risks = risksQ.data?.risks ?? []
+  const risks = useMemo(() => risksQ.data?.risks ?? [], [risksQ.data])
+  // Backend `total` = limit'ten önceki gerçek risk sayısı (eski sürüm yanıtında yoksa satır sayısına düş).
+  const riskTotal = Math.max(risksQ.data?.total ?? 0, risks.length)
   const nodes = clusters.flatMap(c => c.nodes)
   let cpuUsed = 0
   let cpuTotal = 0
@@ -157,9 +174,107 @@ export default function OpenShiftHome() {
       ds_usage_pct: diskByNode.get(n.name.toLowerCase()) ?? 0,
     }))
   const clusterNames = clusters.map(c => c.name).join(', ')
-  const notReadyLabel = notReady.length
-    ? notReady.map(n => n.node).join(', ')
-    : t('ocp_dash_all_ready')
+  const nrCount = sum('nodes_not_ready')
+  const topRiskNames = risks.slice(0, 3).map(r => r.name).join(', ')
+
+  const sevCounts = useMemo(() => {
+    const c: Record<string, number> = { critical: 0, high: 0, warning: 0 }
+    for (const r of risks) c[r.risk_severity || 'warning'] = (c[r.risk_severity || 'warning'] || 0) + 1
+    return c
+  }, [risks])
+  const riskRows = useMemo(
+    () => (sevFilter === 'all' ? risks : risks.filter(r => (r.risk_severity || 'warning') === sevFilter)),
+    [risks, sevFilter],
+  )
+
+  const sevLabel = (s: string) => (
+    s === 'critical' ? t('ocp_dash_sev_critical') : s === 'high' ? t('ocp_dash_sev_high') : t('ocp_dash_sev_warning'))
+  const riskColumns: TableColumn<RiskPod>[] = [
+    {
+      id: 'pod', label: t('ocp_dash_col_pod'),
+      text: r => `${r.project}/${r.name}`,
+      render: r => (
+        <div className="min-w-0 max-w-[280px]">
+          <div className="text-white truncate" title={r.name}>{r.name}</div>
+          <div className="text-slate-500 truncate" title={r.project}>{r.project}</div>
+        </div>
+      ),
+    },
+    { id: 'cluster', label: t('ocp_dash_col_cluster'), text: r => nameOf(r.cluster_id) },
+    { id: 'node', label: t('ocp_dash_col_node'), text: r => r.node_name || '' },
+    {
+      id: 'reason', label: t('ocp_dash_col_reason'),
+      text: r => [r.status, r.reason].filter(Boolean).join(' '),
+      render: r => (
+        <div className="min-w-0">
+          <div className="text-slate-200">{r.status || '—'}</div>
+          {r.reason && r.reason !== r.status ? <div className="text-slate-500 truncate max-w-[180px]" title={r.reason}>{r.reason}</div> : null}
+        </div>
+      ),
+    },
+    {
+      id: 'restarts', label: t('ocp_dash_col_restarts'),
+      text: r => String(r.restart_count ?? 0), num: r => r.restart_count ?? 0,
+      render: r => <span className={(r.restart_count || 0) >= 10 ? 'text-red-300 font-semibold' : (r.restart_count || 0) >= 5 ? 'text-amber-300' : ''}>{r.restart_count ?? 0}</span>,
+    },
+    { id: 'ready', label: t('ocp_dash_col_ready'), text: r => r.ready || '' },
+    {
+      id: 'owner', label: t('ocp_dash_col_owner'),
+      text: r => [r.owner_kind, r.owner_name].filter(Boolean).join('/'),
+      render: r => (r.owner_name
+        ? <span className="text-slate-300 truncate inline-block max-w-[200px] align-bottom" title={`${r.owner_kind || ''}/${r.owner_name}`}>
+          <span className="text-slate-500">{r.owner_kind}/</span>{r.owner_name}
+        </span>
+        : <span className="text-slate-500">—</span>),
+    },
+    {
+      id: 'severity', label: t('ocp_dash_col_severity'),
+      text: r => r.risk_severity || 'warning',
+      num: r => 3 - (SEV_ORDER[r.risk_severity || 'warning'] ?? 2),
+      render: r => {
+        const s = r.risk_severity || 'warning'
+        return <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold uppercase ${SEV_TONE[s] || SEV_TONE.warning}`}>{sevLabel(s)}</span>
+      },
+    },
+  ]
+
+  const nodeColumns = (): TableColumn<OcpNode>[] => [
+    {
+      id: 'name', label: 'Node',
+      text: n => `${n.name} ${n.role || ''}`,
+      render: n => (
+        <span className="text-white">
+          {n.name}
+          {n.role ? <span className="text-slate-500"> · {n.role}</span> : null}
+        </span>
+      ),
+    },
+    {
+      id: 'status', label: t('col_status'), text: n => n.status || '',
+      render: n => {
+        const ready = (n.status || '').toLowerCase() === 'ready'
+        return <span className={ready ? 'text-emerald-300' : 'text-red-300'}>{n.status || '—'}</span>
+      },
+    },
+    {
+      id: 'cpu', label: 'CPU', hint: t('ocp_dash_load_legend'),
+      text: n => pct(n.cpu_pct), num: n => n.cpu_pct,
+      render: n => <UsageBar value={n.cpu_pct} title={nodeTip('CPU', n.cpu_pct, n.cpu_cores, 'cores')} />,
+    },
+    {
+      id: 'mem', label: 'Memory', hint: t('ocp_dash_load_legend'),
+      text: n => pct(n.mem_pct), num: n => n.mem_pct,
+      render: n => <UsageBar value={n.mem_pct} title={nodeTip('Memory', n.mem_pct, n.memory_gb, 'GB')} />,
+    },
+    {
+      id: 'pods', label: 'Pod', text: n => String(n.pods_total), num: n => n.pods_total,
+      render: n => <span>{n.pods_total}{n.pods_bad ? <span className="text-amber-300"> ({n.pods_bad})</span> : null}</span>,
+    },
+    {
+      id: 'vms', label: 'VM', text: n => `${n.vms_running ?? 0}/${n.vms_total}`, num: n => n.vms_running ?? 0,
+      render: n => <span>{n.vms_running ?? 0}/{n.vms_total}</span>,
+    },
+  ]
 
   return (
     <div className="space-y-5" data-testid="ocp-dashboard">
@@ -173,19 +288,18 @@ export default function OpenShiftHome() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         {[
-          ['Cluster', clusters.length, clusterNames || '—'],
-          ['Node', sum('node_count'), notReadyLabel],
-          [t('ocp_not_ready'), sum('nodes_not_ready'), notReadyLabel],
-          ['Pod', sum('pod_count'), `${sum('pods_bad')} ${t('ocp_problem')}`],
-          [t('ocp_problem'), sum('pods_bad'), risks.slice(0, 3).map(r => r.name).join(', ') || t('ocp_dash_no_risks')],
-          ['VM', sum('vm_count'), vmNs.map(v => v.ns).slice(0, 4).join(', ') || t('ocp_dash_no_vm_ns')],
-        ].map(([label, val, sub]) => (
+          ['Cluster', clusters.length, clusterNames || '—', false],
+          ['Node', sum('node_count'), nrCount ? t('ocp_dash_nodes_nr', { n: nrCount }) : t('ocp_dash_all_ready'), nrCount > 0],
+          ['Pod', sum('pod_count'), `${sum('pods_bad')} ${t('ocp_problem')}`, false],
+          [t('ocp_dash_card_risk'), riskTotal, topRiskNames || t('ocp_dash_no_risks'), riskTotal > 0],
+          ['VM', sum('vm_count'), `${vmRunning} ${t('hv_running')} · ${vmOff} ${t('power_off')}`, false],
+        ].map(([label, val, sub, warn]) => (
           <div key={String(label)} className="rounded-xl border border-white/[0.06] bg-cyber-card p-3 min-w-0" title={String(sub)}>
             <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
             <div className="text-xl font-bold text-white">{q.isLoading ? '…' : val}</div>
-            <div className="text-[11px] text-slate-400 truncate mt-1">{q.isLoading ? '' : sub}</div>
+            <div className={`text-[11px] truncate mt-1 ${warn ? 'text-amber-300' : 'text-slate-400'}`}>{q.isLoading ? '' : sub}</div>
           </div>
         ))}
       </div>
@@ -216,6 +330,23 @@ export default function OpenShiftHome() {
         <OcpClusterTree />
       </div>
 
+      {notReady.length > 0 && (
+        <section className="rounded-xl border border-red-500/30 bg-red-500/5 p-3" data-testid="ocp-not-ready">
+          <div className="flex items-center gap-2 mb-1.5">
+            <AlertTriangle size={14} className="text-red-300" />
+            <h2 className="text-sm font-semibold text-white">{t('ocp_dash_not_ready_title')} ({notReady.length})</h2>
+          </div>
+          <ul className="max-h-28 overflow-y-auto space-y-1">
+            {notReady.map(n => (
+              <li key={`${n.cluster}-${n.node}`} className="text-xs text-slate-300">
+                <span className="text-white">{n.node}</span>
+                <span className="text-slate-500"> · {n.cluster} · {n.status || '—'}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-white">{t('ocp_tab_clusters')}</h2>
         {q.isLoading && <p className="text-sm text-slate-500">{t('loading')}</p>}
@@ -229,7 +360,7 @@ export default function OpenShiftHome() {
           const healthy = (c.status || '').toUpperCase() !== 'ERROR' && c.nodes_not_ready === 0
           const vmHere = c.namespaces.filter(n => n.vms_total > 0)
           return (
-            <section key={c.cluster_id} className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-3">
+            <section key={c.cluster_id} className="rounded-xl border border-white/[0.06] bg-cyber-card p-4 space-y-3" data-testid={`ocp-cluster-${c.cluster_id}`}>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-white font-semibold">{c.name}</div>
@@ -251,48 +382,24 @@ export default function OpenShiftHome() {
                 </span>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="text-slate-500">
-                    <tr className="text-left">
-                      <th className="font-medium py-1 pr-3">Node</th>
-                      <th className="font-medium py-1 pr-3">{t('col_status')}</th>
-                      <th className="font-medium py-1 pr-3">CPU</th>
-                      <th className="font-medium py-1 pr-3">Mem</th>
-                      <th className="font-medium py-1 pr-3">Pod</th>
-                      <th className="font-medium py-1">VM</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {c.nodes.map(n => {
-                      const ready = (n.status || '').toLowerCase() === 'ready'
-                      return (
-                        <tr key={n.name} className="border-t border-white/[0.04] text-slate-300">
-                          <td className="py-1.5 pr-3 text-white">
-                            {n.name}
-                            {n.role ? <span className="text-slate-500"> · {n.role}</span> : null}
-                          </td>
-                          <td className={`py-1.5 pr-3 ${ready ? 'text-emerald-300' : 'text-red-300'}`}>{n.status || '—'}</td>
-                          <td className="py-1.5 pr-3">{pct(n.cpu_pct)}</td>
-                          <td className="py-1.5 pr-3">{pct(n.mem_pct)}</td>
-                          <td className="py-1.5 pr-3">
-                            {n.pods_total}{n.pods_bad ? <span className="text-amber-300"> ({n.pods_bad})</span> : null}
-                          </td>
-                          <td className="py-1.5">{n.vms_running ?? 0}/{n.vms_total}</td>
-                        </tr>
-                      )
-                    })}
-                    {c.nodes.length === 0 && (
-                      <tr><td colSpan={6} className="py-2 text-slate-500">{t('ocp_add_cluster_first')}</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <ColumnTable
+                bare
+                testId={`ocp-nodes-${c.cluster_id}`}
+                rows={c.nodes}
+                columns={nodeColumns()}
+                rowKey={n => n.name}
+                searchPlaceholder={t('ocp_dash_node_search')}
+                empty={t('ocp_add_cluster_first')}
+                hideSearch={c.nodes.length <= 6}
+                maxHeightClass="max-h-80"
+                rowClass={n => ((n.status || '').toLowerCase() === 'ready' ? '' : 'bg-red-500/5')}
+              />
+              <p className="text-[10px] text-slate-500">{t('ocp_dash_load_legend')}</p>
 
               {vmHere.length > 0 && (
                 <div>
                   <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">{t('ocp_dash_vm_ns')}</div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
                     {vmHere.map(n => (
                       <Link
                         key={n.name}
@@ -311,66 +418,72 @@ export default function OpenShiftHome() {
         })}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <section className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <h2 className="text-sm font-semibold text-white">{t('ocp_dash_risk_title')}</h2>
-            <Link to="/openshift?section=riskler" className="text-[11px] text-rose-300 hover:text-rose-200 inline-flex items-center gap-1">
-              {t('ocp_nav_risks')} <ChevronRight size={12} />
-            </Link>
-          </div>
-          {risksQ.isLoading && <p className="text-sm text-slate-500">{t('loading')}</p>}
-          {!risksQ.isLoading && risks.length === 0 && (
-            <p className="text-sm text-slate-500">{t('ocp_dash_no_risks')}</p>
-          )}
-          <ul className="space-y-1.5">
-            {risks.map(r => (
-              <li key={r.id} className="flex items-start justify-between gap-2 text-xs border-b border-white/[0.04] pb-1.5">
-                <div className="min-w-0">
-                  <div className="text-white truncate">{r.project}/{r.name}</div>
-                  <div className="text-slate-500 truncate">
-                    {nameOf(r.cluster_id)} · {r.node_name || '—'} · {r.status || '—'}
-                    {r.restart_count ? ` · restart ${r.restart_count}` : ''}
-                  </div>
+      <section className="rounded-xl border border-white/[0.06] bg-cyber-card p-4" data-testid="ocp-risk-section">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <h2 className="text-sm font-semibold text-white">{t('ocp_dash_risk_title')} ({riskTotal})</h2>
+          <Link to="/openshift?section=riskler" className="text-[11px] text-rose-300 hover:text-rose-200 inline-flex items-center gap-1">
+            {t('ocp_nav_risks')} <ChevronRight size={12} />
+          </Link>
+        </div>
+        {risksQ.isLoading && <p className="text-sm text-slate-500">{t('loading')}</p>}
+        {!risksQ.isLoading && risks.length === 0 && (
+          <p className="text-sm text-slate-500">{t('ocp_dash_no_risks')}</p>
+        )}
+        {risks.length > 0 && (
+          <>
+            <ColumnTable
+              bare
+              testId="ocp-risks"
+              rows={riskRows}
+              columns={riskColumns}
+              rowKey={r => r.id}
+              searchPlaceholder={t('ocp_dash_risk_search')}
+              empty={t('ocp_dash_no_match')}
+              maxHeightClass="max-h-96"
+              defaultSort={{ id: 'severity', dir: 'desc' }}
+              onRowClick={r => setDetail(r)}
+              rowTestId="ocp-risk-row"
+              countLabel={shown => t('ocp_dash_risk_count', { shown, total: riskTotal })}
+              toolbar={(
+                <div className="flex items-center gap-1" role="group">
+                  {(['all', 'critical', 'high', 'warning'] as const).map(s => {
+                    const n = s === 'all' ? risks.length : sevCounts[s] || 0
+                    if (s !== 'all' && n === 0) return null
+                    const on = sevFilter === s
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        data-testid={`ocp-risk-filter-${s}`}
+                        aria-pressed={on}
+                        onClick={() => setSevFilter(s)}
+                        className={`text-[11px] px-2 py-1 rounded-lg border ${on ? 'border-sky-500/50 text-sky-300 bg-sky-500/10' : 'border-white/[0.08] text-slate-400 hover:text-slate-200'}`}
+                      >
+                        {s === 'all' ? t('ocp_dash_sev_all') : sevLabel(s)} ({n})
+                      </button>
+                    )
+                  })}
                 </div>
-                <span className={r.risk_severity === 'critical' ? 'text-red-300' : 'text-amber-300'}>
-                  {r.risk_severity || r.status || '—'}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
+              )}
+            />
+            <p className="text-[10px] text-slate-500 mt-2">
+              {t('ocp_dash_risk_hint')}
+              {riskTotal > risks.length ? ` ${t('ocp_dash_risk_more', { n: riskTotal - risks.length })}` : ''}
+            </p>
+          </>
+        )}
+      </section>
 
-        <section className="rounded-xl border border-white/[0.06] bg-cyber-card p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Server size={14} className="text-slate-400" />
-            <h2 className="text-sm font-semibold text-white">{t('ocp_dash_not_ready_title')}</h2>
-          </div>
-          {notReady.length === 0 && <p className="text-sm text-slate-500">{t('ocp_dash_all_ready')}</p>}
-          <ul className="space-y-1.5">
-            {notReady.map(n => (
-              <li key={`${n.cluster}-${n.node}`} className="text-xs text-slate-300">
-                <span className="text-white">{n.node}</span>
-                <span className="text-slate-500"> · {n.cluster} · {n.status || '—'}</span>
-              </li>
-            ))}
-          </ul>
-          {vmNs.length > 0 && (
-            <div className="mt-4">
-              <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">{t('ocp_dash_vm_ns')}</div>
-              <ul className="space-y-1">
-                {vmNs.map(v => (
-                  <li key={`${v.cluster}-${v.ns}`}>
-                    <Link to={`/openshift/vms?cluster=${v.clusterId}`} className="text-xs text-slate-300 hover:text-white">
-                      {v.ns} <span className="text-slate-500">· {v.cluster} · {v.running}/{v.total}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </section>
-      </div>
+      {detail && (
+        <OcpResourceDetailDrawer
+          clusterId={detail.cluster_id}
+          kind="pods"
+          name={detail.name}
+          namespace={detail.project}
+          onClose={() => setDetail(null)}
+          onOpenPod={(_ns, pName) => setDetail(d => (d ? { ...d, name: pName } : d))}
+        />
+      )}
     </div>
   )
 }

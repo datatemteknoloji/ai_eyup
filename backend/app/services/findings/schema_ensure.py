@@ -13,6 +13,9 @@ def ensure_infra_finding_columns(engine) -> None:
         "ALTER TABLE infra_findings ADD COLUMN IF NOT EXISTS stale boolean NOT NULL DEFAULT false",
         "ALTER TABLE infra_findings ADD COLUMN IF NOT EXISTS data_age_sec double precision",
         "ALTER TABLE infra_findings ADD COLUMN IF NOT EXISTS resolved_reason varchar(32)",
+        # Değişiklikler ekranı: «gözden geçirildi» işareti (satır silinmez; yalnız listede gizlenir)
+        "ALTER TABLE virt_config_snapshots ADD COLUMN IF NOT EXISTS ack_by varchar(100)",
+        "ALTER TABLE virt_config_snapshots ADD COLUMN IF NOT EXISTS ack_at timestamptz",
     ]
     try:
         with engine.begin() as conn:

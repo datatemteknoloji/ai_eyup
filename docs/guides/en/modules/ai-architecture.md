@@ -114,7 +114,7 @@ Settings → About → **AI Architecture** prints this text as PDF. A stale rule
 | Cross Entity Match | `cross_entity_match.py` | `cross_entity_match` | hostname/vm/ip JOIN |
 | Cross-domain I/O | `cross_domain_diagnostics.py` | `linux_virt_io_correlate` | Guest iowait × VM disk latency (join şart) |
 | NLQ Parser | `nlq/parser.py` | `parse_question` | LLM → JSON şema |
-| AIOps Engine | `aiops_engine.py` | persist + RCA | Anomali→event→incident→LLM RCA |
+| AIOps Engine | `aiops_engine.py` + `event_lifecycle.py` | persist + RCA + lifecycle | Anomaly→event→incident→LLM RCA; every cycle runs `run_lifecycle` (auto-resolve after quiet period + incident reconcile, see §5 Cross-Domain) |
 | Report Engine | `report_engine.py` | generate + LLM özet | Virt raporları |
 | Log Analyst | `log_analyst.py` | log + LLM | Ayrı analiz |
 | Custom Report Engine | `custom_report_engine.py` | tool sonuçlarından rapor | Structured tool dump |
@@ -371,7 +371,9 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 | RAG | Seed `OCP-*.md`; ayrı vektör namespace yok |
 | APIs | OpenShift/K8s + KubeVirt client. No separate `/openshift/ask`; chat is `POST /chat/stream` + `platform=openshift` |
 | Monitoring UI | `/openshift/monitoring` — API mode: Virt-style overview (`metrics.k8s.io` → Timescale `ocp_resource_metrics`). Prometheus mode (default when an OpenShift-bound URL exists in Settings): **Kubernetes Views** (Global / Namespaces / Nodes / Pods); GPU DCGM + `kubevirt_vmi_*` kept as selectable templates (`/monitoring/prom/*`, `ocp_prometheus_query`). Hub: `/monitoring` — Linux Live Metrics; Windows = WinRM API / `windows_exporter` Prom; Virt = vCenter/OLVM API / `binding=virtualization` Prom; Other (binding=none): multiple sources + `collector_type` (prometheus\|telegraf\|opentelemetry\|zabbix); hub lists each by **label**. Prom-compatible → metric explorer; **Zabbix** → Overview/Hosts/Charts/Problems/Match map (`/monitoring/zabbix/*`, semantic `metric_id` + item key match map). Unified chat: full label → `custom_prometheus_query` (Prom) or `zabbix_query`. Linux `PROMETHEUS_URL` remains the linux seed. Chat API: `ocp_monitoring_query`; Prom: `ocp_prometheus_query`. |
-| Access / RBAC UI | `/openshift/access` — Users, Groups, Identities, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, ServiceAccounts, subject lookup, token can-i, OAuth IdP (READ-ONLY cluster API). Chat: `ocp_access_query`. |
+| Access / RBAC UI | `/openshift/access` — Users, Groups, Identities, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, ServiceAccounts, effective access (incl. group membership), risk panel, Role/ClusterRole **permission matrix**, token can-i, OAuth IdP. **Reading** is open to `openshift` module users; **writing is Admin-only and CREATE-ONLY** (see next row). Chat: `ocp_access_query` (stays **READ-ONLY**). |
+| Access / RBAC create (Admin) | `services/openshift/ocp_access_write.py` + `api/openshift.py` `…/access/create[/preview]`, `…/access/capabilities`, `…/access/yaml` — **create only**: RoleBinding, ClusterRoleBinding, Role, ClusterRole (form or YAML; "copy from existing role"). No edit/delete/user-group management (no such routes; `test_no_delete_or_put_routes_under_access`). Every write endpoint is `require_role("admin")`; UI buttons are not rendered for non-admins. Flow: validation (DNS-1123 name, verb/resource format, size limits; YAML mode only takes `{name, namespace, roleRef, subjects, rules}` — labels/ownerReferences/finalizers are ignored) → risk warnings (cluster-admin, wildcard, `escalate/bind/impersonate`, Secret read, `system:authenticated`; **critical** ones require typing the object name + a confirmation checkbox, enforced server-side too) → `dryRun=All` preview → real POST → audit (`openshift/access.create` with the created YAML; failed attempts logged as `failed`). Objects get the `app.kubernetes.io/managed-by: ainew` label + `ainew.io/created-by/created-at` annotations. 409 → Turkish "already exists" message; 403 escalation → explained. The token's `create` ability is checked per kind via SelfSubjectAccessReview (buttons disabled with a reason). The equivalent `oc delete …` command is shown for INFORMATION only and never executed. SA token/Secret values are never read. |
+| Access / RBAC read hardening | `services/openshift/ocp_access.py`: `continue`-token pagination (`_get_all`; the first page used to be silently truncated), 60 s `load_snapshot` cache (overview/risk/effective share the same 7 lists; invalidated after create), `permission_matrix`, `effective_permissions` (direct + group membership + implicit `system:authenticated`), `compute_risks` (cluster-admin holders, custom wildcard roles, broad group grants, orphan bindings/subjects). Raw YAML and IdP details (mapping/token config) are Admin-only; `access/get` no longer returns `raw`. |
 | LLM | Tool JSON text |
 
 ## Exadata / Oracle
@@ -428,6 +430,24 @@ Ayrı modül değil. Tetik: `_PERF` / `_LIVE_RESOURCE_KW` / deep keywords.
 ## Cross-Domain
 
 `plan_modules` multi + `persona_addendum` (JOIN anahtarları) + `cross_entity_match` + join şartlı `linux_virt_io_correlate` (guest iowait × VM disk latency, aynı pencere) + LLM sentezi. Graph / genel correlation engine yok.
+
+### Event / Incident lifecycle (`services/event_lifecycle.py`)
+
+Counts (dashboard/menu badges) only include **unresolved** records; so numbers drop when a problem is fixed, a per-type rule applies (`aiops_engine` runs `run_lifecycle` every cycle; nothing is deleted, only `resolved/resolved_at`):
+
+| Class | Types | Rule |
+|---|---|---|
+| Managed | `metric_anomaly`, `hw_*` | Own lifecycle (anomaly TTL / resource recovery); the sweep leaves them alone |
+| State | `vcenter_alarm` | 4 h of silence since `last_seen` → resolved |
+| Point | log/stream events | silence since `last_seen`: info 2 h, warning 12 h, error/critical/emergency 24 h |
+| Manual | `source=manual` | Never touched |
+
+- **Incident reconcile:** an open, unassigned incident from `auto_*` / `storm_detector` closes when ALL linked events were resolved ≥15 min ago ("Otomatik çözüldü: bağlı tüm olaylar düzeldi."); while the problem persists (unresolved linked event) `auto_close_quiet_incidents` will not close it. Critical anomalies are linked to an open incident during persist. A closed storm incident is not revived (a new storm creates a new incident).
+- **Replay ≠ recurrence:** stream collectors (vCenter/oVirt/OCP-Virt/virt_log/OCP events) re-read a 48 h window on every sync; a replayed event must not bump `last_seen`/`occurrence_count` or reopen a manually resolved event. Only a genuinely newer timestamp (OCP: item time newer than `last_seen`) or a state refresh for `vcenter_alarm`/`virt_resource` counts.
+
+### Changes (baseline / drift) — Virt + OCP
+
+`VirtConfigSnapshot` (`is_latest`, `is_baseline`, `baseline_by/at`, `ack_by/at`). **History** (diff between consecutive snapshots) and **drift** (baseline ↔ latest) are separate concepts; drift is only computed for baselined entities and is now computed live (`virt_config_drift.baseline_overview`). "Drift 0" is explained on screen: the baseline was taken after the last change, or the changed entity/kind is not baselined. The banner shows who marked the baseline, when and for how many entities; the **Baselines** tab lists each entity with its baseline↔latest diff. **Mark reviewed** (`ack`) hides a change from the default view without deleting it (reversible); `POST /changes/prune` (admin, dry-run by default) cleans old snapshots by retention (365 days + last 20 per entity; latest and baseline are protected). A bulk baseline that would overwrite existing baselines requires a confirmation checkbox. OCP `/changes` has the same endpoints as Virt (`/baseline`, `/baseline/compare`, `DELETE /baseline`, `/changes/ack`, `/changes/prune`). Schema via `schema_ensure.py` `ADD COLUMN IF NOT EXISTS` (additive only).
 
 ---
 
@@ -525,7 +545,7 @@ All READ_ONLY except the last row. A `unified_tool_chat` hint line routes capaci
 | `ocp_resource_quota` | RQ/LR |
 | `ocp_monitoring_query` | Timescale CPU/Memory (overview/top/trend/series/cross) |
 | `ocp_prometheus_query` | OpenShift Prometheus — **Views** (global/ns/nodes/pods) / DCGM / kubevirt_vmi_* |
-| `ocp_access_query` | OpenShift Access/RBAC — Users/Groups/Roles/Bindings/IdP/can-i (READ-ONLY) |
+| `ocp_access_query` | OpenShift Access/RBAC — Users/Groups/Roles/Bindings/IdP/can-i (READ-ONLY; NO create surface — RBAC creation exists only in the Admin UI) |
 | `ocp_pod_logs` | Pod log read (CrashLoop diagnosis; READ-ONLY) |
 | `ocp_resource_yaml` | Resource YAML read (no apply; READ-ONLY) |
 | `virt_prometheus_query` | VMware Prometheus (vmware_exporter) |
@@ -1161,7 +1181,7 @@ Yeni mimari önermiyorum. Mevcut sistem: **kural tabanlı router + isteğe bağl
 - Token budget runtime setting, default 32k.
 - Prometheus sohbet context’i tek JOIN tablosu; `prometheus.yml` değişmez.
 - OpenShift Monitoring (`/openshift/monitoring`): **API mode** kube API + `metrics.k8s.io` → Timescale; **Prometheus mode** uses the OpenShift-bound registry source — default Kubernetes Views (Global/NS/Nodes/Pods, Grafana parity), GPU/kubevirt as side templates. Hub `/monitoring` picks module + Other **labels** (`collector_type`). Other chat is Unified-only with the configured label (`custom_prometheus_query` for Prom; `zabbix_query` for Zabbix semantic catalog/match map). No scrape writes.
-- Tools: `ocp_monitoring_query` (API/Timescale), `ocp_prometheus_query` (Views/GPU/VMI; mode=views|catalog|series|allocation|labels), `ocp_access_query` (Users/Groups/Roles/Bindings/IdP; READ-ONLY), `ocp_pod_logs` / `ocp_resource_yaml` (diagnosis; no apply), `virt_prometheus_query`, `custom_prometheus_query` (Other Prom), `zabbix_query` (Other Zabbix).
+- Tools: `ocp_monitoring_query` (API/Timescale), `ocp_prometheus_query` (Views/GPU/VMI; mode=views|catalog|series|allocation|labels), `ocp_access_query` (Users/Groups/Roles/Bindings/IdP; READ-ONLY — RBAC creation is Admin-UI only, not in chat), `ocp_pod_logs` / `ocp_resource_yaml` (diagnosis; no apply), `virt_prometheus_query`, `custom_prometheus_query` (Other Prom), `zabbix_query` (Other Zabbix).
 - Ayrı sohbetler: `/chat` (linux|openshift|exadata), `/windows-chat`, `/hypervisors/ask`, `/agent`, `/nlq`, `/rca`.
 
 # ASSUMPTIONS

@@ -139,11 +139,13 @@ def node_risk(days: int = Query(7, ge=1, le=90), cluster_id: Optional[int] = Non
 @router.get("/changes")
 def changes(days: int = Query(30, ge=1, le=365), cluster_id: Optional[int] = None,
             entity_kind: Optional[str] = None, entity: Optional[str] = None, limit: int = Query(300, ge=1, le=2000),
+            ack: str = Query("hide", pattern="^(hide|only|all)$"),
             db: Session = Depends(get_db), user: User = Depends(_module)):
-    from app.services.virt_config_drift import list_changes
-    rows = list_changes(db, days=days, platform=PLATFORM, source_id=cluster_id, entity_kind=entity_kind,
-                        entity=entity, limit=limit)
-    return {"changes": rows, "count": len(rows)}
+    """Ardışık değişiklik geçmişi + baseline özeti (virt-insights ile aynı şema)."""
+    from app.services.virt_config_drift import changes_payload
+    return changes_payload(db, platforms=[PLATFORM], days=days, source_id=cluster_id, entity_kind=entity_kind,
+                           entity=entity, limit=limit, ack=ack,
+                           suggested_kinds=("node", "mcp", "platform", "cluster"))
 
 
 class BaselineRequest(BaseModel):
@@ -161,6 +163,70 @@ def baseline(body: BaselineRequest, request: Request, db: Session = Depends(get_
     db.commit()
     _audit(db, user, "ocp_insights.baseline", f"Baseline işaretlendi ({n} varlık)", request, **body.model_dump())
     return {"ok": True, "count": n}
+
+
+@router.get("/baseline")
+def baseline_list(cluster_id: Optional[int] = None, entity_kind: Optional[str] = None, diff: bool = False,
+                  db: Session = Depends(get_db), user: User = Depends(_module)):
+    """Baseline'ı olan varlıklar: kim/ne zaman işaretledi + baseline'dan CANLI sapma."""
+    from app.services.virt_config_drift import baseline_overview
+    return baseline_overview(db, platforms=[PLATFORM], source_id=cluster_id, entity_kind=entity_kind, with_diff=diff)
+
+
+@router.get("/baseline/compare")
+def baseline_compare_api(cluster_id: Optional[int] = None, entity_kind: str = "", entity_ref: str = "",
+                         db: Session = Depends(get_db), user: User = Depends(_module)):
+    from app.services.virt_config_drift import baseline_compare
+    res = baseline_compare(db, platform=PLATFORM, source_id=cluster_id, entity_kind=entity_kind,
+                           entity_ref=entity_ref)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Bu varlık için baseline işaretli değil")
+    return res
+
+
+@router.delete("/baseline")
+def baseline_clear(request: Request, cluster_id: Optional[int] = None, entity_kind: Optional[str] = None,
+                   entity_ref: Optional[str] = None, clear_all: bool = Query(False, alias="all"),
+                   db: Session = Depends(get_db), user: User = Depends(require_role("operator"))):
+    """Baseline işaretini kaldırır (snapshot geçmişi korunur). En az bir daraltıcı ya da `all=true` gerekir."""
+    from app.services.virt_config_drift import clear_baseline
+    if not (entity_kind or entity_ref or cluster_id is not None or clear_all):
+        raise HTTPException(status_code=400,
+                            detail="Silme kapsamı belirtin: entity_kind, entity_ref, cluster_id veya all=true")
+    n = clear_baseline(db, platform=PLATFORM, source_id=cluster_id, entity_kind=entity_kind, entity_ref=entity_ref)
+    db.commit()
+    _audit(db, user, "ocp_insights.baseline_clear", f"Baseline kaldırıldı ({n} varlık)", request,
+           cluster_id=cluster_id, entity_kind=entity_kind, entity_ref=entity_ref, all=clear_all)
+    return {"ok": True, "count": n}
+
+
+class AckRequest(BaseModel):
+    ids: list[int] = Field(default_factory=list, max_length=2000)
+    undo: bool = False
+
+
+@router.post("/changes/ack")
+def changes_ack(body: AckRequest, request: Request, db: Session = Depends(get_db),
+                user: User = Depends(require_role("operator"))):
+    from app.services.virt_config_drift import ack_changes
+    n = ack_changes(db, body.ids, user.username, undo=body.undo, platforms=[PLATFORM])
+    db.commit()
+    _audit(db, user, "ocp_insights.changes_ack_undo" if body.undo else "ocp_insights.changes_ack",
+           f"{n} değişiklik {'geri alındı' if body.undo else 'gözden geçirildi işaretlendi'}", request, ids=body.ids[:50])
+    return {"ok": True, "count": n}
+
+
+@router.post("/changes/prune")
+def changes_prune(request: Request, retention_days: int = Query(365, ge=30, le=3650),
+                  keep_last: int = Query(20, ge=2, le=500), dry_run: bool = True,
+                  db: Session = Depends(get_db), user: User = Depends(require_role("admin"))):
+    from app.services.virt_config_drift import prune_snapshots
+    res = prune_snapshots(db, retention_days=retention_days, keep_last=keep_last, platforms=[PLATFORM],
+                          dry_run=dry_run)
+    db.commit()
+    if not dry_run:
+        _audit(db, user, "ocp_insights.changes_prune", f"{res['deleted']} eski snapshot temizlendi", request, **res)
+    return {"ok": True, **res}
 
 
 @router.get("/incident-timeline/{incident_id}")

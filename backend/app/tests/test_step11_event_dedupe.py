@@ -145,14 +145,15 @@ def test_vcenter_upsert_backfill_called_on_existing(db, monkeypatch):
     assert ok is False and len(called) == 1
 
 
-def test_ovirt_upsert_increments_occurrence(db, monkeypatch):
+def test_ovirt_upsert_replay_is_not_a_recurrence(db, monkeypatch):
+    # Adım 11 → yaşam döngüsü düzeltmesi: aynı oVirt olay id'si akış penceresinde yeniden görünür; sayaç şişmez.
     s, _ = db
     s.add(SystemEvent(event_type="ovirt_event", source="ovirt_event", title="t",
                       raw_data={"external_key": "ovirt-hv1-e1"}, occurrence_count=1,
                       created_at=datetime.utcnow())); s.commit()
     ok = ovirt_event_collector._upsert(s, SimpleNamespace(id=1, name="o"), {"id": "e1"}, datetime.utcnow(), ExternalKeyIndex(s))
     assert ok is False
-    assert s.query(SystemEvent).one().occurrence_count == 2
+    assert s.query(SystemEvent).one().occurrence_count == 1
 
 
 def test_ocpv_upsert_updates_severity(db):
@@ -164,7 +165,7 @@ def test_ocpv_upsert_updates_severity(db):
     ok = ocpv._upsert_openshift_virt_event(s, SimpleNamespace(id=1, name="x"), item, datetime.utcnow(), ExternalKeyIndex(s))
     assert ok is False
     row = s.query(SystemEvent).one()
-    assert row.severity == "warning" and row.occurrence_count == 2
+    assert row.severity == "warning" and row.occurrence_count == 1   # replay = tekrar değil
 
 
 def test_virt_log_upsert_sql_side(db):
@@ -173,7 +174,7 @@ def test_virt_log_upsert_sql_side(db):
                       raw_data={"external_key": "L1"}, occurrence_count=1, created_at=datetime.utcnow())); s.commit()
     ok = virt_log_collector._upsert_virt_event(s, {"id": "L1", "severity": "warning"}, "virt_log", datetime.utcnow())
     assert ok is False
-    assert s.query(SystemEvent).one().occurrence_count == 2
+    assert s.query(SystemEvent).one().occurrence_count == 1           # platform günlüğü replay'i tekrar sayılmaz
     ok2 = virt_log_collector._upsert_virt_event(s, {"id": "L2", "title": "yeni", "source": "x"}, "virt_log", datetime.utcnow())
     assert ok2 is True and s.query(SystemEvent).count() == 2
 
@@ -354,3 +355,17 @@ def test_no_data_answer_retry_llm_offloaded():
     src = _src("api/unified_chat.py")
     assert "await run_chat_io(\n                            maybe_fix_no_data_answer," in src
     assert "_fixed, _ev_reason = maybe_fix_no_data_answer(" not in src
+
+
+def test_virt_resource_condition_refreshes_last_seen(db):
+    """Kaynak izleyici koşul-tabanlı: koşul sürdükçe last_seen/occurrence yenilenir (olay açık kalır)."""
+    s, _ = db
+    old = datetime.utcnow() - timedelta(hours=3)
+    s.add(SystemEvent(event_type="virt_resource", source="virt_resource", title="t", severity="warning",
+                      raw_data={"external_key": "R1"}, occurrence_count=1, last_seen=old, created_at=old)); s.commit()
+    now = datetime.utcnow()
+    ok = virt_log_collector._upsert_virt_event(s, {"id": "R1", "severity": "warning", "source": "resource_monitor"},
+                                               "virt_resource", now)
+    assert ok is False
+    row = s.query(SystemEvent).one()
+    assert row.occurrence_count == 2 and row.last_seen >= old + timedelta(hours=2)

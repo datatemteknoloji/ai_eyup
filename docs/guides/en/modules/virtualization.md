@@ -16,7 +16,7 @@ OpenShift command centre and full oVirt attach steps are in the **OpenShift / oV
 | Capacity | `/virt/capacity` | Tabs: Cluster, Datastore, What-if (does a new VM fit?), **If a host goes down (N+1)**, Reclaim simulation, Bulk placement, Placement, Thresholds |
 | Reclaim | `/virt/reclaim` | Powered-off / idle / oversized VMs, snapshots, orphan disks, ISOs, unused datastores |
 | Health checks | `/virt/health` | Health, compliance (ISO 27001), hardware, CVE/KB, upgrade findings; exceptions, command drafts, approved remediation |
-| Changes | `/virt/changes` | Host/cluster config history (diff), baseline, drift findings |
+| Changes | `/virt/changes` | Host/cluster config history (diff), baseline (who/when/how many entities), live drift + "drift 0" explanation, Baselines tab (baseline↔latest diff), "mark reviewed" to hide (never deletes), overwrite confirmation for bulk baseline |
 | Backup & DR | `/virt/backup` | **Visible only when a backup provider (Veeam) is connected.** RPO/protection, jobs, repositories, unmatched objects, RPO targets, evidence |
 
 ```diagram

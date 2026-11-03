@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.inventory_guard import require_integrations_inventory
-from app.core.auth import require_role
+from app.core.auth import get_current_user, require_role
 from app.models.user import User
 from app.models.openshift import OpenShiftCluster, OpenShiftNode, OpenShiftProject, OpenShiftWorkload
 from app.services.audit import record_audit
@@ -366,9 +366,10 @@ async def health_board(cluster_id: Optional[int] = None, db: Session = Depends(g
 
 @router.get("/risks")
 async def list_risks(cluster_id: Optional[int] = None, limit: int = 100, db: Session = Depends(get_db)):
-    from app.services.openshift_health import list_risk_workloads
-    items = list_risk_workloads(db, cluster_id=cluster_id, limit=min(max(limit, 1), 500))
-    return {"risks": [_workload_dict(w) for w in items], "total": len(items)}
+    from app.services.openshift_health import list_risk_workloads_page
+    items, total = list_risk_workloads_page(db, cluster_id=cluster_id, limit=min(max(limit, 1), 500))
+    # total = limit'ten ÖNCEKİ gerçek risk sayısı; returned = bu yanıttaki satır sayısı.
+    return {"risks": [_workload_dict(w) for w in items], "total": total, "returned": len(items)}
 
 
 @router.get("/clusters/{cluster_id}/topology")
@@ -691,7 +692,7 @@ def cluster_storage(cluster_id: int, db: Session = Depends(get_db)):
         client.logout()
 
 
-# ── Access / RBAC (READ-ONLY) ─────────────────────────────────────────────────
+# ── Access / RBAC (okuma: openshift modülü · yazma: YALNIZ Admin, YALNIZ oluşturma) ─────────────────────────────────────────────────
 
 def _access_client(cluster_id: int, db: Session):
     cluster = db.query(OpenShiftCluster).filter(OpenShiftCluster.id == cluster_id).first()
@@ -701,13 +702,24 @@ def _access_client(cluster_id: int, db: Session):
     return cluster, cluster_ops.client_from_cluster(cluster)
 
 
+def _is_admin(user: User) -> bool:
+    return getattr(user, "role", "") in ("admin", "superadmin")
+
+
 @router.get("/clusters/{cluster_id}/access/overview")
-def access_overview(cluster_id: int, db: Session = Depends(get_db)):
-    """Users/Groups/Roles/Bindings sayıları + OAuth IdP + token yetki teşhisi."""
+def access_overview(
+    cluster_id: int,
+    refresh: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Users/Groups/Roles/Bindings sayıları + risk özeti + OAuth IdP (ayrıntı yalnız Admin). 60 sn önbellek."""
     _, client = _access_client(cluster_id, db)
     try:
-        from app.services.openshift.ocp_access import access_overview as _ov
-        return _ov(client)
+        from app.services.openshift import ocp_access as _oa
+        if refresh:
+            _oa.invalidate_snapshot(str(cluster_id))
+        return _oa.access_overview(client, str(cluster_id), admin=_is_admin(user))
     except Exception as e:
         logger.exception("access overview")
         raise HTTPException(status_code=502, detail=str(e)[:300]) from e
@@ -819,7 +831,12 @@ def access_can_i(
 
 
 @router.get("/clusters/{cluster_id}/access/identity-providers")
-def access_identity_providers(cluster_id: int, db: Session = Depends(get_db)):
+def access_identity_providers(
+    cluster_id: int,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """OAuth IdP ayrıntıları (mapping, token ayarları) — yalnız Admin."""
     _, client = _access_client(cluster_id, db)
     try:
         from app.services.openshift.ocp_access import identity_providers
@@ -829,6 +846,216 @@ def access_identity_providers(cluster_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=502, detail=str(e)[:300]) from e
     finally:
         client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/capabilities")
+def access_capabilities(
+    cluster_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """UI için: kullanıcı Admin mi + cluster token'ı hangi türleri OLUŞTURABİLİR (SSAR `create`).
+
+    Yazma yalnız Admin; Admin değilse token sorgusu yapılmaz (can_write=false, gerekçe döner).
+    """
+    if not _is_admin(user):
+        return {"ok": True, "is_admin": False, "can_write": False,
+                "reason": "Oluşturma işlemleri yalnız Admin rolüne açıktır.", "kinds": {}}
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access_write import capabilities
+        kinds = capabilities(client)
+        return {"ok": True, "is_admin": True, "can_write": any(v["allowed"] for v in kinds.values()),
+                "reason": "", "kinds": kinds}
+    except Exception as e:
+        logger.exception("access capabilities")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/matrix")
+def access_role_matrix(
+    cluster_id: int,
+    kind: str,
+    name: str,
+    namespace: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Role/ClusterRole → kaynak × fiil izin matrisi (okuma)."""
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import role_matrix
+        out = role_matrix(client, kind, name, namespace=namespace)
+        if not out.get("ok"):
+            raise HTTPException(status_code=404, detail=out.get("error") or "bulunamadı")
+        return out
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("access matrix")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/effective")
+def access_effective(
+    cluster_id: int,
+    subject_kind: str = "User",
+    subject_name: str = "",
+    subject_namespace: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Kullanıcı/grup/SA etkin yetkisi (doğrudan + grup üyeliği; cluster ve namespace matrisleri)."""
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import effective_permissions
+        out = effective_permissions(
+            client, subject_kind=subject_kind, subject_name=subject_name,
+            subject_namespace=subject_namespace, cache_key=str(cluster_id),
+        )
+        if not out.get("ok"):
+            raise HTTPException(status_code=400, detail=out.get("error") or "hesaplanamadı")
+        return out
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("access effective")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/risks")
+def access_risks_endpoint(cluster_id: int, db: Session = Depends(get_db)):
+    """Risk paneli: cluster-admin sahipleri, wildcard roller, geniş grup yetkileri, yetim binding/özneler."""
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import access_risks
+        out = access_risks(client, str(cluster_id))
+        if not out.get("ok"):
+            return out
+        return out
+    except Exception as e:
+        logger.exception("access risks")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.get("/clusters/{cluster_id}/access/yaml")
+def access_yaml(
+    cluster_id: int,
+    kind: str,
+    name: str,
+    namespace: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+):
+    """Nesnenin ham YAML'ı — yalnız Admin (managedFields atılır; Secret/SA token değeri yok)."""
+    _, client = _access_client(cluster_id, db)
+    try:
+        from app.services.openshift.ocp_access import raw_yaml
+        out = raw_yaml(client, kind, name, namespace=namespace)
+        if not out.get("ok"):
+            raise HTTPException(status_code=404, detail=out.get("error") or "bulunamadı")
+        return out
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("access yaml")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+class AccessCreateBody(BaseModel):
+    """Yalnız OLUŞTURMA. mode=form → kind+spec; mode=yaml → yaml (tek doküman)."""
+    mode: str = "form"
+    kind: Optional[str] = None
+    spec: Optional[Dict[str, Any]] = None
+    yaml: Optional[str] = None
+    copy_from: Optional[Dict[str, Any]] = None
+    confirm_name: Optional[str] = None  # kritik uyarılarda nesne adı
+
+
+def _access_write_error(e: Exception) -> HTTPException:
+    return HTTPException(status_code=getattr(e, "status", 400), detail=getattr(e, "message", str(e)))
+
+
+@router.post("/clusters/{cluster_id}/access/create/preview")
+def access_create_preview(
+    cluster_id: int,
+    body: AccessCreateBody,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    """Ön izleme: doğrulama + risk uyarıları + sunucu tarafı `dryRun=All`. Hiçbir şey oluşmaz. Yalnız Admin."""
+    from app.services.openshift.ocp_access_write import AccessWriteError, preview
+    _, client = _access_client(cluster_id, db)
+    try:
+        return preview(
+            client, mode=body.mode, kind=body.kind, spec=body.spec, yaml_text=body.yaml,
+            copy_from=body.copy_from, actor=getattr(admin, "username", "") or "",
+        )
+    except AccessWriteError as e:
+        raise _access_write_error(e) from e
+    except Exception as e:
+        logger.exception("access create preview")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+
+
+@router.post("/clusters/{cluster_id}/access/create")
+def access_create(
+    cluster_id: int,
+    body: AccessCreateBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    """RoleBinding / ClusterRoleBinding / Role / ClusterRole OLUŞTUR (düzenleme/silme yok). Yalnız Admin.
+
+    Akış: doğrula → (kritik uyarıda ad onayı) → dryRun=All → POST → audit (oluşturulan YAML ile).
+    409 → «aynı isimde zaten var». Başarısızlıklar da audit'e `failed` olarak yazılır.
+    """
+    from app.services.openshift.ocp_access_write import AccessWriteError, create
+    cluster, client = _access_client(cluster_id, db)
+    ip = request.client.host if request.client else None
+    try:
+        out = create(
+            client, mode=body.mode, kind=body.kind, spec=body.spec, yaml_text=body.yaml,
+            copy_from=body.copy_from, confirm_name=body.confirm_name,
+            actor=getattr(admin, "username", "") or "", cache_key=str(cluster_id),
+        )
+    except AccessWriteError as e:
+        record_audit(
+            db, category="openshift", action="access.create", status="failed", actor=admin,
+            summary=f"RBAC oluşturma reddedildi ({cluster.name}): {e.message[:200]}",
+            target_type="openshift_cluster", target_id=cluster.id,
+            detail={"code": e.code, "kind": body.kind, "mode": body.mode}, ip_address=ip,
+        )
+        raise _access_write_error(e) from e
+    except Exception as e:
+        logger.exception("access create")
+        raise HTTPException(status_code=502, detail=str(e)[:300]) from e
+    finally:
+        client.logout()
+    m = out["manifest"]
+    ref_name = "/".join(x for x in (m["metadata"].get("namespace"), m["metadata"]["name"]) if x)
+    record_audit(
+        db, category="openshift", action="access.create", status="success", actor=admin,
+        summary=f"{m['kind']} oluşturuldu: {ref_name} ({cluster.name})",
+        target_type="openshift_cluster", target_id=cluster.id,
+        detail={
+            "kind": m["kind"], "name": m["metadata"]["name"], "namespace": m["metadata"].get("namespace", ""),
+            "warnings": [w["code"] for w in out["warnings"]], "yaml": out["yaml"],
+        },
+        ip_address=ip,
+    )
+    return out
 
 
 @router.get("/clusters/{cluster_id}/kubevirt/vms")

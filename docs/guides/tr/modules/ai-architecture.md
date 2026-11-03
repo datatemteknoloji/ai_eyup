@@ -114,7 +114,7 @@ Ayarlar → Hakkında → **AI Mimari** bu metni PDF yapar. Kural ile kod çeli�
 | Cross Entity Match | `cross_entity_match.py` | `cross_entity_match` | hostname/vm/ip JOIN |
 | Cross-domain I/O | `cross_domain_diagnostics.py` | `linux_virt_io_correlate` | Guest iowait × VM disk latency (join şart) |
 | NLQ Parser | `nlq/parser.py` | `parse_question` | LLM → JSON şema |
-| AIOps Engine | `aiops_engine.py` | persist + RCA | Anomali→event→incident→LLM RCA |
+| AIOps Engine | `aiops_engine.py` + `event_lifecycle.py` | persist + RCA + yaşam döngüsü | Anomali→event→incident→LLM RCA; her döngüde `run_lifecycle` (sessiz süre sonrası otomatik çözüm + incident uzlaştırma, bkz. §5 Cross-Domain) |
 | Report Engine | `report_engine.py` | generate + LLM özet | Virt raporları |
 | Log Analyst | `log_analyst.py` | log + LLM | Ayrı analiz |
 | Custom Report Engine | `custom_report_engine.py` | tool sonuçlarından rapor | Structured tool dump |
@@ -371,7 +371,9 @@ Agent sayfası ayrı: LangGraph tool loop + mutating onay.
 | RAG | Seed `OCP-*.md`; ayrı vektör namespace yok |
 | APIs | OpenShift/K8s + KubeVirt client. Ayrı `/openshift/ask` yok; sohbet `POST /chat/stream` + `platform=openshift` |
 | Monitoring UI | `/openshift/monitoring` — API modu: Virt tarzı özet + overlay (`metrics.k8s.io` → Timescale `ocp_resource_metrics`). Prometheus modu (Ayarlar’da OpenShift binding URL varsa varsayılan): **Kubernetes Views** (Global / Namespaces / Nodes / Pods); kenarda GPU DCGM + `kubevirt_vmi_*` şablonları (`/monitoring/prom/*`, `ocp_prometheus_query`). Hub: `/monitoring` — Linux Canlı Metrikler; Windows = WinRM API / `windows_exporter` Prom; Virt = vCenter/OLVM API / `binding=virtualization` Prom; Other (binding=none): çoklu kaynak + `collector_type` (prometheus\|telegraf\|opentelemetry\|zabbix); hub’da **label** listelenir. Prom uyumlu → metrik gezgini; **Zabbix** → Özet/Hosts/Grafik/Problems/Match map (`/monitoring/zabbix/*`, semantic `metric_id` + item key match map). Unified chat: tam label → `custom_prometheus_query` (Prom) veya `zabbix_query`. Linux `PROMETHEUS_URL` seed ayrı. Sohbet API: `ocp_monitoring_query`; Prom: `ocp_prometheus_query`. |
-| Access / RBAC UI | `/openshift/access` — Users, Groups, Identities, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, ServiceAccounts, subject arama, token can-i, OAuth IdP (READ-ONLY küme API). Sohbet: `ocp_access_query`. |
+| Access / RBAC UI | `/openshift/access` — Users, Groups, Identities, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, ServiceAccounts, etkin yetki (grup üyeliği dahil), risk paneli, Role/ClusterRole **izin matrisi**, token can-i, OAuth IdP. **Okuma** `openshift` modül yetkililerine açık; **yazma YALNIZ Admin ve YALNIZ OLUŞTURMA** (bkz. aşağıdaki satır). Sohbet: `ocp_access_query` (**READ-ONLY** kalır). |
+| Access / RBAC oluşturma (Admin) | `services/openshift/ocp_access_write.py` + `api/openshift.py` `…/access/create[/preview]`, `…/access/capabilities`, `…/access/yaml` — **yalnız oluşturma**: RoleBinding, ClusterRoleBinding, Role, ClusterRole (form veya YAML; «mevcut rolden kopyala»). Düzenleme/silme/kullanıcı-grup yönetimi YOK (rota düzeyinde yok; `test_no_delete_or_put_routes_under_access`). Tüm yazma uçları `require_role("admin")`; UI düğmeleri Admin değilse hiç render edilmez. Akış: doğrulama (DNS-1123 ad, fiil/kaynak biçimi, boyut sınırları; YAML modu yalnız `{ad, namespace, roleRef, subjects, rules}` alır — labels/ownerReferences/finalizers yok sayılır) → risk uyarıları (cluster-admin, wildcard, `escalate/bind/impersonate`, Secret okuma, `system:authenticated`; **kritik** olanda nesne adını yazma + onay kutusu, sunucu da doğrular) → `dryRun=All` ön izleme → gerçek POST → audit (`openshift/access.create`, oluşturulan YAML ile; başarısız denemeler `failed` olarak). Nesneye `app.kubernetes.io/managed-by: ainew` etiketi + `ainew.io/created-by/created-at` notu eklenir. 409 → «Aynı isimde … zaten var»; 403 escalation → Türkçe açıklama. Token `create` yetkisi SelfSubjectAccessReview ile türe göre sorgulanır (yetkisizse düğme gerekçeli pasif). Eşdeğer `oc delete …` komutu yalnız BİLGİ olarak gösterilir, asla çalıştırılmaz. SA token/Secret değeri hiçbir yerde okunmaz. |
+| Access / RBAC okuma sertleştirmeleri | `services/openshift/ocp_access.py`: `continue` token'lı sayfalama (`_get_all`; önceden ilk sayfa sessizce kesiliyordu), 60 sn önbellekli `load_snapshot` (overview/risk/etkin yetki aynı 7 listeyi paylaşır; oluşturma sonrası geçersiz), `permission_matrix`, `effective_permissions` (doğrudan + grup üyeliği + örtük `system:authenticated`), `compute_risks` (cluster-admin sahipleri, özel wildcard roller, geniş grup yetkisi, yetim binding/özne). Ham YAML ve IdP ayrıntısı (mapping/token) yalnız Admin; `access/get` artık `raw` döndürmez. |
 | LLM | Tool JSON text |
 
 ## Exadata / Oracle
@@ -428,6 +430,24 @@ Ayrı modül değil. Tetik: `_PERF` / `_LIVE_RESOURCE_KW` / deep keywords.
 ## Cross-Domain
 
 `plan_modules` multi + `persona_addendum` (JOIN anahtarları) + `cross_entity_match` + join şartlı `linux_virt_io_correlate` (guest iowait × VM disk latency, aynı pencere) + LLM sentezi. Graph / genel correlation engine yok.
+
+### Olay / Incident yaşam döngüsü (`services/event_lifecycle.py`)
+
+Sayılar (dashboard/menü rozetleri) yalnız **çözülmemiş** kayıtları sayar; sorun düzelince düşmesi için olay türüne göre kural uygulanır (`aiops_engine` her döngüde `run_lifecycle`; hiçbir kayıt silinmez, yalnız `resolved/resolved_at`):
+
+| Sınıf | Türler | Kural |
+|---|---|---|
+| Yönetilen | `metric_anomaly`, `hw_*` | Kendi yaşam döngüsü (anomali TTL/kaynak toparlanması); sweep dokunmaz |
+| Durum | `vcenter_alarm` | `last_seen`'den 4 sa sessizlik → çözüldü |
+| Nokta | günlük/stream olayları | `last_seen` sessizliği: info 2 sa, warning 12 sa, error/critical/emergency 24 sa |
+| Elle | `source=manual` | Dokunulmaz |
+
+- **Incident uzlaştırma:** `auto_*` / `storm_detector` kaynaklı, atanmamış, açık incident'in bağlı TÜM olayları ≥15 dk önce çözülmüşse kapanır («Otomatik çözüldü: bağlı tüm olaylar düzeldi.»); sorun sürerken (çözülmemiş bağlı olay) `auto_close_quiet_incidents` kapatmaz. Kritik anomaliler persist sırasında açık incident'e bağlanır. Fırtına incident'i kapandıktan sonra yeniden açılmaz (yeni fırtına yeni incident).
+- **Replay ≠ tekrar:** Stream toplayıcılar (vCenter/oVirt/OCP-Virt/virt_log/OCP olayları) her senkronda 48 saatlik pencereyi yeniden okur; yeniden okunan olay `last_seen`/`occurrence_count`'u artırmaz ve elle çözülmüş olayı yeniden açmaz. Yalnız gerçekten yeni zaman damgası (OCP: öğe zamanı `last_seen`'den yeni) veya `vcenter_alarm`/`virt_resource` durum yenilemesi sayar.
+
+### Değişiklikler (baseline / sapma) — Virt + OCP
+
+`VirtConfigSnapshot` (`is_latest`, `is_baseline`, `baseline_by/at`, `ack_by/at`). **Geçmiş** (ardışık anlık görüntüler arası fark) ile **sapma** (baseline ↔ en son) ayrı kavramlardır; sapma yalnız baseline'lı varlıklar için hesaplanır ve artık canlı hesaplanır (`virt_config_drift.baseline_overview`). «Sapma 0» ekranda açıklanır: baseline son değişiklikten sonra alınmış veya değişen varlık/tür baseline'lı değil. Banner baseline'ı kimin/ne zaman/kaç varlık için işaretlediğini gösterir; **Baseline'lar** sekmesi her varlığı baseline↔son farkıyla listeler. **Gözden geçirildi** (`ack`) değişikliği silmeden varsayılan görünümden gizler (geri alınabilir); `POST /changes/prune` (admin, varsayılan dry-run) eski anlık görüntüleri saklama (365 gün + varlık başına son 20; latest ve baseline korunur) politikasıyla temizler. Toplu baseline mevcut baseline'ı ezecekse onay kutusu zorunlu. OCP `/changes` Virt ile aynı uçlara sahip (`/baseline`, `/baseline/compare`, `DELETE /baseline`, `/changes/ack`, `/changes/prune`). Şema `schema_ensure.py` ile `ADD COLUMN IF NOT EXISTS` (yalnız ekleme).
 
 ---
 
@@ -521,7 +541,7 @@ Tümü READ_ONLY (son satır hariç). `unified_tool_chat` ipucu satırı kapasit
 | `ocp_resource_quota` | RQ/LR |
 | `ocp_monitoring_query` | Timescale CPU/Memory (overview/top/trend/series/cross) |
 | `ocp_prometheus_query` | OpenShift Prometheus — **Views** (global/ns/nodes/pods) / DCGM / kubevirt_vmi_* |
-| `ocp_access_query` | OpenShift Access/RBAC — Users/Groups/Roles/Bindings/IdP/can-i (READ-ONLY) |
+| `ocp_access_query` | OpenShift Access/RBAC — Users/Groups/Roles/Bindings/IdP/can-i (READ-ONLY; oluşturma yüzeyi YOK — RBAC oluşturma yalnız Admin UI'ında) |
 | `ocp_pod_logs` | Pod log okuma (CrashLoop teşhisi; READ-ONLY) |
 | `ocp_resource_yaml` | Kaynak YAML okuma (apply yok; READ-ONLY) |
 | `virt_prometheus_query` | VMware Prometheus (vmware_exporter) |
@@ -1157,7 +1177,7 @@ Yeni mimari önermiyorum. Mevcut sistem: **kural tabanlı router + isteğe bağl
 - Token budget runtime setting, default 32k.
 - Prometheus sohbet context’i tek JOIN tablosu; `prometheus.yml` değişmez.
 - OpenShift Monitoring (`/openshift/monitoring`): **API modu** kube API + `metrics.k8s.io` → Timescale; **Prometheus modu** bound OpenShift kaynağı — varsayılan Kubernetes Views (Global/NS/Nodes/Pods, Grafana parity), kenarda DCGM / kubevirt. Ana hub `/monitoring` modül + Other **label** listesi (collector_type). Other chat yalnız Unified + mesajda kayıtlı label (`custom_prometheus_query` Prom; `zabbix_query` Zabbix semantic catalog/match map). Scrape yazılmaz.
-- Tools: `ocp_monitoring_query` (API/Timescale), `ocp_prometheus_query` (Views/GPU/VMI; mode=views|catalog|series|allocation|labels), `ocp_access_query` (Users/Groups/Roles/Bindings/IdP; READ-ONLY), `ocp_pod_logs` / `ocp_resource_yaml` (teşhis; apply yok), `virt_prometheus_query`, `custom_prometheus_query` (Other Prom), `zabbix_query` (Other Zabbix).
+- Tools: `ocp_monitoring_query` (API/Timescale), `ocp_prometheus_query` (Views/GPU/VMI; mode=views|catalog|series|allocation|labels), `ocp_access_query` (Users/Groups/Roles/Bindings/IdP; READ-ONLY — RBAC oluşturma yalnız Admin UI, sohbette yok), `ocp_pod_logs` / `ocp_resource_yaml` (teşhis; apply yok), `virt_prometheus_query`, `custom_prometheus_query` (Other Prom), `zabbix_query` (Other Zabbix).
 - Ayrı sohbetler: `/chat` (linux|openshift|exadata), `/windows-chat`, `/hypervisors/ask`, `/agent`, `/nlq`, `/rca`.
 
 # ASSUMPTIONS
